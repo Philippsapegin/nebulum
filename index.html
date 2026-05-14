@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nebulum</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500&family=League+Gothic&family=Wire+One&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <main id="app">
+      <canvas id="scene"></canvas>
+      <div id="star-labels" class="star-labels" aria-hidden="true"></div>
+      <div id="hover-name-wrap" class="hover-name-wrap" aria-hidden="true">
+        <div id="hover-name" class="hover-name"></div>
+        <div class="hover-name-line"></div>
+      </div>
+      <div id="hover-panel" class="hover-panel" aria-hidden="true">
+        <div class="hover-panel__line hover-panel__line--top"></div>
+        <div class="hover-panel__body">
+          <div id="tooltip-type" class="tooltip__type"></div>
+          <div id="tooltip-planets" class="tooltip__planets"></div>
+        </div>
+        <div class="hover-panel__line hover-panel__line--bottom"></div>
+      </div>
+      <aside class="panel" aria-label="Graph controls">
+        <div class="panel__brand">Nebulum</div>
+
+        <label class="field">
+          <span class="field__label">Seed</span>
+          <span class="seed-row">
+            <input id="seed-input" class="text-input" type="text" autocomplete="off" />
+            <button id="regenerate-button" class="icon-button" type="button" title="Regenerate">
+              <span aria-hidden="true">R</span>
+            </button>
+          </span>
+        </label>
+
+        <div class="field">
+          <span class="field__label">Sky gradient</span>
+          <div id="sky-gradient-colors" class="gradient-colors"></div>
+          <div class="gradient-actions">
+            <button id="add-sky-color" class="mini-button" type="button">Add</button>
+            <button id="regenerate-sky" class="mini-button" type="button">Regen</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="field__label">Current mask</span>
+          <div class="current-color">
+            <button
+              id="current-color-swatch"
+              class="swatch swatch--large"
+              type="button"
+              title="Pick mask color"
+            ></button>
+            <span id="current-color-value" class="color-value"></span>
+          </div>
+        </div>
+
+        <div class="field">
+          <span class="field__label">Used colors</span>
+          <div id="used-colors" class="used-colors" aria-live="polite"></div>
+        </div>
+
+        <button id="clear-button" class="clear-button" type="button">Clear</button>
+      </aside>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
