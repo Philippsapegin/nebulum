@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nebulum</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -12,6 +13,52 @@
     />
   </head>
   <body>
+    <svg class="filter-defs" aria-hidden="true" focusable="false">
+      <filter
+        id="stellar-edge-turbulence"
+        x="-16%"
+        y="-16%"
+        width="132%"
+        height="132%"
+        color-interpolation-filters="sRGB"
+      >
+        <feTurbulence
+          type="fractalNoise"
+          baseFrequency="0.013 0.052"
+          numOctaves="2"
+          seed="11"
+          result="stellarNoise"
+        />
+        <feOffset in="stellarNoise" dx="0" dy="0" result="movingStellarNoise">
+          <animate
+            attributeName="dx"
+            dur="8s"
+            values="0;24;48;72"
+            repeatCount="indefinite"
+          />
+          <animate
+            attributeName="dy"
+            dur="8s"
+            values="0;-10;-20;-30"
+            repeatCount="indefinite"
+          />
+        </feOffset>
+        <feDisplacementMap
+          in="SourceGraphic"
+          in2="movingStellarNoise"
+          scale="3.5"
+          xChannelSelector="R"
+          yChannelSelector="G"
+          result="displacedStar"
+        />
+        <feGaussianBlur
+          in="displacedStar"
+          stdDeviation="0.28"
+          result="softStar"
+        />
+        <feComposite in="softStar" in2="displacedStar" operator="over" />
+      </filter>
+    </svg>
     <main id="app">
       <canvas id="scene"></canvas>
       <div id="star-labels" class="star-labels" aria-hidden="true"></div>
@@ -27,48 +74,113 @@
         </div>
         <div class="hover-panel__line hover-panel__line--bottom"></div>
       </div>
-      <aside class="panel" aria-label="Graph controls">
-        <div class="panel__brand">Nebulum</div>
+      <div class="left-stack">
+        <aside class="panel" aria-label="Graph controls">
+          <div class="panel__brand">Nebulum</div>
 
-        <label class="field">
-          <span class="field__label">Seed</span>
-          <span class="seed-row">
-            <input id="seed-input" class="text-input" type="text" autocomplete="off" />
-            <button id="regenerate-button" class="icon-button" type="button" title="Regenerate">
-              <span aria-hidden="true">R</span>
+          <div class="panel-block">
+            <label class="field">
+              <span class="field__label">Seed</span>
+              <span class="seed-row">
+                <input id="seed-input" class="text-input" type="text" autocomplete="off" />
+                <button id="regenerate-button" class="icon-button" type="button" title="Regenerate">
+                  <span aria-hidden="true">R</span>
+                </button>
+              </span>
+            </label>
+          </div>
+
+          <div class="panel-block">
+            <div class="field">
+              <span class="field__label">Space gradient</span>
+              <div id="sky-gradient-colors" class="gradient-colors"></div>
+            </div>
+          </div>
+
+          <div class="panel-block panel-block--borders">
+            <div class="field">
+              <div class="field-header">
+                <span class="field__label">Borders tool</span>
+                <span class="field-actions">
+                  <button
+                    id="mask-tool-toggle"
+                    class="toggle"
+                    type="button"
+                    aria-pressed="false"
+                    title="Toggle borders tool"
+                  >
+                    Off
+                  </button>
+                  <button id="clear-button" class="clear-button" type="button">Clear</button>
+                </span>
+              </div>
+            </div>
+
+            <div class="field">
+              <span class="field__label">Used colors</span>
+              <div id="used-colors" class="used-colors" aria-live="polite"></div>
+            </div>
+
+            <div class="field field--last">
+              <div class="field-header">
+                <span class="field__label">Current border</span>
+                <button
+                  id="current-color-swatch"
+                  class="swatch swatch--large border-swatch"
+                  type="button"
+                  title="Pick border color"
+                ></button>
+              </div>
+              <span id="current-color-value" class="color-value" hidden></span>
+            </div>
+          </div>
+        </aside>
+        <section class="music-player" aria-label="Music player">
+          <div class="music-player__row music-player__row--top">
+            <button id="music-prev" class="music-button" type="button" title="Previous">
+              <img src="/Musplayer/back.svg" alt="" />
             </button>
-          </span>
-        </label>
-
-        <div class="field">
-          <span class="field__label">Sky gradient</span>
-          <div id="sky-gradient-colors" class="gradient-colors"></div>
-          <div class="gradient-actions">
-            <button id="add-sky-color" class="mini-button" type="button">Add</button>
-            <button id="regenerate-sky" class="mini-button" type="button">Regen</button>
+            <button id="music-play" class="music-button music-button--primary" type="button" title="Play">
+              <img id="music-play-icon" class="music-button__icon--play" src="/Musplayer/play.svg" alt="" />
+            </button>
+            <button id="music-next" class="music-button" type="button" title="Next">
+              <img src="/Musplayer/forward.svg" alt="" />
+            </button>
+            <button id="music-mode" class="music-button music-button--mode" type="button" title="Playback order">
+              <img id="music-mode-icon" src="/Musplayer/order.svg" alt="" />
+            </button>
+            <input id="music-volume" class="music-volume" type="range" min="0" max="1" value="0.72" step="0.01" aria-label="Volume" />
           </div>
-        </div>
-
-        <div class="field">
-          <span class="field__label">Current mask</span>
-          <div class="current-color">
-            <button
-              id="current-color-swatch"
-              class="swatch swatch--large"
-              type="button"
-              title="Pick mask color"
-            ></button>
-            <span id="current-color-value" class="color-value"></span>
+          <div class="music-player__row music-player__row--bottom">
+            <button id="music-track-current" class="music-track-current" type="button"></button>
+            <button id="music-dropdown" class="music-dropdown" type="button" aria-expanded="false" title="Select track">
+              <img src="/Musplayer/dropdown.svg" alt="" />
+            </button>
+            <div id="music-track-list-backdrop" class="music-track-list-backdrop" hidden aria-hidden="true"></div>
+            <div id="music-track-list" class="music-track-list" hidden></div>
+            <div id="music-track-scrollbar" class="music-track-scrollbar" hidden aria-hidden="true">
+              <div id="music-track-scrollbar-thumb" class="music-track-scrollbar__thumb"></div>
+            </div>
           </div>
+        </section>
+      </div>
+      <section id="star-window" class="star-window" aria-hidden="true">
+        <canvas id="system-glow" class="system-glow" aria-hidden="true"></canvas>
+        <div id="system-stars" class="system-stars" aria-hidden="true"></div>
+        <div id="star-system" class="star-system" aria-hidden="true"></div>
+        <div id="system-particles" class="system-particles" aria-hidden="true"></div>
+        <div id="system-hover-name-wrap" class="hover-name-wrap system-hover-name-wrap" aria-hidden="true">
+          <div id="system-hover-name" class="hover-name"></div>
+          <div class="hover-name-line"></div>
         </div>
-
-        <div class="field">
-          <span class="field__label">Used colors</span>
-          <div id="used-colors" class="used-colors" aria-live="polite"></div>
+        <div id="system-hover-panel" class="hover-panel system-hover-panel" aria-hidden="true">
+          <div class="hover-panel__line hover-panel__line--top"></div>
+          <div id="system-tooltip-body" class="hover-panel__body system-tooltip-body"></div>
+          <div class="hover-panel__line hover-panel__line--bottom"></div>
         </div>
-
-        <button id="clear-button" class="clear-button" type="button">Clear</button>
-      </aside>
+        <div id="system-title" class="system-title" aria-hidden="true"></div>
+        <button id="back-to-starmap" class="back-button" type="button">Back to starmap</button>
+      </section>
     </main>
     <script type="module" src="/src/main.js"></script>
   </body>
