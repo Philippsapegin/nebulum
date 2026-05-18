@@ -460,7 +460,7 @@ body.system-open .music-player {
   transition: none;
 }
 
-.star-window.system-transitioning .back-button,
+.star-window.system-transitioning .system-top-bar,
 .star-window.system-transitioning .system-jump,
 .star-window.system-transitioning .system-planet-hit {
   pointer-events: none;
@@ -786,11 +786,16 @@ body.system-open .music-player {
   pointer-events: none;
 }
 
-.back-button {
+.system-top-bar {
   position: fixed;
   left: 18px;
   top: 18px;
   z-index: 36;
+  display: flex;
+  gap: 6px;
+}
+
+.back-button {
   height: 30px;
   padding: 0 12px;
   border: 0;
@@ -989,13 +994,21 @@ body.system-open .music-player {
   appearance: none;
   -webkit-appearance: none;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.045);
+  background:
+    linear-gradient(
+      to right,
+      rgba(255, 255, 255, 0.74) calc((100% - 8px) * var(--vol-frac, 0.72) - 1px),
+      transparent calc((100% - 8px) * var(--vol-frac, 0.72) - 1px),
+      transparent calc((100% - 8px) * var(--vol-frac, 0.72) + 9px),
+      rgba(255, 255, 255, 0.74) calc((100% - 8px) * var(--vol-frac, 0.72) + 9px)
+    ) no-repeat center / calc(100% - 16px) 1px,
+    rgba(255, 255, 255, 0.045);
   cursor: pointer;
 }
 
 .music-volume::-webkit-slider-runnable-track {
   height: 1px;
-  background: rgba(255, 255, 255, 0.74);
+  background: transparent;
 }
 
 .music-volume::-webkit-slider-thumb {
@@ -1006,12 +1019,12 @@ body.system-open .music-player {
   -webkit-appearance: none;
   border: 1px solid rgba(255, 255, 255, 0.86);
   border-radius: 50%;
-  background: rgb(21, 21, 23);
+  background: transparent;
 }
 
 .music-volume::-moz-range-track {
   height: 1px;
-  background: rgba(255, 255, 255, 0.74);
+  background: transparent;
 }
 
 .music-volume::-moz-range-thumb {
@@ -1019,7 +1032,7 @@ body.system-open .music-player {
   height: 8px;
   border: 1px solid rgba(255, 255, 255, 0.86);
   border-radius: 50%;
-  background: rgb(21, 21, 24);
+  background: transparent;
 }
 
 .music-track-current {
@@ -1041,7 +1054,7 @@ body.system-open .music-player {
   z-index: -1;
   width: var(--music-progress, 0%);
   border-radius: inherit;
-  background: rgba(28, 64, 78, 0.62);
+  background: rgba(0, 0, 0, 0.22);
 }
 
 .music-dropdown {
@@ -1060,7 +1073,7 @@ body.system-open .music-player {
 .music-track-list {
   position: absolute;
   left: 0;
-  top: 22px;
+  top: 36px;
   z-index: 5;
   width: 186px;
   max-height: 220px;
@@ -1075,7 +1088,7 @@ body.system-open .music-player {
 .music-track-list-backdrop {
   position: absolute;
   left: 0;
-  top: 22px;
+  top: 36px;
   z-index: 4;
   width: 186px;
   min-height: 28px;
@@ -1101,10 +1114,11 @@ body.system-open .music-player {
 .music-track-scrollbar {
   position: absolute;
   left: 177px;
-  top: 22px;
+  top: 36px;
   z-index: 6;
   width: 9px;
   max-height: 220px;
+  padding: 3px 0;
   background:
     linear-gradient(
       90deg,
@@ -1112,6 +1126,7 @@ body.system-open .music-player {
       rgba(255, 255, 255, 0.82) 4px 5px,
       transparent 5px 100%
     );
+  background-clip: content-box;
   cursor: pointer;
 }
 
@@ -1467,6 +1482,63 @@ body.system-open .music-player {
   padding: 0 8px;
   font-size: 10px;
   text-transform: uppercase;
+}
+
+.zone-toggle {
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(10, 10, 11, 0.48);
+  backdrop-filter: blur(12px);
+  color: rgba(255, 255, 255, 0.52);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  text-transform: uppercase;
+  transition: color 160ms, background 160ms;
+}
+
+.zone-toggle[aria-pressed="true"] {
+  background: rgba(10, 10, 11, 0.48);
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.zone-toggle:hover {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.system-zone {
+  position: absolute;
+  z-index: -1;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 320ms ease;
+}
+
+.system-zone.visible {
+  opacity: 1;
+}
+
+.system-zone--tidal {
+  background: radial-gradient(
+    circle closest-side at center,
+    rgba(255, 72, 60, 0.26) 0%,
+    rgba(255, 72, 60, 0.2) 70%,
+    rgba(255, 72, 60, 0.12) 100%
+  );
+}
+
+.system-zone--hz {
+  background: radial-gradient(
+    circle closest-side at center,
+    transparent 0,
+    transparent var(--hz-inner-pct, 0%),
+    rgba(96, 232, 156, 0.16) var(--hz-inner-pct, 0%),
+    rgba(96, 232, 156, 0.16) 100%
+  );
 }
 
 @media (max-width: 640px) {

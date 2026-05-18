@@ -1,18 +1,48 @@
 # Nebulum
 
-Nebulum is an interactive 3D star graph built with Vite and Three.js.
+Nebulum is an interactive procedural space generator built with Vite and Three.js.
 
-The graph is generated deterministically from a seed. Stars, links, names, star classes, masks, sky gradients, and ambient effects are all driven by seeded randomness.
+The entire universe is generated deterministically from a seed string. Stars, constellation links, names, star classes, planets, moons, sky gradients, and ambient effects are all driven by seeded randomness — the same seed always yields the same universe.
+
+## Screenshots
+
+### Star map
+
+The seeded 3D constellation graph with glowing stars and links.
+
+![Star map](images/demo1.png)
+
+### Region masks
+
+Paint connected star regions into colored constellations with the borders tool.
+
+![Region masks](images/demo2.png)
+
+### Star system view
+
+Each star is a fully explorable system with orbits, planets, moons, asteroid belts, and accretion disks.
+
+![Star system](images/demo3.png)
+
+### Habitable and tidal-lock zones
+
+Toggle astrophysics-based overlays — the habitable zone and the tidal-lock zone — scaled per star class.
+
+![System zones](images/demo4.png)
 
 ## Features
 
-- Seeded 3D star graph with glowing stars and links.
+- Seeded 3D star map with glowing stars, links, and external fading links.
 - Mouse drag rotation with inertial slowdown.
-- Hover labels and animated star tooltips.
+- Hover labels and animated typewriter tooltips.
 - Procedural sky gradient and distant star field.
 - Clickable colored masks for connected star regions.
 - Custom color picker for mask and sky gradient colors.
-- Seeded star names, types, planets, and external fading links.
+- 14 real-world star classes — from Red Dwarf to Neutron Star, Strange Star, and Black Hole.
+- Explorable star systems with procedural planets, moons, asteroid belts, accretion disks, and jump gates.
+- Astrophysics-based habitable and tidal-lock zone overlays, scaled per star class.
+- Mythology-based procedural planet names (Greek, Norse, Egyptian) plus a syllable generator.
+- Built-in music player with shuffle and ordered playback.
 
 ## Development
 

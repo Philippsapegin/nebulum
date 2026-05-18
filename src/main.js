@@ -94,6 +94,12 @@ const STAR_TYPES = [
     type: "Neutron Star",
     color: "#c6ffe1",
     coreColor: "#f6fffa",
+    size: [0.018, 0.021],
+  },
+  {
+    type: "Strange Star",
+    color: "#c6ffe1",
+    coreColor: "#f6fffa",
     size: [0.018, 0.046],
   },
   {
@@ -104,20 +110,36 @@ const STAR_TYPES = [
     blackCore: true,
   },
 ];
+const ZONE_DATA = {
+  "Red Dwarf":          { tidalLock: 5,  hzInner: 2,  hzOuter: 12 },
+  "Orange Dwarf":       { tidalLock: 8,  hzInner: 4,  hzOuter: 15 },
+  "Orange Star":        { tidalLock: 10, hzInner: 8,  hzOuter: 21 },
+  "Yellow Star":        { tidalLock: 12, hzInner: 12, hzOuter: 31 },
+  "Yellow-White Star":  { tidalLock: 15, hzInner: 15, hzOuter: 46 },
+  "White Star":         { tidalLock: 18, hzInner: 20, hzOuter: 56 },
+  "Blue Star":          { tidalLock: 24, hzInner: 28, hzOuter: 75 },
+  "Blue Giant":         { tidalLock: 45, hzInner: 38, hzOuter: 81 },
+  "Red Giant":          { tidalLock: 30, hzInner: 20, hzOuter: 47 },
+  "Blue Supergiant":    { tidalLock: 75, hzInner: 56, hzOuter: 100 },
+  "Red Supergiant":     { tidalLock: 60, hzInner: 30, hzOuter: 56 },
+  "Neutron Star":       { tidalLock: 8,  hzInner: 5,  hzOuter: 12 },
+  "Strange Star":       { tidalLock: 30, hzInner: 56, hzOuter: 88 },
+  "Black Hole":         { tidalLock: 95, hzInner: null, hzOuter: null },
+};
 const MUSIC_TRACKS = [
-  "Afar from home.mp3",
-  "Defining the rays.mp3",
-  "Finite but countless.mp3",
-  "Glacial Starch.mp3",
-  "Nebulum.mp3",
-  "Neural Void - Orbit around the end.mp3",
-  "Neural Void - Sagan was small.mp3",
-  "Neural Void - TON 618.mp3",
-  "Neural Void - Vast Nothingness.mp3",
-  "Neutron Lullaby.mp3",
-  "Sparkling horizon.mp3",
-  "Under the skyes.mp3",
-  "Weight of light.mp3",
+  "1. Nebulum.mp3",
+  "2. Afar from home.mp3",
+  "3. Defining the rays.mp3",
+  "4. Sparkling horizon.mp3",
+  "5. Weight of light.mp3",
+  "6. Finite but countless.mp3",
+  "7. Sagan was small.mp3",
+  "8. Glacial Starch.mp3",
+  "9. Neutron Lullaby.mp3",
+  "10. TON 618.mp3",
+  "11. Under the skyes.mp3",
+  "12. Vast Nothingness.mp3",
+  "13. Orbit around the end.mp3",
 ];
 
 const sceneCanvas = document.querySelector("#scene");
@@ -162,6 +184,8 @@ const systemHoverPanel = document.querySelector("#system-hover-panel");
 const systemTooltipBody = document.querySelector("#system-tooltip-body");
 const systemTitle = document.querySelector("#system-title");
 const backToStarmapButton = document.querySelector("#back-to-starmap");
+const toggleTidalZone = document.querySelector("#toggle-tidal-zone");
+const toggleHzZone = document.querySelector("#toggle-hz-zone");
 const systemTransitionOverlay = document.createElement("div");
 systemTransitionOverlay.className = "system-transition-overlay";
 starWindow.append(systemTransitionOverlay);
@@ -234,6 +258,9 @@ let tooltipTypingInterval = null;
 let tooltipClearTimeout = null;
 let tooltipTypingToken = 0;
 let hoveredSystemBody = null;
+let isTidalZoneVisible = false;
+let isHzZoneVisible = false;
+let activeZoneElements = [];
 let systemTooltipTypingTimeout = null;
 let systemTooltipTypingInterval = null;
 let systemTooltipClearTimeout = null;
@@ -307,6 +334,22 @@ function initPanel() {
 
   backToStarmapButton.addEventListener("click", closeStarWindow);
 
+  toggleTidalZone.addEventListener("click", () => {
+    isTidalZoneVisible = !isTidalZoneVisible;
+    toggleTidalZone.setAttribute("aria-pressed", String(isTidalZoneVisible));
+    for (const { el, zone } of activeZoneElements) {
+      if (zone === "tidal") el.classList.toggle("visible", isTidalZoneVisible);
+    }
+  });
+
+  toggleHzZone.addEventListener("click", () => {
+    isHzZoneVisible = !isHzZoneVisible;
+    toggleHzZone.setAttribute("aria-pressed", String(isHzZoneVisible));
+    for (const { el, zone } of activeZoneElements) {
+      if (zone === "hz") el.classList.toggle("visible", isHzZoneVisible);
+    }
+  });
+
   clearButton.addEventListener("click", () => {
     nodeColors.clear();
     nodeAnimationProgress.clear();
@@ -342,6 +385,7 @@ function initMusicPlayer() {
   });
 
   musicAudio.volume = Number(musicVolume.value);
+  musicVolume.style.setProperty("--vol-frac", musicVolume.value);
   setMusicTrack(0, false);
 
   musicPrevButton.addEventListener("click", () => playAdjacentTrack(-1));
@@ -358,6 +402,7 @@ function initMusicPlayer() {
   });
   musicVolume.addEventListener("input", () => {
     musicAudio.volume = Number(musicVolume.value);
+    musicVolume.style.setProperty("--vol-frac", musicVolume.value);
   });
   musicTrackCurrent.addEventListener("pointerdown", (event) => {
     seekMusicFromTrackButton(event);
@@ -475,7 +520,7 @@ function updateMusicProgress() {
 }
 
 function getMusicTrackTitle(file) {
-  return file.replace(/\.mp3$/i, "");
+  return file.replace(/\.mp3$/i, "").replace(/^\d+\.\s*/, "");
 }
 
 function setMusicDropdownOpen(isOpen) {
@@ -515,11 +560,12 @@ function updateMusicTrackScrollbar() {
     return;
   }
 
+  const scrollMargin = 3;
   musicTrackScrollbar.style.height = `${musicTrackList.offsetHeight}px`;
   const thumbHeight = Math.max(28, (visibleHeight / scrollHeight) * visibleHeight);
-  const maxThumbTop = visibleHeight - thumbHeight;
+  const maxThumbTop = visibleHeight - thumbHeight - scrollMargin * 2;
   const maxScrollTop = scrollHeight - visibleHeight;
-  const thumbTop = maxScrollTop > 0 ? (musicTrackList.scrollTop / maxScrollTop) * maxThumbTop : 0;
+  const thumbTop = scrollMargin + (maxScrollTop > 0 ? (musicTrackList.scrollTop / maxScrollTop) * maxThumbTop : 0);
   musicTrackScrollbarThumb.style.height = `${thumbHeight}px`;
   musicTrackScrollbarThumb.style.transform = `translateY(${thumbTop}px)`;
 }
@@ -607,12 +653,13 @@ function onMusicScrollbarPointerDown(event) {
     : thumbRect.height / 2;
 
   const moveThumb = (clientY) => {
+    const scrollMargin = 3;
     const visibleHeight = musicTrackList.clientHeight;
     const scrollHeight = musicTrackList.scrollHeight;
     const thumbHeight = musicTrackScrollbarThumb.offsetHeight;
-    const maxThumbTop = visibleHeight - thumbHeight;
+    const maxThumbTop = visibleHeight - thumbHeight - scrollMargin * 2;
     const maxScrollTop = scrollHeight - visibleHeight;
-    const thumbTop = THREE.MathUtils.clamp(clientY - scrollbarRect.top - grabOffset, 0, maxThumbTop);
+    const thumbTop = THREE.MathUtils.clamp(clientY - scrollbarRect.top - grabOffset - scrollMargin, 0, maxThumbTop);
     musicTrackList.scrollTop = maxThumbTop > 0 ? (thumbTop / maxThumbTop) * maxScrollTop : 0;
   };
 
@@ -1015,8 +1062,8 @@ function createNodes(random) {
       glowColor: star.color,
       coreColor: star.coreColor,
       blackCore: star.blackCore,
-      glowBoost: star.type === "Neutron Star" ? 1.28 : 1,
-      glowScaleBoost: star.type === "Neutron Star" ? 1 : 1,
+      glowBoost: (star.type === "Neutron Star" || star.type === "Strange Star") ? 1.28 : 1,
+      glowScaleBoost: (star.type === "Neutron Star" || star.type === "Strange Star") ? 1 : 1,
       planets: Math.floor(random() * 14),
     };
   });
@@ -1163,22 +1210,31 @@ function pickUniqueDictionaryName(pool, random) {
 
 function createGenPlanetName(random) {
   const roll = random();
-  if (roll < 0.5) {
-    return pickSyllable(GEN_SYLLABLES, random).toUpperCase();
-  }
+  const gen = () => pickSyllable(GEN_SYLLABLES, random);
+  const mega = () => pickSyllable(MEGAGEN_SYLLABLES, random);
 
-  const first = pickSyllable(GEN_SYLLABLES, random);
-  const second = pickSyllable(GEN_SYLLABLES, random);
-  if (roll < 0.625) {
-    return `${first}${second}`.toUpperCase();
+  if (roll < 0.2) {
+    return `${gen()}${gen()}`.toUpperCase();
   }
-  if (roll < 0.75) {
-    return `${first} ${second}`.toUpperCase();
+  if (roll < 0.325) {
+    return `${gen()}'${gen()}`.toUpperCase();
   }
-  if (roll < 0.875) {
-    return `${first}'${second}`.toUpperCase();
+  if (roll < 0.45) {
+    return `${gen()}${mega()}`.toUpperCase();
   }
-  return `${first}-${second}`.toUpperCase();
+  if (roll < 0.575) {
+    return `${mega()}${gen()}`.toUpperCase();
+  }
+  if (roll < 0.7) {
+    return `${gen()}'${mega()}`.toUpperCase();
+  }
+  if (roll < 0.825) {
+    return `${mega()}'${gen()}`.toUpperCase();
+  }
+  if (roll < 0.95) {
+    return `${gen()} ${pickNameNumber(random)}`.toUpperCase();
+  }
+  return `${gen()}-${mega()}`.toUpperCase();
 }
 
 function createLinks(points) {
@@ -2366,6 +2422,10 @@ function scheduleSystemTooltipTypewriter(body, immediate = false) {
     if (moonCount > 0) {
       lines.push(`${moonCount} ${moonCount === 1 ? "MOON" : "MOONS"}`);
     }
+
+    if (body.dataset.tidallyLocked === "true") {
+      lines.push("TIDALLY LOCKED");
+    }
   }
 
   const typewriterDelay = immediate ? 340 : 1580;
@@ -2845,11 +2905,15 @@ function renderStarSystem(node) {
     hitTarget.style.height = `${hitTargetRadius * 2}px`;
     hitTarget.style.left = `${planetX - hitTargetRadius}px`;
     hitTarget.style.top = `${planetY - hitTargetRadius}px`;
+    const zoneInfo = ZONE_DATA[node.starType];
+    const orbitFraction = (orbitRadius - minOrbit) / (maxOrbit - minOrbit) * 100;
+    const isTidallyLocked = zoneInfo && orbitFraction <= zoneInfo.tidalLock;
     hitTarget.dataset.name = planetName;
     hitTarget.dataset.kind = planetKind.label;
     hitTarget.dataset.hasDisk = accretionDisk ? "true" : "false";
     hitTarget.dataset.moons = String(moonSystem.moonCount);
     hitTarget.dataset.radius = String(planetRadius);
+    hitTarget.dataset.tidallyLocked = isTidallyLocked ? "true" : "false";
     hitTarget.userData = { label };
     hitTarget.addEventListener("pointerenter", (event) => {
       positionSystemTooltip(event.clientX, event.clientY);
@@ -2867,6 +2931,7 @@ function renderStarSystem(node) {
   }
 
   drawSystemOrbits(orbitLayer, orbitItems);
+  renderSystemZones(node, starX, centerY, minOrbit, maxOrbit);
   renderSystemJumps({
     node,
     starX,
@@ -2880,6 +2945,43 @@ function renderStarSystem(node) {
     occupiedPlanets,
     random,
   });
+}
+
+function renderSystemZones(node, starX, centerY, minOrbit, maxOrbit) {
+  activeZoneElements = [];
+  const zoneInfo = ZONE_DATA[node.starType];
+  if (!zoneInfo) return;
+
+  const span = maxOrbit - minOrbit;
+
+  if (zoneInfo.tidalLock > 0) {
+    const tidalRadius = minOrbit + span * (zoneInfo.tidalLock / 100);
+    const el = document.createElement("div");
+    el.className = "system-zone system-zone--tidal";
+    if (isTidalZoneVisible) el.classList.add("visible");
+    el.style.width = `${tidalRadius * 2}px`;
+    el.style.height = `${tidalRadius * 2}px`;
+    el.style.left = `${starX - tidalRadius}px`;
+    el.style.top = `${centerY - tidalRadius}px`;
+    starSystem.append(el);
+    activeZoneElements.push({ el, zone: "tidal" });
+  }
+
+  if (zoneInfo.hzInner !== null && zoneInfo.hzOuter !== null) {
+    const hzOuterRadius = minOrbit + span * (zoneInfo.hzOuter / 100);
+    const hzInnerRadius = minOrbit + span * (zoneInfo.hzInner / 100);
+    const innerPct = (hzInnerRadius / hzOuterRadius) * 100;
+    const hzEl = document.createElement("div");
+    hzEl.className = "system-zone system-zone--hz";
+    if (isHzZoneVisible) hzEl.classList.add("visible");
+    hzEl.style.width = `${hzOuterRadius * 2}px`;
+    hzEl.style.height = `${hzOuterRadius * 2}px`;
+    hzEl.style.left = `${starX - hzOuterRadius}px`;
+    hzEl.style.top = `${centerY - hzOuterRadius}px`;
+    hzEl.style.setProperty("--hz-inner-pct", `${innerPct}%`);
+    starSystem.append(hzEl);
+    activeZoneElements.push({ el: hzEl, zone: "hz" });
+  }
 }
 
 function renderSystemJumps({
@@ -3836,6 +3938,7 @@ function createSystemOrbitRadii(count, minOrbit, maxOrbit, random) {
 
 function getSystemStarRadius(node, height, random) {
   const typeScale = {
+    "Neutron Star": 0.12,
     "Red Dwarf": 0.2,
     "Orange Dwarf": 0.24,
     "Orange Star": 0.36,
@@ -3847,6 +3950,7 @@ function getSystemStarRadius(node, height, random) {
     "Red Giant": 1.46,
     "Blue Supergiant": 2.42,
     "Red Supergiant": 3,
+    "Strange Star": 3,
   };
   const normalizedSize = THREE.MathUtils.clamp((node.size - 0.018) / (0.046 - 0.018), 0, 1);
   const scale = typeScale[node.starType] ?? THREE.MathUtils.lerp(0.2, 3, normalizedSize);
