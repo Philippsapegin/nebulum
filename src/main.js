@@ -126,6 +126,13 @@ const ZONE_DATA = {
   "Strange Star":       { tidalLock: 30, hzInner: 56, hzOuter: 88 },
   "Black Hole":         { tidalLock: 95, hzInner: null, hzOuter: null },
 };
+const PLANET_SIZE_NAMES = {
+  "PLANET": ["tiny", "small", "", "large", "mega", "super", "super type 2", "super type 3", "super type 4", "super type 5"],
+  "GAS GIANT": ["anomalous", "anomalous", "anomalous", "tiny", "small", "", "", "", "", ""],
+};
+// Planet detail window stage geometry (must match styles.css .planet-window layout).
+const PLANET_STAGE_SIZE = 292;
+const PLANET_STAGE_CONTENT_RADIUS = 80;
 const MUSIC_TRACKS = [
   "1. Nebulum.mp3",
   "2. Afar from home.mp3",
@@ -186,6 +193,15 @@ const systemTitle = document.querySelector("#system-title");
 const backToStarmapButton = document.querySelector("#back-to-starmap");
 const toggleTidalZone = document.querySelector("#toggle-tidal-zone");
 const toggleHzZone = document.querySelector("#toggle-hz-zone");
+const planetWindow = document.querySelector("#planet-window");
+const planetWindowClose = document.querySelector("#planet-window-close");
+const planetWindowTitle = document.querySelector("#planet-window-title");
+const planetWindowSize = document.querySelector("#planet-window-size");
+const planetWindowStage = document.querySelector("#planet-window-stage");
+const planetWindowLore = document.querySelector("#planet-window-lore");
+const planetWindowDivider = document.querySelector("#planet-window-divider");
+const planetWindowTags = document.querySelector("#planet-window-tags");
+const planetLinkPath = document.querySelector("#planet-link-path");
 const systemTransitionOverlay = document.createElement("div");
 systemTransitionOverlay.className = "system-transition-overlay";
 starWindow.append(systemTransitionOverlay);
@@ -261,6 +277,11 @@ let hoveredSystemBody = null;
 let isTidalZoneVisible = false;
 let isHzZoneVisible = false;
 let activeZoneElements = [];
+let isPlanetWindowOpen = false;
+let openPlanetData = null;
+let isDraggingPlanetWindow = false;
+const planetWindowOffset = { x: 0, y: 0 };
+const planetWindowDragStart = { x: 0, y: 0, offsetX: 0, offsetY: 0 };
 let systemTooltipTypingTimeout = null;
 let systemTooltipTypingInterval = null;
 let systemTooltipClearTimeout = null;
@@ -349,6 +370,65 @@ function initPanel() {
       if (zone === "hz") el.classList.toggle("visible", isHzZoneVisible);
     }
   });
+
+  planetWindowClose.addEventListener("click", closePlanetWindow);
+
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && isPlanetWindowOpen) {
+      closePlanetWindow();
+    }
+  });
+
+  document.addEventListener("pointerdown", (event) => {
+    if (!isPlanetWindowOpen) {
+      return;
+    }
+    if (planetWindow.contains(event.target)) {
+      return;
+    }
+    if (event.target instanceof Element &&
+        event.target.closest(".system-planet-hit, .music-player")) {
+      return;
+    }
+    closePlanetWindow();
+  });
+
+  planetWindow.addEventListener("pointerdown", (event) => {
+    if (event.target !== planetWindow) {
+      return;
+    }
+    event.preventDefault();
+    isDraggingPlanetWindow = true;
+    planetWindow.classList.add("dragging");
+    planetWindow.setPointerCapture(event.pointerId);
+    planetWindowDragStart.x = event.clientX;
+    planetWindowDragStart.y = event.clientY;
+    planetWindowDragStart.offsetX = planetWindowOffset.x;
+    planetWindowDragStart.offsetY = planetWindowOffset.y;
+  });
+
+  planetWindow.addEventListener("pointermove", (event) => {
+    if (!isDraggingPlanetWindow) {
+      return;
+    }
+    planetWindowOffset.x = planetWindowDragStart.offsetX + (event.clientX - planetWindowDragStart.x);
+    planetWindowOffset.y = planetWindowDragStart.offsetY + (event.clientY - planetWindowDragStart.y);
+    planetWindow.style.setProperty("--pw-x", `${planetWindowOffset.x}px`);
+    planetWindow.style.setProperty("--pw-y", `${planetWindowOffset.y}px`);
+  });
+
+  const endPlanetWindowDrag = (event) => {
+    if (!isDraggingPlanetWindow) {
+      return;
+    }
+    isDraggingPlanetWindow = false;
+    planetWindow.classList.remove("dragging");
+    if (planetWindow.hasPointerCapture(event.pointerId)) {
+      planetWindow.releasePointerCapture(event.pointerId);
+    }
+  };
+  planetWindow.addEventListener("pointerup", endPlanetWindowDrag);
+  planetWindow.addEventListener("pointercancel", endPlanetWindowDrag);
 
   clearButton.addEventListener("click", () => {
     nodeColors.clear();
@@ -2361,6 +2441,10 @@ function clearTooltipTyping() {
 }
 
 function setSystemHover(body) {
+  if (isPlanetWindowOpen) {
+    body = null;
+  }
+
   if (hoveredSystemBody === body) {
     return;
   }
@@ -2665,6 +2749,7 @@ function closeStarWindow() {
   setSystemTransitionOffset(0, 0);
   setSystemTransitionOverlay(0);
   releaseSystemPointerLock();
+  closePlanetWindow();
   activeSystemNode = null;
   activeSystemStar = null;
   activeSystemStarSurface = null;
@@ -2771,6 +2856,7 @@ function updateSystemGlow(clientX, clientY, systemOffsetX = 0, systemOffsetY = 0
 function renderStarSystem(node) {
   starSystem.replaceChildren();
   clearSystemHover();
+  closePlanetWindow();
   systemTitle.textContent = `${node.name} SYSTEM`;
 
   const width = window.innerWidth;
@@ -2878,6 +2964,10 @@ function renderStarSystem(node) {
       starSystem.append(disk);
     }
 
+    const toStarLength = Math.hypot(starX - planetX, centerY - planetY) || 1;
+    const starDirX = (starX - planetX) / toStarLength;
+    const starDirY = (centerY - planetY) / toStarLength;
+
     const planet = document.createElement("div");
     planet.className = "system-planet";
     planet.style.width = `${planetRadius * 2}px`;
@@ -2885,6 +2975,8 @@ function renderStarSystem(node) {
     planet.style.left = `${planetX - planetRadius}px`;
     planet.style.top = `${planetY - planetRadius}px`;
     planet.style.background = planetKind.background;
+    planet.append(createPlanetGlow(planetRadius, starDirX, starDirY));
+    planet.append(createPlanetShadow(planetRadius, starDirX, starDirY));
     starSystem.append(planet);
 
     renderMoons(moonSystem);
@@ -2914,7 +3006,34 @@ function renderStarSystem(node) {
     hitTarget.dataset.moons = String(moonSystem.moonCount);
     hitTarget.dataset.radius = String(planetRadius);
     hitTarget.dataset.tidallyLocked = isTidallyLocked ? "true" : "false";
-    hitTarget.userData = { label };
+    const planetInfo = {
+      name: planetName,
+      kind: planetKind.label,
+      background: planetKind.background,
+      sizeIndex: planetSizeIndex,
+      element: planet,
+      radius: planetRadius,
+      // Window scale excludes the accretion disk so a planet with a large disk
+      // is not shrunk; the disk is allowed to overflow the stage instead.
+      extentRadius: accretionDisk
+        ? planetRadius
+        : getPlanetConstructionRadius(planetRadius, null, moonSystem),
+      starDirX,
+      starDirY,
+      accretionDisk,
+      diskShadowAngle: Math.atan2(planetY - centerY, planetX - starX),
+      moonCount: moonSystem.moonCount,
+      moonOrbitRadius: moonSystem.orbitRadius,
+      moonList: moonSystem.moons.map((moon) => ({
+        dx: moon.x - planetX,
+        dy: moon.y - planetY,
+        radius: moon.radius,
+      })),
+      hasDisk: Boolean(accretionDisk),
+      tidallyLocked: Boolean(isTidallyLocked),
+      lore: createPlanetLore(createRandom(`${SEED}:planet-lore:${node.id}:${index}`)),
+    };
+    hitTarget.userData = { label, planet: planetInfo };
     hitTarget.addEventListener("pointerenter", (event) => {
       positionSystemTooltip(event.clientX, event.clientY);
       setSystemHover(hitTarget);
@@ -2926,6 +3045,10 @@ function renderStarSystem(node) {
       if (hoveredSystemBody === hitTarget) {
         setSystemHover(null);
       }
+    });
+    hitTarget.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openPlanetWindow(planetInfo);
     });
     starSystem.append(hitTarget);
   }
@@ -2982,6 +3105,228 @@ function renderSystemZones(node, starX, centerY, minOrbit, maxOrbit) {
     starSystem.append(hzEl);
     activeZoneElements.push({ el: hzEl, zone: "hz" });
   }
+}
+
+function createPlanetLore(random) {
+  const pick = (list) => list[Math.floor(random() * list.length)];
+  const openings = [
+    "Charted by long-range survey drones,",
+    "First catalogued during the deep-sky census,",
+    "Known to old star-charts only as a faint smudge,",
+    "Whispered about in the logs of passing freighters,",
+    "Lost for centuries, then rediscovered by accident,",
+    "Marked on every navigator's map with quiet caution,",
+    "Named after a captain who never returned,",
+    "Beyond the reach of the early colony beacons,",
+  ];
+  const bodies = [
+    "this world turns through a slow, patient dark.",
+    "it carries scars from an age no record remembers.",
+    "its surface hums with storms older than the colonies.",
+    "it drifts in silence, indifferent to the ships above.",
+    "the planet keeps a climate no instrument fully trusts.",
+    "it holds a horizon that has swallowed many expeditions.",
+    "its gravity pulls at more than just stone and ice.",
+    "the world wears a sky the colour of cooling iron.",
+  ];
+  const closers = [
+    "Few who orbit it leave entirely unchanged.",
+    "Settlers speak of it with equal parts dread and longing.",
+    "Its true name, they say, was never written down.",
+    "What it guards beneath the clouds remains unmeasured.",
+    "Light behaves strangely here, and so do travellers.",
+    "It waits, as it has always waited.",
+    "Survey crews still argue over what they saw.",
+    "The maps mark it simply, and warmly, as home.",
+  ];
+  return `${pick(openings)} ${pick(bodies)} ${pick(closers)}`;
+}
+
+function getPlanetSizeLabel(planet) {
+  const names = PLANET_SIZE_NAMES[planet.kind] ?? [];
+  const sizeName = names[planet.sizeIndex] ?? "";
+  return `${sizeName} ${planet.kind}`.trim().toUpperCase();
+}
+
+function openPlanetWindow(planet) {
+  if (!planet) {
+    return;
+  }
+
+  // Keep the window where it is when swapping to another planet; only recentre
+  // it when opening fresh.
+  const wasOpen = isPlanetWindowOpen;
+  isPlanetWindowOpen = true;
+  openPlanetData = planet;
+  setSystemHover(null);
+
+  if (!wasOpen) {
+    planetWindowOffset.x = 0;
+    planetWindowOffset.y = 0;
+    planetWindow.style.setProperty("--pw-x", "0px");
+    planetWindow.style.setProperty("--pw-y", "0px");
+  }
+
+  planetWindowTitle.textContent = planet.name;
+  planetWindowSize.textContent = getPlanetSizeLabel(planet);
+  planetWindowLore.textContent = planet.lore;
+  renderPlanetStage(planet);
+
+  const tags = [];
+  if (planet.tidallyLocked) {
+    tags.push("TIDALLY LOCKED");
+  }
+  if (planet.hasDisk) {
+    tags.push("ACCRETION DISK");
+  }
+  if (planet.moonCount > 0) {
+    tags.push(`${planet.moonCount} ${planet.moonCount === 1 ? "MOON" : "MOONS"}`);
+  }
+  planetWindowTags.replaceChildren(...tags.map((text) => {
+    const tag = document.createElement("span");
+    tag.className = "planet-window__tag";
+    tag.textContent = text;
+    return tag;
+  }));
+  planetWindowDivider.classList.toggle("empty", tags.length === 0);
+
+  planetWindow.classList.add("visible");
+  planetWindow.setAttribute("aria-hidden", "false");
+}
+
+function renderPlanetStage(planet) {
+  planetWindowStage.replaceChildren();
+
+  // Scale the whole planet + disk + moon system to fill the stage with large margins.
+  const scale = PLANET_STAGE_CONTENT_RADIUS / planet.extentRadius;
+  const center = PLANET_STAGE_SIZE / 2;
+  const displayPlanetRadius = planet.radius * scale;
+
+  if (planet.accretionDisk) {
+    const scaledDisk = {
+      innerRadius: planet.accretionDisk.innerRadius * scale,
+      outerRadius: planet.accretionDisk.outerRadius * scale,
+      cutRadii: planet.accretionDisk.cutRadii.map((cutRadius) => cutRadius * scale),
+    };
+    const disk = createAccretionDiskElement(
+      scaledDisk,
+      planet.diskShadowAngle,
+      displayPlanetRadius * 2,
+    );
+    disk.className = "planet-window__disk";
+    planetWindowStage.append(disk);
+  }
+
+  if (planet.moonCount > 0) {
+    const orbitRadius = planet.moonOrbitRadius * scale;
+    const orbit = document.createElement("div");
+    orbit.className = "planet-window__moon-orbit";
+    orbit.style.width = `${orbitRadius * 2}px`;
+    orbit.style.height = `${orbitRadius * 2}px`;
+    planetWindowStage.append(orbit);
+  }
+
+  const planetElement = document.createElement("div");
+  planetElement.className = "planet-window__planet";
+  planetElement.style.width = `${displayPlanetRadius * 2}px`;
+  planetElement.style.height = `${displayPlanetRadius * 2}px`;
+  planetElement.style.background = planet.background;
+  planetElement.append(createPlanetGlow(displayPlanetRadius, planet.starDirX, planet.starDirY));
+  planetElement.append(createPlanetShadow(displayPlanetRadius, planet.starDirX, planet.starDirY));
+  planetWindowStage.append(planetElement);
+
+  for (const moon of planet.moonList) {
+    const moonRadius = moon.radius * scale;
+    const moonElement = document.createElement("div");
+    moonElement.className = "planet-window__moon";
+    moonElement.style.width = `${moonRadius * 2}px`;
+    moonElement.style.height = `${moonRadius * 2}px`;
+    moonElement.style.left = `${center + moon.dx * scale - moonRadius}px`;
+    moonElement.style.top = `${center + moon.dy * scale - moonRadius}px`;
+    moonElement.append(createPlanetGlow(moonRadius, planet.starDirX, planet.starDirY));
+    moonElement.append(createPlanetShadow(moonRadius, planet.starDirX, planet.starDirY));
+    planetWindowStage.append(moonElement);
+  }
+}
+
+function updatePlanetLink() {
+  if (!isPlanetWindowOpen || !openPlanetData?.element) {
+    planetLinkPath.setAttribute("d", "");
+    return;
+  }
+
+  const planetRect = openPlanetData.element.getBoundingClientRect();
+  const planetCenterX = planetRect.left + planetRect.width / 2;
+  const planetCenterY = planetRect.top + planetRect.height / 2;
+  const planetRadius = planetRect.width / 2;
+
+  const windowRect = planetWindow.getBoundingClientRect();
+  const windowCenterX = windowRect.left + windowRect.width / 2;
+  const windowCenterY = windowRect.top + windowRect.height / 2;
+
+  // Unit vector from the planet centre toward the window centre.
+  const toWindowX = windowCenterX - planetCenterX;
+  const toWindowY = windowCenterY - planetCenterY;
+  const distance = Math.hypot(toWindowX, toWindowY) || 1;
+  const dirX = toWindowX / distance;
+  const dirY = toWindowY / distance;
+
+  // Start: nearest point on the planet — its edge toward the window centre.
+  const startX = planetCenterX + dirX * planetRadius;
+  const startY = planetCenterY + dirY * planetRadius;
+
+  // End: nearest point on the window frame, modelled as a rounded rectangle so
+  // the attachment point and its normal rotate smoothly around the corners.
+  const cornerRadius = Math.min(30, windowRect.width / 2, windowRect.height / 2);
+  const skeletonX = THREE.MathUtils.clamp(
+    planetCenterX,
+    windowRect.left + cornerRadius,
+    windowRect.right - cornerRadius,
+  );
+  const skeletonY = THREE.MathUtils.clamp(
+    planetCenterY,
+    windowRect.top + cornerRadius,
+    windowRect.bottom - cornerRadius,
+  );
+  let normalX = planetCenterX - skeletonX;
+  let normalY = planetCenterY - skeletonY;
+  const normalLength = Math.hypot(normalX, normalY);
+  if (normalLength < 0.001) {
+    normalX = -dirX;
+    normalY = -dirY;
+  } else {
+    normalX /= normalLength;
+    normalY /= normalLength;
+  }
+  const endX = skeletonX + normalX * cornerRadius;
+  const endY = skeletonY + normalY * cornerRadius;
+
+  // Bezier arms scale with the gap the curve actually spans, so a window held
+  // close to the planet produces a short, untangled line.
+  const span = Math.hypot(endX - startX, endY - startY);
+  const arm = Math.min(span * 0.42, 220);
+  const control1X = startX + dirX * arm;
+  const control1Y = startY + dirY * arm;
+  const control2X = endX + normalX * arm;
+  const control2Y = endY + normalY * arm;
+
+  planetLinkPath.setAttribute(
+    "d",
+    `M ${startX.toFixed(1)} ${startY.toFixed(1)} C ${control1X.toFixed(1)} ${control1Y.toFixed(1)}, ${control2X.toFixed(1)} ${control2Y.toFixed(1)}, ${endX.toFixed(1)} ${endY.toFixed(1)}`,
+  );
+}
+
+function closePlanetWindow() {
+  if (!isPlanetWindowOpen) {
+    return;
+  }
+
+  isPlanetWindowOpen = false;
+  openPlanetData = null;
+  isDraggingPlanetWindow = false;
+  planetWindow.classList.remove("visible", "dragging");
+  planetWindow.setAttribute("aria-hidden", "true");
+  planetLinkPath.setAttribute("d", "");
 }
 
 function renderSystemJumps({
@@ -3073,15 +3418,17 @@ function renderSystemJumps({
     gate.querySelectorAll(".system-jump__echo").forEach((ring, ringIndex) => {
       const index = ringIndex + 1;
       const progress = (index - 1) / 11;
-      const distance = 2 + index * 4;
-      const exitDistance = index === 1 ? 0 : 2 + (index - 1) * 4;
+      // First ring offset by 15px; each subsequent gap grows by 3px.
+      const ringDistance = (n) => (n <= 0 ? 0 : 1.5 * n * n + 8.5 * n + 5);
+      const distance = ringDistance(index);
+      const exitDistance = ringDistance(index - 1);
       const channel = Math.round(255 * (1 - progress));
       ring.style.setProperty("--wormhole-x", `${(stepX / 14) * distance}px`);
       ring.style.setProperty("--wormhole-y", `${(stepY / 14) * distance}px`);
       ring.style.setProperty("--wormhole-exit-x", `${(stepX / 14) * exitDistance}px`);
       ring.style.setProperty("--wormhole-exit-y", `${(stepY / 14) * exitDistance}px`);
       ring.style.setProperty("--wormhole-size", `${index * 2}px`);
-      ring.style.setProperty("--wormhole-blur", `${0.15 + progress * 1.85}px`);
+      ring.style.setProperty("--wormhole-blur", `${0.1 + progress * 7.9}px`);
       ring.style.setProperty("--wormhole-alpha", `${0.28 + (index / 12) * 0.72}`);
       ring.style.setProperty("--wormhole-color", `rgba(255, ${channel}, ${channel}, ${0.34 + progress * 0.66})`);
       ring.style.transitionDelay = `${(index - 1) * 42}ms`;
@@ -3656,6 +4003,69 @@ function createPlanetKind(random, sizeIndex) {
     label: "GAS GIANT",
     background: `radial-gradient(circle at 38% 34%, hsl(${hue} ${saturation}% ${Math.min(96, lightness + 14)}%) 0 22%, hsl(${hue} ${saturation}% ${lightness}%) 52%, hsl(${hue} ${Math.max(8, saturation - 8)}% ${Math.max(48, lightness - 22)}%) 100%)`,
   };
+}
+
+// Light circle offset toward the star; shadow width on axis equals this offset,
+// so 2R/5 leaves a shadow ~1/5 of the disc with a concave (curved) edge.
+const PLANET_SHADOW_OFFSET = 2 / 5;
+
+function createPlanetShadow(radius, starDirX, starDirY) {
+  // The circle is a sphere: cast a concave (crescent) shadow opposite the star,
+  // modelled as the planet minus an equal-radius "light" circle toward the star.
+  // The overlay is padded 1px so its solid black fully covers the planet rim on
+  // the dark side (any spill lands on black space and stays invisible).
+  const pad = 1;
+  const center = radius + pad;
+  const lightOffset = radius * PLANET_SHADOW_OFFSET;
+  const lightCx = center + starDirX * lightOffset;
+  const lightCy = center + starDirY * lightOffset;
+  const blur = Math.max(radius * 0.16, 0.6);
+
+  const shadow = document.createElement("div");
+  shadow.className = "system-planet-shadow";
+  shadow.style.width = `${center * 2}px`;
+  shadow.style.height = `${center * 2}px`;
+  shadow.style.left = `${-pad}px`;
+  shadow.style.top = `${-pad}px`;
+  shadow.style.background =
+    `radial-gradient(circle at ${lightCx.toFixed(2)}px ${lightCy.toFixed(2)}px, ` +
+    `rgba(0, 0, 0, 0) ${(radius - blur).toFixed(2)}px, ` +
+    `rgba(0, 0, 0, 1) ${(radius + blur).toFixed(2)}px)`;
+  return shadow;
+}
+
+function createPlanetGlow(radius, starDirX, starDirY) {
+  // Rim glow, sized relative to the planet, masked off on the shadowed side so
+  // the planet only glows where it is lit. The glow peaks exactly at the rim
+  // (no gap) and the mask circle shares the shadow's terminator.
+  const glowExtent = Math.max(radius * 0.55, 3);
+
+  const glow = document.createElement("div");
+  glow.className = "system-planet-glow";
+  glow.style.width = `${(radius + glowExtent) * 2}px`;
+  glow.style.height = `${(radius + glowExtent) * 2}px`;
+  glow.style.left = `${-glowExtent}px`;
+  glow.style.top = `${-glowExtent}px`;
+  glow.style.background =
+    `radial-gradient(circle, ` +
+    `rgba(255, 255, 255, 0) ${(radius - 1).toFixed(2)}px, ` +
+    `rgba(255, 255, 255, 0.42) ${radius.toFixed(2)}px, ` +
+    `rgba(255, 255, 255, 0.13) ${(radius + glowExtent * 0.42).toFixed(2)}px, ` +
+    `rgba(255, 255, 255, 0) ${(radius + glowExtent).toFixed(2)}px)`;
+
+  // Mask circle: same terminator as the shadow, enlarged to cover the rim glow.
+  const maskRadius = radius + glowExtent;
+  const maskOffset = radius * PLANET_SHADOW_OFFSET + glowExtent;
+  const maskCx = maskRadius + starDirX * maskOffset;
+  const maskCy = maskRadius + starDirY * maskOffset;
+  const soft = radius * 0.4;
+  const maskImage =
+    `radial-gradient(circle at ${maskCx.toFixed(2)}px ${maskCy.toFixed(2)}px, ` +
+    `#000 ${(maskRadius - soft).toFixed(2)}px, ` +
+    `rgba(0, 0, 0, 0) ${(maskRadius + soft).toFixed(2)}px)`;
+  glow.style.maskImage = maskImage;
+  glow.style.webkitMaskImage = maskImage;
+  return glow;
 }
 
 function createAsteroidBelt(random, orbitRadius) {
@@ -4413,6 +4823,10 @@ function animate() {
     }
   } else if (activeSystemStarSurface) {
     drawSystemStarSurface(activeSystemStarSurface, now);
+  }
+
+  if (isPlanetWindowOpen) {
+    updatePlanetLink();
   }
 
   renderer.clear(true, true, true);

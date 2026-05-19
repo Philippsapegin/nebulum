@@ -184,6 +184,24 @@
           <button id="toggle-tidal-zone" class="zone-toggle" type="button" aria-pressed="false">Tidal Lock</button>
           <button id="toggle-hz-zone" class="zone-toggle" type="button" aria-pressed="false">Habitable Zone</button>
         </div>
+        <svg id="planet-link" class="planet-link" aria-hidden="true">
+          <path id="planet-link-path"></path>
+        </svg>
+        <div id="planet-window" class="planet-window" aria-hidden="true">
+          <button id="planet-window-close" class="planet-window__close" type="button" aria-label="Close">
+            <span aria-hidden="true">&times;</span>
+          </button>
+          <div class="planet-window__visual">
+            <div id="planet-window-title" class="planet-window__title"></div>
+            <div id="planet-window-size" class="planet-window__size"></div>
+            <div id="planet-window-stage" class="planet-window__stage"></div>
+          </div>
+          <div class="planet-window__info">
+            <div id="planet-window-lore" class="planet-window__lore"></div>
+            <div id="planet-window-divider" class="planet-window__divider"></div>
+            <div id="planet-window-tags" class="planet-window__tags"></div>
+          </div>
+        </div>
       </section>
     </main>
     <script type="module" src="/src/main.js"></script>

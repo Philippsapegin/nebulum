@@ -398,7 +398,7 @@ body.system-open .music-player {
 .system-glow {
   position: absolute;
   inset: 0;
-  z-index: 0;
+  z-index: 3;
   width: 100%;
   height: 100%;
   pointer-events: none;
@@ -559,9 +559,17 @@ body.system-open .music-player {
 .system-planet {
   border-radius: 50%;
   pointer-events: none;
-  box-shadow:
-    0 0 10px rgba(255, 255, 255, 0.46),
-    0 0 24px rgba(255, 255, 255, 0.18);
+}
+
+.system-planet-glow {
+  position: absolute;
+  pointer-events: none;
+}
+
+.system-planet-shadow {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
 }
 
 .system-asteroid-belt {
@@ -1539,6 +1547,195 @@ body.system-open .music-player {
     rgba(96, 232, 156, 0.16) var(--hz-inner-pct, 0%),
     rgba(96, 232, 156, 0.16) 100%
   );
+}
+
+.planet-window {
+  --pw-x: 0px;
+  --pw-y: 0px;
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 38;
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 4px;
+  background: rgba(10, 10, 11, 0.62);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transform: translate(calc(-50% + var(--pw-x)), calc(-50% + var(--pw-y))) scale(0.55);
+  pointer-events: none;
+  cursor: move;
+  transition:
+    opacity 200ms ease,
+    transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.planet-window.visible {
+  opacity: 1;
+  transform: translate(calc(-50% + var(--pw-x)), calc(-50% + var(--pw-y))) scale(1);
+  pointer-events: auto;
+}
+
+.planet-window.dragging {
+  transition: opacity 200ms ease;
+}
+
+.planet-window__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  transition: color 160ms, background 160ms;
+}
+
+.planet-window__close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.planet-window__visual {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  cursor: default;
+}
+
+.planet-window__title {
+  width: 292px;
+  height: 18px;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 18px;
+  text-align: center;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.planet-window__size {
+  width: 292px;
+  height: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  line-height: 12px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.planet-window__stage {
+  position: relative;
+  width: 292px;
+  height: 292px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.25);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.planet-window__disk,
+.planet-window__planet,
+.planet-window__moon-orbit {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.planet-window__disk {
+  opacity: 0.82;
+}
+
+.planet-window__planet {
+  border-radius: 50%;
+}
+
+.planet-window__moon-orbit {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+}
+
+.planet-window__moon {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.82);
+  pointer-events: none;
+}
+
+.planet-link {
+  position: absolute;
+  inset: 0;
+  z-index: 37;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.planet-link path {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.34);
+  stroke-width: 1;
+}
+
+.planet-window__info {
+  display: flex;
+  flex-direction: column;
+  width: 256px;
+  cursor: default;
+}
+
+.planet-window__lore {
+  flex: 1;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.planet-window__divider {
+  height: 1px;
+  margin: 12px 0;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.planet-window__divider.empty {
+  display: none;
+}
+
+.planet-window__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.planet-window__tag {
+  padding: 4px 7px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 @media (max-width: 640px) {
