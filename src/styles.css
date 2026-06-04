@@ -25,6 +25,10 @@ body {
     linear-gradient(180deg, #080809 0%, #030304 100%);
 }
 
+body.webgl-context-lost {
+  background: #050506;
+}
+
 .filter-defs {
   position: absolute;
   width: 0;
@@ -384,6 +388,9 @@ body.system-open .music-player {
   background: #000;
   --system-transition-x: 0px;
   --system-transition-y: 0px;
+  --planet-entry-origin-x: 50vw;
+  --planet-entry-origin-y: 50vh;
+  --planet-entry-scale: 1;
   opacity: 0;
   overflow: hidden;
   pointer-events: none;
@@ -398,7 +405,7 @@ body.system-open .music-player {
 .system-glow {
   position: absolute;
   inset: 0;
-  z-index: 3;
+  z-index: 4;
   width: 100%;
   height: 100%;
   pointer-events: none;
@@ -416,12 +423,27 @@ body.system-open .music-player {
 .star-system {
   position: absolute;
   inset: 0;
-  z-index: 2;
+  z-index: 3;
   overflow: visible;
+  transform-origin: var(--planet-entry-origin-x) var(--planet-entry-origin-y);
   transform: translate(
     calc(var(--system-parallax-x, 0px) + var(--system-transition-x, 0px)),
     calc(var(--system-parallax-y, 0px) + var(--system-transition-y, 0px))
-  );
+  ) scale(var(--planet-entry-scale, 1));
+  transition: transform 120ms ease-out;
+}
+
+.system-star-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  overflow: visible;
+  pointer-events: none;
+  transform-origin: var(--planet-entry-origin-x) var(--planet-entry-origin-y);
+  transform: translate(
+    calc(var(--system-parallax-x, 0px) + var(--system-transition-x, 0px)),
+    calc(var(--system-parallax-y, 0px) + var(--system-transition-y, 0px))
+  ) scale(var(--planet-entry-scale, 1));
   transition: transform 120ms ease-out;
 }
 
@@ -430,10 +452,11 @@ body.system-open .music-player {
   inset: -96px;
   z-index: 1;
   overflow: visible;
+  transform-origin: var(--planet-entry-origin-x) var(--planet-entry-origin-y);
   transform: translate(
     calc(var(--parallax-x, 0px) + var(--system-transition-x, 0px)),
     calc(var(--parallax-y, 0px) + var(--system-transition-y, 0px))
-  );
+  ) scale(var(--planet-entry-scale, 1));
   transition: transform 120ms ease-out;
 }
 
@@ -442,10 +465,11 @@ body.system-open .music-player {
   inset: -128px;
   z-index: 33;
   overflow: visible;
+  transform-origin: var(--planet-entry-origin-x) var(--planet-entry-origin-y);
   transform: translate(
     calc(var(--particle-parallax-x, 0px) + var(--system-transition-x, 0px)),
     calc(var(--particle-parallax-y, 0px) + var(--system-transition-y, 0px))
-  );
+  ) scale(var(--planet-entry-scale, 1));
   transition: transform 120ms ease-out;
   pointer-events: none;
 }
@@ -455,6 +479,7 @@ body.system-open .music-player {
 }
 
 .star-window.system-transitioning .star-system,
+.star-window.system-transitioning .system-star-layer,
 .star-window.system-transitioning .system-stars,
 .star-window.system-transitioning .system-particles {
   transition: none;
@@ -464,6 +489,101 @@ body.system-open .music-player {
 .star-window.system-transitioning .system-jump,
 .star-window.system-transitioning .system-planet-hit {
   pointer-events: none;
+}
+
+.star-window.planet-entry-moving .star-system,
+.star-window.planet-entry-moving .system-star-layer,
+.star-window.planet-entry-moving .system-stars,
+.star-window.planet-entry-moving .system-particles {
+  transition: transform 860ms cubic-bezier(0.72, 0, 0.18, 1);
+}
+
+.star-window.planet-entry-moving .system-top-bar,
+.star-window.planet-entry-moving .system-jump,
+.star-window.planet-entry-moving .system-planet-hit {
+  pointer-events: none;
+}
+
+.planet-entry-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 48;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, var(--planet-entry-alpha, 0));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    background 520ms ease,
+    opacity 220ms ease;
+}
+
+.planet-entry-overlay.active {
+  opacity: 1;
+}
+
+.planet-entry-overlay.leaving {
+  transition:
+    background 420ms ease,
+    opacity 420ms ease;
+}
+
+.planet-entry-card {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  color: #fff;
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity 420ms ease 260ms,
+    transform 520ms cubic-bezier(0.16, 1, 0.3, 1) 260ms;
+}
+
+.planet-entry-overlay.active .planet-entry-card {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.planet-entry-overlay.leaving .planet-entry-card {
+  opacity: 0;
+  transform: translateY(-6px);
+  transition:
+    opacity 260ms ease,
+    transform 320ms ease;
+}
+
+.planet-entry-name {
+  font-family: "Wire One", "Albert Sans", sans-serif;
+  font-size: 72px;
+  font-weight: 400;
+  line-height: 0.82;
+  text-transform: uppercase;
+  text-shadow:
+    0 0 18px rgba(255, 255, 255, 0.22),
+    0 1px 10px rgba(0, 0, 0, 0.62);
+}
+
+.planet-entry-line {
+  width: min(360px, 34vw);
+  height: 1px;
+  background: rgba(255, 255, 255, 0.86);
+  transform: scaleX(0);
+  transform-origin: center;
+  transition: transform 460ms cubic-bezier(0.16, 1, 0.3, 1) 520ms;
+}
+
+.planet-entry-overlay.active .planet-entry-line {
+  transform: scaleX(1);
+}
+
+.planet-entry-type {
+  color: rgba(255, 255, 255, 0.74);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 .system-bg-star {
@@ -558,18 +678,90 @@ body.system-open .music-player {
 
 .system-planet {
   border-radius: 50%;
+  overflow: visible;
   pointer-events: none;
+}
+
+.system-planet__surface,
+.planet-window__surface {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+  contain: paint;
+}
+
+.gas-giant-texture,
+.gas-giant-highlight {
+  position: absolute;
+  display: block;
+  pointer-events: none;
+}
+
+.gas-giant-texture {
+  inset: 0;
+  z-index: 0;
+  border-radius: 50%;
+  overflow: hidden;
+}
+
+.gas-giant-texture__drift {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  display: block;
+  width: max(900%, calc(var(--gas-giant-tile-width, 100%) * 4));
+  height: max(900%, calc(var(--gas-giant-tile-height, 100%) * 8));
+  background-image: var(--gas-giant-texture);
+  background-repeat: repeat;
+  background-size: var(--gas-giant-tile-width, 100%) var(--gas-giant-tile-height, 100%);
+  background-position: center;
+  transform: translate3d(-50%, -50%, 0) rotate(var(--gas-giant-angle, 0rad)) translate3d(0, 0, 0);
+  transform-origin: center;
+  will-change: transform;
+}
+
+.gas-giant-texture__drift--static {
+  will-change: auto;
+}
+
+.gas-giant-highlight {
+  inset: 0;
+  z-index: 1;
+  border-radius: 0;
+  background-image:
+    radial-gradient(circle at 38% 34%, rgba(255, 255, 255, 0.28), transparent 0 34%, rgba(255, 255, 255, 0.08) 52%, transparent 72%);
 }
 
 .system-planet-glow {
   position: absolute;
   pointer-events: none;
+  z-index: 1;
+}
+
+.planet-screen__planet-glow {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 3;
 }
 
 .system-planet-shadow {
   position: absolute;
   border-radius: 50%;
   pointer-events: none;
+  z-index: 3;
+}
+
+.system-planet-inner-light {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: 50%;
+  pointer-events: none;
+  mix-blend-mode: screen;
 }
 
 .system-asteroid-belt {
@@ -592,9 +784,10 @@ body.system-open .music-player {
 
 .system-moon {
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.82);
+  background: rgba(190, 190, 190, 0.82);
+  overflow: visible;
   pointer-events: none;
-  box-shadow: 0 0 7px rgba(255, 255, 255, 0.28);
+  box-shadow: none;
 }
 
 .system-planet-label {
@@ -1611,11 +1804,12 @@ body.system-open .music-player {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 0;
   cursor: default;
 }
 
 .planet-window__title {
+  display: none;
   width: 292px;
   height: 18px;
   overflow: hidden;
@@ -1630,6 +1824,7 @@ body.system-open .music-player {
 }
 
 .planet-window__size {
+  display: none;
   width: 292px;
   height: 12px;
   color: rgba(255, 255, 255, 0.5);
@@ -1644,20 +1839,56 @@ body.system-open .music-player {
 .planet-window__stage {
   position: relative;
   width: 292px;
-  height: 292px;
+  height: 380px;
   border-radius: 3px;
   background: rgba(0, 0, 0, 0.25);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
   overflow: hidden;
 }
 
+.planet-window__caption {
+  position: absolute;
+  z-index: 7;
+  min-width: 74px;
+  max-width: 106px;
+  padding: 7px 8px 6px;
+  border-radius: 3px;
+  background: rgba(5, 6, 10, 0.68);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+.planet-window__caption-name {
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.05;
+  text-align: left;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.planet-window__caption-size {
+  margin-top: 4px;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.52);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+  text-align: left;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .planet-window__disk,
 .planet-window__planet,
 .planet-window__moon-orbit {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
   pointer-events: none;
 }
 
@@ -1665,19 +1896,36 @@ body.system-open .music-player {
   opacity: 0.82;
 }
 
+.planet-window__disk--bottom {
+  transform: none;
+}
+
 .planet-window__planet {
   border-radius: 50%;
+  overflow: visible;
 }
 
 .planet-window__moon-orbit {
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(255, 255, 255, 0.28);
   border-radius: 50%;
+  mask-image: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(0, 0, 0, 0) 126deg,
+    #000 164deg,
+    #000 196deg,
+    rgba(0, 0, 0, 0) 234deg,
+    transparent 360deg
+  );
+  -webkit-mask-image: conic-gradient(from 0deg, transparent 0deg, rgba(0, 0, 0, 0) 126deg, #000 164deg, #000 196deg, rgba(0, 0, 0, 0) 234deg, transparent 360deg);
 }
 
 .planet-window__moon {
   position: absolute;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.82);
+  background: rgba(190, 190, 190, 0.82);
+  overflow: visible;
   pointer-events: none;
 }
 
@@ -1695,6 +1943,154 @@ body.system-open .music-player {
   fill: none;
   stroke: rgba(255, 255, 255, 0.34);
   stroke-width: 1;
+}
+
+.planet-screen {
+  --planet-screen-parallax-x: 0px;
+  --planet-screen-parallax-y: 0px;
+  position: absolute;
+  inset: 0;
+  z-index: 39;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(1.035);
+  transition:
+    opacity 280ms ease,
+    transform 520ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.planet-screen.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: scale(1);
+}
+
+.planet-screen__top-bar {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  z-index: 20;
+  display: flex;
+  gap: 8px;
+}
+
+.planet-screen__layer {
+  position: absolute;
+  inset: -80px;
+  pointer-events: none;
+  transform: translate(
+    calc(var(--planet-screen-parallax-x, 0px) * var(--planet-screen-depth, 0)),
+    calc(var(--planet-screen-parallax-y, 0px) * var(--planet-screen-depth, 0))
+  );
+  transition: transform 120ms ease-out;
+}
+
+.planet-screen__layer--background {
+  z-index: 1;
+}
+
+.planet-screen__layer--planet {
+  z-index: 2;
+}
+
+.planet-screen__layer--moon-1 {
+  z-index: 3;
+}
+
+.planet-screen__layer--moon-2 {
+  z-index: 4;
+}
+
+.planet-screen__layer--moon-3 {
+  z-index: 5;
+}
+
+.planet-screen__star {
+  position: absolute;
+  z-index: 1;
+  width: 1px;
+  height: 1px;
+  background: #fff;
+}
+
+.planet-screen__parent-star {
+  position: absolute;
+  z-index: 2;
+  border-radius: 50%;
+  box-shadow:
+    0 0 44px currentColor,
+    0 0 150px color-mix(in srgb, currentColor 40%, transparent),
+    0 0 340px color-mix(in srgb, currentColor 18%, transparent);
+}
+
+.planet-screen__star-hover-glow {
+  position: absolute;
+  z-index: 0;
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle,
+      color-mix(in srgb, currentColor 34%, transparent) 0 12%,
+      color-mix(in srgb, currentColor 20%, transparent) 32%,
+      color-mix(in srgb, currentColor 8%, transparent) 56%,
+      transparent 74%);
+  transform: translate(-50%, -50%) scale(0.92);
+  will-change: opacity, transform;
+}
+
+.planet-screen__planet {
+  position: absolute;
+  border-radius: 50%;
+  overflow: visible;
+}
+
+.planet-screen__sphere-surface {
+  position: absolute;
+  z-index: 2;
+  display: block;
+  pointer-events: none;
+}
+
+.planet-screen__moon {
+  position: absolute;
+  border-radius: 50%;
+  overflow: hidden;
+  background: radial-gradient(circle at 38% 34%, #fff 0 24%, rgba(210, 210, 210, 0.9) 58%, rgba(120, 120, 120, 0.92) 100%);
+  box-shadow: none;
+}
+
+.planet-screen__moon-label {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  text-shadow: 0 0 8px rgba(0, 0, 0, 0.8);
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.planet-screen__title {
+  position: absolute;
+  right: 24px;
+  bottom: 18px;
+  z-index: 20;
+  color: rgba(255, 255, 255, 0.86);
+  font-family: "Wire One", "Albert Sans", sans-serif;
+  font-size: 46px;
+  font-weight: 400;
+  line-height: 0.9;
+  text-align: right;
+  text-shadow:
+    0 0 14px rgba(255, 255, 255, 0.12),
+    0 1px 8px rgba(0, 0, 0, 0.44);
+  text-transform: uppercase;
+  pointer-events: none;
 }
 
 .planet-window__info {

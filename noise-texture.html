@@ -1,0 +1,1067 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tileable Noise Texture</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: flex-start;
+        gap: 22px;
+        padding: 26px;
+        background: #08080a;
+        color: rgba(255, 255, 255, 0.86);
+        font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+      }
+
+      h1 {
+        margin: 0 0 6px;
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+
+      .sub {
+        margin: 0 0 18px;
+        color: rgba(255, 255, 255, 0.4);
+        font-size: 11px;
+      }
+
+      .panel {
+        width: 304px;
+        flex: none;
+        padding: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        background: #131317;
+      }
+
+      .field {
+        margin: 0 0 16px;
+      }
+
+      .field__label {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 6px;
+        color: rgba(255, 255, 255, 0.55);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .field__label output {
+        color: rgba(255, 255, 255, 0.85);
+      }
+
+      input[type="text"] {
+        width: 100%;
+        height: 30px;
+        padding: 0 9px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.04);
+        color: inherit;
+        font: inherit;
+      }
+
+      input[type="range"] {
+        width: 100%;
+        accent-color: #6f9bff;
+      }
+
+      .seed-row {
+        display: flex;
+        gap: 6px;
+      }
+
+      button {
+        height: 30px;
+        padding: 0 12px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.05);
+        color: rgba(255, 255, 255, 0.86);
+        font: inherit;
+        cursor: pointer;
+        transition: background 140ms, border-color 140ms;
+      }
+
+      button:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.1);
+        border-color: rgba(255, 255, 255, 0.22);
+      }
+
+      button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+
+      .seed-row button {
+        flex: none;
+        width: 34px;
+        padding: 0;
+        font-size: 15px;
+      }
+
+      .btn-block {
+        width: 100%;
+      }
+
+      .grad-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+
+      .grad-head button {
+        height: 24px;
+        padding: 0 9px;
+        font-size: 11px;
+      }
+
+      .grad-preview {
+        height: 22px;
+        border-radius: 5px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+      }
+
+      .grad-stops {
+        margin-top: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+
+      .grad-stop {
+        display: grid;
+        grid-template-columns: 34px 1fr 26px;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .grad-stop__controls {
+        display: grid;
+        gap: 5px;
+      }
+
+      .grad-stop__row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .mini-number {
+        width: 48px;
+        height: 24px;
+        padding: 0 5px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.04);
+        color: inherit;
+        font: inherit;
+        font-size: 11px;
+      }
+
+      .mini-label {
+        width: 22px;
+        color: rgba(255, 255, 255, 0.42);
+        font-size: 10px;
+        text-transform: uppercase;
+      }
+
+      .grad-stop input[type="color"] {
+        width: 34px;
+        height: 26px;
+        padding: 0;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 5px;
+        background: none;
+        cursor: pointer;
+      }
+
+      .grad-stop input[type="range"] {
+        flex: 1;
+      }
+
+      .grad-stop .remove {
+        width: 26px;
+        height: 26px;
+        padding: 0;
+        font-size: 14px;
+        line-height: 1;
+      }
+
+      .divider {
+        height: 1px;
+        margin: 18px 0;
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .palette-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+      }
+
+      select {
+        width: 100%;
+        height: 30px;
+        padding: 0 9px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.04);
+        color: inherit;
+        font: inherit;
+      }
+
+      .status {
+        min-height: 16px;
+        margin-top: 8px;
+        color: rgba(255, 255, 255, 0.42);
+        font-size: 10px;
+        text-transform: uppercase;
+      }
+
+      .view {
+        display: grid;
+        grid-template-columns: repeat(2, 384px);
+        align-items: start;
+        gap: 8px 20px;
+      }
+
+      .view__label {
+        color: rgba(255, 255, 255, 0.4);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      canvas {
+        height: 384px;
+        width: auto;
+        display: block;
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: #000;
+      }
+
+      .preview {
+        width: 384px;
+        height: 384px;
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background-repeat: repeat;
+      }
+
+      .wide-canvas {
+        width: 768px;
+        height: 384px;
+      }
+
+      .gas-preview-cell {
+        display: grid;
+        place-items: center;
+        width: 384px;
+        height: 384px;
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: #000;
+      }
+
+      .gas-planet {
+        --gas-texture: none;
+        --gas-offset: 0px;
+        position: relative;
+        flex: none;
+        width: 256px;
+        height: 256px;
+        border-radius: 50%;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 38% 34%, rgba(255, 255, 255, 0.28), transparent 0 34%, rgba(255, 255, 255, 0.08) 52%, transparent 72%),
+          var(--gas-texture);
+        background-size: auto, 512px 256px;
+        background-position: center, var(--gas-offset) center;
+        box-shadow:
+          0 0 13px rgba(255, 255, 255, 0.46),
+          0 0 32px rgba(255, 255, 255, 0.18);
+        animation: gasDrift 18s linear infinite;
+      }
+
+      .gas-planet::before {
+        content: "";
+        position: absolute;
+        inset: -34px;
+        border-radius: 50%;
+        background:
+          radial-gradient(circle,
+            rgba(255, 255, 255, 0) 104px,
+            rgba(255, 255, 255, 0.42) 128px,
+            rgba(255, 255, 255, 0.13) 152px,
+            rgba(255, 255, 255, 0) 184px);
+        mask-image: radial-gradient(circle at 92px 128px, #000 118px, rgba(0, 0, 0, 0) 178px);
+        pointer-events: none;
+      }
+
+      .gas-planet::after {
+        content: "";
+        position: absolute;
+        inset: -1px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 102px 128px, transparent 78px, rgba(0, 0, 0, 0.95) 126px);
+        pointer-events: none;
+      }
+
+      @keyframes gasDrift {
+        from {
+          background-position: center, 0 center;
+        }
+        to {
+          background-position: center, -512px center;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <aside class="panel">
+      <h1>Tileable Noise Texture</h1>
+      <p class="sub">Seamless procedural noise generated from a seed.</p>
+
+      <div class="field">
+        <div class="field__label"><span>Seed</span></div>
+        <div class="seed-row">
+          <input id="seed" type="text" autocomplete="off" value="nebulum" />
+          <button id="randomize" type="button" title="Random seed">&#10227;</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field__label"><span>Scale</span><output id="scaleVal"></output></div>
+        <input id="scale" type="range" min="10" max="24" step="1" value="16" />
+      </div>
+
+      <div class="field">
+        <div class="field__label"><span>Octaves</span><output id="octavesVal"></output></div>
+        <input id="octaves" type="range" min="4" max="4" step="1" value="4" />
+      </div>
+
+      <button id="aspect" class="btn-block" type="button">Stretch to 2&times;1</button>
+
+      <div class="field">
+        <div class="field__label"><span>Horizontal stretch</span><output id="stretchVal"></output></div>
+        <input id="stretch" type="range" min="3" max="12" step="0.25" value="6" />
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="field">
+        <div class="field__label"><span>Saved palette</span></div>
+        <select id="paletteSelect"></select>
+      </div>
+
+      <div class="field">
+        <div class="field__label"><span>Palette name</span></div>
+        <input id="paletteName" type="text" autocomplete="off" />
+      </div>
+
+      <div class="palette-actions">
+        <button id="newPalette" type="button">Add palette</button>
+        <button id="savePalette" type="button">Save</button>
+      </div>
+      <div id="saveStatus" class="status"></div>
+
+      <div class="divider"></div>
+
+      <div class="grad-head">
+        <span class="field__label" style="margin: 0">Gradient</span>
+        <button id="addColor" type="button">+ Color</button>
+      </div>
+      <div id="gradPreview" class="grad-preview"></div>
+      <div id="gradStops" class="grad-stops"></div>
+
+      <div class="divider"></div>
+
+      <button id="download" class="btn-block" type="button">Download PNG</button>
+    </aside>
+
+    <main class="view">
+      <div class="view__label"><span id="resLabel"></span> &mdash; the tile</div>
+      <div class="view__label">Tiled preview</div>
+      <canvas id="canvas"></canvas>
+      <div id="preview" class="preview"></div>
+      <div class="view__label">Gas giant preview</div>
+      <div class="view__label"></div>
+      <div class="gas-preview-cell">
+        <div id="gasPlanetPreview" class="gas-planet"></div>
+      </div>
+      <canvas id="stretchedCanvas" class="wide-canvas" hidden></canvas>
+    </main>
+
+    <script type="module">
+      import { GAS_GIANT_PALETTES } from "./src/gasGiantPalettes.js";
+
+      const HEIGHT = 512;
+      const STRETCHED_ASPECT = 2;
+      const PERSISTENCE = 0.5;
+      const MAX_STOPS = 5;
+
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+      const preview = document.getElementById("preview");
+      const stretchedCanvas = document.getElementById("stretchedCanvas");
+      const stretchedCtx = stretchedCanvas.getContext("2d");
+      const gasPlanetPreview = document.getElementById("gasPlanetPreview");
+
+      const seedInput = document.getElementById("seed");
+      const scaleInput = document.getElementById("scale");
+      const octavesInput = document.getElementById("octaves");
+      const stretchInput = document.getElementById("stretch");
+      const scaleVal = document.getElementById("scaleVal");
+      const octavesVal = document.getElementById("octavesVal");
+      const stretchVal = document.getElementById("stretchVal");
+      const aspectButton = document.getElementById("aspect");
+      const paletteSelect = document.getElementById("paletteSelect");
+      const paletteNameInput = document.getElementById("paletteName");
+      const newPaletteButton = document.getElementById("newPalette");
+      const savePaletteButton = document.getElementById("savePalette");
+      const saveStatus = document.getElementById("saveStatus");
+      const gradPreview = document.getElementById("gradPreview");
+      const gradStops = document.getElementById("gradStops");
+      const addColorButton = document.getElementById("addColor");
+      const resLabel = document.getElementById("resLabel");
+
+      let aspect = 1; // 1 => 1x1, 2 => 2x1
+      let palettes = clonePalettes(GAS_GIANT_PALETTES);
+      let activePaletteId = palettes[0]?.id ?? "custom";
+      let gradientStops = cloneStops(palettes[0]?.stops ?? [
+        { pos: 0, color: "#05060d", hueShift: [-4, 4], brightnessShift: [-5, 5] },
+        { pos: 1, color: "#eef1ff", hueShift: [-4, 4], brightnessShift: [-5, 5] },
+      ]);
+
+      let noiseField = null;
+      let noiseW = 0;
+      let noiseH = 0;
+      let stretchedNoiseField = null;
+      let stretchedNoiseW = 0;
+      let stretchedNoiseH = 0;
+      const gradientLUT = new Uint8ClampedArray(256 * 3);
+
+      function clonePalettes(source) {
+        return source.map((palette) => ({
+          ...palette,
+          stops: cloneStops(palette.stops),
+        }));
+      }
+
+      function cloneStops(stops) {
+        return stops.map((stop) => normalizeStop(stop));
+      }
+
+      function normalizeStop(stop) {
+        return {
+          pos: Number.isFinite(stop.pos) ? stop.pos : 0,
+          color: stop.color || "#ffffff",
+          hueShift: [
+            Number.isFinite(stop.hueShift?.[0]) ? stop.hueShift[0] : 0,
+            Number.isFinite(stop.hueShift?.[1]) ? stop.hueShift[1] : 0,
+          ],
+          brightnessShift: [
+            Number.isFinite(stop.brightnessShift?.[0]) ? stop.brightnessShift[0] : 0,
+            Number.isFinite(stop.brightnessShift?.[1]) ? stop.brightnessShift[1] : 0,
+          ],
+        };
+      }
+
+      // --- Seeded hashing -------------------------------------------------
+      function strToSeed(str) {
+        let h = 2166136261 >>> 0;
+        for (let i = 0; i < str.length; i += 1) {
+          h ^= str.charCodeAt(i);
+          h = Math.imul(h, 16777619);
+        }
+        return h >>> 0;
+      }
+
+      function cornerHash(octaveSeed, x, y) {
+        let h = (octaveSeed ^ Math.imul(x + 1, 2654435761) ^ Math.imul(y + 1, 2246822519)) >>> 0;
+        h = Math.imul(h ^ (h >>> 15), 2246822519);
+        h = Math.imul(h ^ (h >>> 13), 3266489917);
+        h ^= h >>> 16;
+        return (h >>> 0) / 4294967296;
+      }
+
+      function smooth(t) {
+        return t * t * (3 - 2 * t);
+      }
+
+      // Tileable value noise: grid coordinates wrap modulo freq, so the [0,1)
+      // domain is seamless. freq is always an integer for an exact wrap.
+      function octaveNoise(u, v, freq, octaveSeed) {
+        return octaveNoise2D(u, v, freq, freq, octaveSeed);
+      }
+
+      function octaveNoise2D(u, v, freqX, freqY, octaveSeed) {
+        const gx = u * freqX;
+        const gy = v * freqY;
+        const fx = Math.floor(gx);
+        const fy = Math.floor(gy);
+        const tx = smooth(gx - fx);
+        const ty = smooth(gy - fy);
+        const x0 = ((fx % freqX) + freqX) % freqX;
+        const y0 = ((fy % freqY) + freqY) % freqY;
+        const x1 = (x0 + 1) % freqX;
+        const y1 = (y0 + 1) % freqY;
+        const v00 = cornerHash(octaveSeed, x0, y0);
+        const v10 = cornerHash(octaveSeed, x1, y0);
+        const v01 = cornerHash(octaveSeed, x0, y1);
+        const v11 = cornerHash(octaveSeed, x1, y1);
+        const a = v00 + (v10 - v00) * tx;
+        const b = v01 + (v11 - v01) * tx;
+        return a + (b - a) * ty;
+      }
+
+      function computeNoise() {
+        const baseFreq = Number(scaleInput.value);
+        const octaves = Number(octavesInput.value);
+        noiseH = HEIGHT;
+        noiseW = HEIGHT * aspect;
+        noiseField = new Float32Array(noiseW * noiseH);
+
+        const baseSeed = strToSeed(seedInput.value || " ");
+        const octaveSeeds = [];
+        for (let o = 0; o < octaves; o += 1) {
+          octaveSeeds.push((baseSeed + Math.imul(o + 1, 0x9e3779b9)) >>> 0);
+        }
+
+        let index = 0;
+        for (let y = 0; y < noiseH; y += 1) {
+          const v = y / noiseH;
+          for (let x = 0; x < noiseW; x += 1) {
+            const u = x / noiseW;
+            let sum = 0;
+            let amp = 1;
+            let ampSum = 0;
+            let freq = baseFreq;
+            for (let o = 0; o < octaves; o += 1) {
+              sum += octaveNoise(u, v, freq, octaveSeeds[o]) * amp;
+              ampSum += amp;
+              amp *= PERSISTENCE;
+              freq *= 2;
+            }
+            noiseField[index] = sum / ampSum;
+            index += 1;
+          }
+        }
+      }
+
+      function computeStretchedNoise() {
+        const baseFreq = Number(scaleInput.value);
+        const octaves = Number(octavesInput.value);
+        const stretch = Number(stretchInput.value);
+        stretchedNoiseH = HEIGHT;
+        stretchedNoiseW = HEIGHT * STRETCHED_ASPECT;
+        stretchedNoiseField = new Float32Array(stretchedNoiseW * stretchedNoiseH);
+
+        const baseSeed = strToSeed((seedInput.value || " ") + ":stretched");
+        const octaveSeeds = [];
+        for (let o = 0; o < octaves; o += 1) {
+          octaveSeeds.push((baseSeed + Math.imul(o + 1, 0x9e3779b9)) >>> 0);
+        }
+
+        let index = 0;
+        for (let y = 0; y < stretchedNoiseH; y += 1) {
+          const v = y / stretchedNoiseH;
+          for (let x = 0; x < stretchedNoiseW; x += 1) {
+            const u = x / stretchedNoiseW;
+            let sum = 0;
+            let amp = 1;
+            let ampSum = 0;
+            let freqY = baseFreq;
+            let freqX = Math.max(1, Math.round(baseFreq / stretch));
+            for (let o = 0; o < octaves; o += 1) {
+              sum += octaveNoise2D(u, v, freqX, freqY, octaveSeeds[o]) * amp;
+              ampSum += amp;
+              amp *= PERSISTENCE;
+              freqX = Math.max(1, freqX * 2);
+              freqY *= 2;
+            }
+            stretchedNoiseField[index] = sum / ampSum;
+            index += 1;
+          }
+        }
+      }
+
+      // --- Gradient -------------------------------------------------------
+      function hexToRgb(hex) {
+        const n = parseInt(hex.slice(1), 16);
+        return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+      }
+
+      function rgbToHex([r, g, b]) {
+        return "#" + [r, g, b]
+          .map((channel) => Math.max(0, Math.min(255, Math.round(channel))).toString(16).padStart(2, "0"))
+          .join("");
+      }
+
+      function rgbToHsl([r, g, b]) {
+        r /= 255;
+        g /= 255;
+        b /= 255;
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        let h = 0;
+        let s = 0;
+        const l = (max + min) / 2;
+        if (max !== min) {
+          const d = max - min;
+          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+          h = max === r
+            ? (g - b) / d + (g < b ? 6 : 0)
+            : max === g
+              ? (b - r) / d + 2
+              : (r - g) / d + 4;
+          h /= 6;
+        }
+        return [h * 360, s * 100, l * 100];
+      }
+
+      function hslToRgb([h, s, l]) {
+        h = ((h % 360) + 360) % 360 / 360;
+        s /= 100;
+        l /= 100;
+        if (s === 0) {
+          const gray = l * 255;
+          return [gray, gray, gray];
+        }
+        const hue2rgb = (p, q, t) => {
+          if (t < 0) t += 1;
+          if (t > 1) t -= 1;
+          if (t < 1 / 6) return p + (q - p) * 6 * t;
+          if (t < 1 / 2) return q;
+          if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+          return p;
+        };
+        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+        const p = 2 * l - q;
+        return [
+          hue2rgb(p, q, h + 1 / 3) * 255,
+          hue2rgb(p, q, h) * 255,
+          hue2rgb(p, q, h - 1 / 3) * 255,
+        ];
+      }
+
+      function shiftedColor(stop, random) {
+        const hueRange = stop.hueShift ?? [0, 0];
+        const brightnessRange = stop.brightnessShift ?? [0, 0];
+        const hueShift = hueRange[0] + random() * (hueRange[1] - hueRange[0]);
+        const brightnessShift = brightnessRange[0] + random() * (brightnessRange[1] - brightnessRange[0]);
+        const hsl = rgbToHsl(hexToRgb(stop.color));
+        hsl[0] += hueShift;
+        hsl[2] = Math.max(0, Math.min(100, hsl[2] + brightnessShift));
+        return rgbToHex(hslToRgb(hsl));
+      }
+
+      function sortedStops() {
+        return gradientStops.slice().sort((a, b) => a.pos - b.pos);
+      }
+
+      function buildLUT() {
+        const paletteRandom = seededRandom(strToSeed((seedInput.value || " ") + ":palette:" + activePaletteId));
+        const stops = sortedStops().map((stop) => ({
+          ...stop,
+          color: shiftedColor(stop, paletteRandom),
+        }));
+        const first = hexToRgb(stops[0].color);
+        const last = hexToRgb(stops[stops.length - 1].color);
+        for (let i = 0; i < 256; i += 1) {
+          const t = i / 255;
+          let r;
+          let g;
+          let b;
+          if (t <= stops[0].pos) {
+            [r, g, b] = first;
+          } else if (t >= stops[stops.length - 1].pos) {
+            [r, g, b] = last;
+          } else {
+            let s = 0;
+            while (s < stops.length - 1 && stops[s + 1].pos < t) {
+              s += 1;
+            }
+            const a = stops[s];
+            const c = stops[s + 1];
+            const span = c.pos - a.pos || 1;
+            const k = (t - a.pos) / span;
+            const ca = hexToRgb(a.color);
+            const cc = hexToRgb(c.color);
+            r = ca[0] + (cc[0] - ca[0]) * k;
+            g = ca[1] + (cc[1] - ca[1]) * k;
+            b = ca[2] + (cc[2] - ca[2]) * k;
+          }
+          gradientLUT[i * 3] = r;
+          gradientLUT[i * 3 + 1] = g;
+          gradientLUT[i * 3 + 2] = b;
+        }
+      }
+
+      function seededRandom(seed) {
+        let state = seed >>> 0;
+        return () => {
+          state = Math.imul(state + 0x6d2b79f5, 1);
+          let t = state;
+          t = Math.imul(t ^ (t >>> 15), t | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+
+      // --- Rendering ------------------------------------------------------
+      function renderCanvas() {
+        canvas.width = noiseW;
+        canvas.height = noiseH;
+        const image = ctx.createImageData(noiseW, noiseH);
+        const data = image.data;
+        for (let p = 0; p < noiseField.length; p += 1) {
+          let n = noiseField[p];
+          if (n < 0) n = 0;
+          else if (n > 1) n = 1;
+          const idx = (n * 255) | 0;
+          const offset = p * 4;
+          data[offset] = gradientLUT[idx * 3];
+          data[offset + 1] = gradientLUT[idx * 3 + 1];
+          data[offset + 2] = gradientLUT[idx * 3 + 2];
+          data[offset + 3] = 255;
+        }
+        ctx.putImageData(image, 0, 0);
+        updatePreview();
+        renderStretchedCanvas();
+        resLabel.textContent = noiseW + " × " + noiseH;
+      }
+
+      function updatePreview() {
+        const tileHeight = 384 / 3;
+        const tileWidth = tileHeight * aspect;
+        preview.style.backgroundImage = "url(" + canvas.toDataURL() + ")";
+        preview.style.backgroundSize = tileWidth + "px " + tileHeight + "px";
+      }
+
+      function renderStretchedCanvas() {
+        stretchedCanvas.width = stretchedNoiseW;
+        stretchedCanvas.height = stretchedNoiseH;
+        const image = stretchedCtx.createImageData(stretchedNoiseW, stretchedNoiseH);
+        const data = image.data;
+        for (let p = 0; p < stretchedNoiseField.length; p += 1) {
+          let n = stretchedNoiseField[p];
+          if (n < 0) n = 0;
+          else if (n > 1) n = 1;
+          const idx = (n * 255) | 0;
+          const offset = p * 4;
+          data[offset] = gradientLUT[idx * 3];
+          data[offset + 1] = gradientLUT[idx * 3 + 1];
+          data[offset + 2] = gradientLUT[idx * 3 + 2];
+          data[offset + 3] = 255;
+        }
+        stretchedCtx.putImageData(image, 0, 0);
+        updateStretchedPreview();
+      }
+
+      function updateStretchedPreview() {
+        const tileHeight = 384;
+        const tileWidth = tileHeight * STRETCHED_ASPECT;
+        const textureUrl = "url(" + stretchedCanvas.toDataURL() + ")";
+        gasPlanetPreview.style.setProperty("--gas-texture", textureUrl);
+      }
+
+      function updateGradientPreview() {
+        const stops = sortedStops();
+        const parts = stops.map(
+          (stop) => stop.color + " " + Math.round(stop.pos * 100) + "%",
+        );
+        gradPreview.style.background = "linear-gradient(to right, " + parts.join(", ") + ")";
+      }
+
+      // --- Gradient editor UI --------------------------------------------
+      function renderPaletteSelect() {
+        paletteSelect.replaceChildren(...palettes.map((palette) => {
+          const option = document.createElement("option");
+          option.value = palette.id;
+          option.textContent = palette.name;
+          return option;
+        }));
+        paletteSelect.value = activePaletteId;
+        const active = getActivePalette();
+        paletteNameInput.value = active?.name ?? "";
+      }
+
+      function getActivePalette() {
+        return palettes.find((palette) => palette.id === activePaletteId) ?? palettes[0] ?? null;
+      }
+
+      function applyActivePalette() {
+        const active = getActivePalette();
+        if (!active) {
+          return;
+        }
+        activePaletteId = active.id;
+        gradientStops = cloneStops(active.stops);
+        renderPaletteSelect();
+        refreshGradient();
+      }
+
+      function slugifyName(name) {
+        const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+        return base || "palette";
+      }
+
+      function uniquePaletteId(name) {
+        const base = slugifyName(name);
+        let id = base;
+        let index = 2;
+        while (palettes.some((palette) => palette.id === id)) {
+          id = `${base}-${index}`;
+          index += 1;
+        }
+        return id;
+      }
+
+      function syncActivePaletteFromEditor() {
+        const active = getActivePalette();
+        if (!active) {
+          return;
+        }
+        active.name = paletteNameInput.value.trim() || active.name;
+        active.stops = cloneStops(gradientStops);
+        renderPaletteSelect();
+      }
+
+      async function savePalettesToSource() {
+        syncActivePaletteFromEditor();
+        saveStatus.textContent = "Saving...";
+        try {
+          const response = await fetch("/api/gas-giant-palettes", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(palettes),
+          });
+          const result = await response.json();
+          if (!response.ok || !result.ok) {
+            throw new Error(result.error || "Save failed");
+          }
+          saveStatus.textContent = "Saved to src/gasGiantPalettes.js";
+        } catch (error) {
+          saveStatus.textContent = "Save failed: " + error.message;
+        }
+      }
+
+      function renderGradientStops() {
+        gradStops.replaceChildren();
+        gradientStops.forEach((stop, index) => {
+          const row = document.createElement("div");
+          row.className = "grad-stop";
+
+          const color = document.createElement("input");
+          color.type = "color";
+          color.value = stop.color;
+          color.addEventListener("input", () => {
+            stop.color = color.value;
+            updateGradientPreview();
+            scheduleRender(false);
+          });
+
+          const controls = document.createElement("div");
+          controls.className = "grad-stop__controls";
+
+          const position = document.createElement("input");
+          position.type = "range";
+          position.min = "0";
+          position.max = "100";
+          position.step = "1";
+          position.value = String(Math.round(stop.pos * 100));
+          position.addEventListener("input", () => {
+            stop.pos = Number(position.value) / 100;
+            updateGradientPreview();
+            scheduleRender(false);
+          });
+
+          const shiftRow = document.createElement("div");
+          shiftRow.className = "grad-stop__row";
+          const hueLabel = document.createElement("span");
+          hueLabel.className = "mini-label";
+          hueLabel.textContent = "Hue";
+          const hueMin = createShiftInput(stop, "hueShift", 0);
+          const hueMax = createShiftInput(stop, "hueShift", 1);
+          shiftRow.append(hueLabel, hueMin, hueMax);
+
+          const brightnessRow = document.createElement("div");
+          brightnessRow.className = "grad-stop__row";
+          const brightnessLabel = document.createElement("span");
+          brightnessLabel.className = "mini-label";
+          brightnessLabel.textContent = "Lum";
+          const brightnessMin = createShiftInput(stop, "brightnessShift", 0);
+          const brightnessMax = createShiftInput(stop, "brightnessShift", 1);
+          brightnessRow.append(brightnessLabel, brightnessMin, brightnessMax);
+
+          controls.append(position, shiftRow, brightnessRow);
+
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "remove";
+          remove.textContent = "×";
+          remove.disabled = gradientStops.length <= 2;
+          remove.title = "Remove color";
+          remove.addEventListener("click", () => {
+            gradientStops.splice(index, 1);
+            refreshGradient();
+          });
+
+          row.append(color, controls, remove);
+          gradStops.append(row);
+        });
+        addColorButton.disabled = gradientStops.length >= MAX_STOPS;
+      }
+
+      function createShiftInput(stop, key, shiftIndex) {
+        const input = document.createElement("input");
+        input.className = "mini-number";
+        input.type = "number";
+        input.step = key === "hueShift" ? "1" : "0.5";
+        input.value = String(stop[key]?.[shiftIndex] ?? 0);
+        input.addEventListener("input", () => {
+          stop[key] ??= [0, 0];
+          stop[key][shiftIndex] = Number(input.value) || 0;
+          scheduleRender(false);
+        });
+        return input;
+      }
+
+      function refreshGradient() {
+        renderGradientStops();
+        updateGradientPreview();
+        syncActivePaletteFromEditor();
+        scheduleRender(false);
+      }
+
+      addColorButton.addEventListener("click", () => {
+        if (gradientStops.length >= MAX_STOPS) {
+          return;
+        }
+        gradientStops.push({ pos: 0.5, color: "#7d7d8a", hueShift: [-5, 5], brightnessShift: [-5, 5] });
+        refreshGradient();
+      });
+
+      paletteSelect.addEventListener("change", () => {
+        activePaletteId = paletteSelect.value;
+        applyActivePalette();
+      });
+
+      paletteNameInput.addEventListener("input", () => {
+        const active = getActivePalette();
+        if (active) {
+          active.name = paletteNameInput.value.trim() || active.name;
+          renderPaletteSelect();
+        }
+      });
+
+      newPaletteButton.addEventListener("click", () => {
+        syncActivePaletteFromEditor();
+        const name = "New Palette";
+        const palette = {
+          id: uniquePaletteId(name),
+          name,
+          stops: cloneStops(gradientStops),
+        };
+        palettes.push(palette);
+        activePaletteId = palette.id;
+        renderPaletteSelect();
+        saveStatus.textContent = "Palette added. Press Save to write it to src/gasGiantPalettes.js";
+        paletteNameInput.select();
+      });
+
+      savePaletteButton.addEventListener("click", savePalettesToSource);
+
+      // --- Scheduling -----------------------------------------------------
+      let rafId = 0;
+      let pendingNoise = false;
+
+      function scheduleRender(recompute) {
+        if (recompute) {
+          pendingNoise = true;
+        }
+        if (rafId) {
+          return;
+        }
+        rafId = requestAnimationFrame(() => {
+          rafId = 0;
+          if (pendingNoise) {
+            computeNoise();
+            computeStretchedNoise();
+            pendingNoise = false;
+          }
+          buildLUT();
+          renderCanvas();
+        });
+      }
+
+      // --- Controls -------------------------------------------------------
+      function syncLabels() {
+        scaleVal.textContent = scaleInput.value;
+        octavesVal.textContent = octavesInput.value;
+        stretchVal.textContent = stretchInput.value + "x";
+      }
+
+      seedInput.addEventListener("input", () => scheduleRender(true));
+      scaleInput.addEventListener("input", () => {
+        syncLabels();
+        scheduleRender(true);
+      });
+      octavesInput.addEventListener("input", () => {
+        syncLabels();
+        scheduleRender(true);
+      });
+      stretchInput.addEventListener("input", () => {
+        syncLabels();
+        scheduleRender(true);
+      });
+
+      document.getElementById("randomize").addEventListener("click", () => {
+        seedInput.value = Math.random().toString(36).slice(2, 10);
+        scheduleRender(true);
+      });
+
+      aspectButton.addEventListener("click", () => {
+        aspect = aspect === 1 ? 2 : 1;
+        aspectButton.innerHTML = aspect === 1 ? "Stretch to 2&times;1" : "Back to 1&times;1";
+        scheduleRender(true);
+      });
+
+      document.getElementById("download").addEventListener("click", () => {
+        const link = document.createElement("a");
+        link.download = "noise-" + (seedInput.value || "seed") + "-" + noiseW + "x" + noiseH + ".png";
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+      });
+
+      // --- Init -----------------------------------------------------------
+      syncLabels();
+      renderPaletteSelect();
+      renderGradientStops();
+      updateGradientPreview();
+      computeNoise();
+      computeStretchedNoise();
+      buildLUT();
+      renderCanvas();
+    </script>
+  </body>
+</html>

@@ -1,5 +1,6 @@
 import "./styles.css";
 import * as THREE from "three";
+import { GAS_GIANT_PALETTES } from "./gasGiantPalettes.js";
 import { PLANET_DICTIONARIES } from "./planetDictionaries.js";
 import { GEN_SYLLABLES, MEGAGEN_SYLLABLES } from "./syllables.js";
 
@@ -131,7 +132,8 @@ const PLANET_SIZE_NAMES = {
   "GAS GIANT": ["anomalous", "anomalous", "anomalous", "tiny", "small", "", "", "", "", ""],
 };
 // Planet detail window stage geometry (must match styles.css .planet-window layout).
-const PLANET_STAGE_SIZE = 292;
+const PLANET_STAGE_WIDTH = 292;
+const PLANET_STAGE_HEIGHT = 380;
 const PLANET_STAGE_CONTENT_RADIUS = 80;
 const MUSIC_TRACKS = [
   "1. Nebulum.mp3",
@@ -184,6 +186,7 @@ const starWindow = document.querySelector("#star-window");
 const systemGlow = document.querySelector("#system-glow");
 const systemStars = document.querySelector("#system-stars");
 const starSystem = document.querySelector("#star-system");
+const systemStarLayer = document.querySelector("#system-star-layer");
 const systemParticles = document.querySelector("#system-particles");
 const systemHoverNameWrap = document.querySelector("#system-hover-name-wrap");
 const systemHoverName = document.querySelector("#system-hover-name");
@@ -202,9 +205,22 @@ const planetWindowLore = document.querySelector("#planet-window-lore");
 const planetWindowDivider = document.querySelector("#planet-window-divider");
 const planetWindowTags = document.querySelector("#planet-window-tags");
 const planetLinkPath = document.querySelector("#planet-link-path");
+const planetScreen = document.querySelector("#planet-screen");
+const planetScreenBackStarmap = document.querySelector("#planet-screen-back-starmap");
+const planetScreenBackSystem = document.querySelector("#planet-screen-back-system");
 const systemTransitionOverlay = document.createElement("div");
 systemTransitionOverlay.className = "system-transition-overlay";
 starWindow.append(systemTransitionOverlay);
+const planetEntryOverlay = document.createElement("div");
+planetEntryOverlay.className = "planet-entry-overlay";
+planetEntryOverlay.innerHTML = `
+  <div class="planet-entry-card" aria-hidden="true">
+    <div class="planet-entry-name"></div>
+    <div class="planet-entry-line"></div>
+    <div class="planet-entry-type"></div>
+  </div>
+`;
+starWindow.append(planetEntryOverlay);
 const graphEntryOverlay = document.createElement("div");
 graphEntryOverlay.className = "graph-entry-overlay";
 document.querySelector("#app").append(graphEntryOverlay);
@@ -218,6 +234,14 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setClearColor(0x000000, 0);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.autoClear = false;
+sceneCanvas.addEventListener("webglcontextlost", (event) => {
+  event.preventDefault();
+  document.body.classList.add("webgl-context-lost");
+  window.setTimeout(() => window.location.reload(), 400);
+});
+sceneCanvas.addEventListener("webglcontextrestored", () => {
+  window.location.reload();
+});
 
 const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0x050506, 0.045);
@@ -240,6 +264,9 @@ scene.add(keyLight);
 
 const rand = createRandom(SEED);
 const nameRand = createRandom(`${SEED}:names`);
+const planetDictionaryPools = createPlanetDictionaryPools();
+const systemPlanetDictionaries = new Map();
+const moonNameAssignments = new Map();
 const nodes = createNodes(rand).map((node) => ({
   ...node,
   name: createStarName(nameRand),
@@ -253,11 +280,13 @@ const labelElements = [];
 const hitTargets = [];
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2(10, 10);
+const lastClientPointer = new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2);
 const rotationVelocity = new THREE.Vector2(0, 0);
 const targetRotation = new THREE.Euler(-0.18, 0.36, 0, "YXZ");
 const linkPulse = createLinkPulse(createRandom(`${SEED}:link-pulse`));
 
 let isDragging = false;
+let activeGraphPointerId = null;
 let lastPointer = new THREE.Vector2();
 let pointerDownPosition = new THREE.Vector2();
 let hoveredNode = null;
@@ -266,9 +295,16 @@ let isMaskToolEnabled = false;
 let isStarWindowOpen = false;
 let isSystemTransitioning = false;
 let isGraphEnteringSystem = false;
+let isPlanetEntryTransitioning = false;
+const gasGiantTextureLayers = new Set();
+let gasGiantTextureOffset = 0;
+const GAS_GIANT_TEXTURE_SPEED = 26;
 let activeSystemNode = null;
 let activeSystemStar = null;
 let activeSystemStarSurface = null;
+let activePlanetScreenStar = null;
+let activePlanetScreenStarSurface = null;
+let activePlanetScreen3D = null;
 let tooltipTypingTimeout = null;
 let tooltipTypingInterval = null;
 let tooltipClearTimeout = null;
@@ -279,6 +315,7 @@ let isHzZoneVisible = false;
 let activeZoneElements = [];
 let isPlanetWindowOpen = false;
 let openPlanetData = null;
+let isPlanetScreenOpen = false;
 let isDraggingPlanetWindow = false;
 const planetWindowOffset = { x: 0, y: 0 };
 const planetWindowDragStart = { x: 0, y: 0, offsetX: 0, offsetY: 0 };
@@ -320,11 +357,14 @@ resize();
 animate();
 
 window.addEventListener("resize", resize);
-window.addEventListener("pointermove", onPointerMove);
+document.addEventListener("pointermove", onPointerMove, { capture: true });
 sceneCanvas.addEventListener("pointerdown", onPointerDown);
 sceneCanvas.addEventListener("wheel", onWheel, { passive: false });
 window.addEventListener("pointerup", onPointerUp);
 window.addEventListener("pointercancel", onPointerUp);
+window.addEventListener("blur", cancelGraphDrag);
+sceneCanvas.addEventListener("lostpointercapture", cancelGraphDrag);
+document.addEventListener("pointerdown", releaseStaleGraphCapture, { capture: true });
 
 function initPanel() {
   seedInput.value = SEED;
@@ -371,9 +411,19 @@ function initPanel() {
     }
   });
 
+  planetScreenBackSystem.addEventListener("click", closePlanetScreen);
+  planetScreenBackStarmap.addEventListener("click", () => {
+    closePlanetScreen();
+    closeStarWindow();
+  });
+
   planetWindowClose.addEventListener("click", closePlanetWindow);
 
   window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && isPlanetScreenOpen) {
+      closePlanetScreen();
+      return;
+    }
     if (event.key === "Escape" && isPlanetWindowOpen) {
       closePlanetWindow();
     }
@@ -1080,6 +1130,72 @@ function hslToHex(h, s, l) {
     .join("")}`;
 }
 
+function rgbToHex([red, green, blue]) {
+  return `#${[red, green, blue]
+    .map((channel) => Math.round(THREE.MathUtils.clamp(channel, 0, 255)).toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+function hexToRgb(color) {
+  const normalized = normalizeHexColor(color).replace("#", "");
+  const value = Number.parseInt(normalized, 16);
+  return [
+    (value >> 16) & 255,
+    (value >> 8) & 255,
+    value & 255,
+  ];
+}
+
+function rgbToHsl([red, green, blue]) {
+  const r = red / 255;
+  const g = green / 255;
+  const b = blue / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const lightness = (max + min) / 2;
+  if (max === min) {
+    return [0, 0, lightness * 100];
+  }
+
+  const delta = max - min;
+  const saturation = lightness > 0.5
+    ? delta / (2 - max - min)
+    : delta / (max + min);
+  const hue = max === r
+    ? ((g - b) / delta + (g < b ? 6 : 0))
+    : max === g
+      ? ((b - r) / delta + 2)
+      : ((r - g) / delta + 4);
+
+  return [hue * 60, saturation * 100, lightness * 100];
+}
+
+function hslToRgb([hue, saturation, lightness]) {
+  const h = (((hue % 360) + 360) % 360) / 360;
+  const s = saturation / 100;
+  const l = lightness / 100;
+  if (s === 0) {
+    return [l * 255, l * 255, l * 255];
+  }
+
+  const hueToRgb = (p, q, t) => {
+    let nextT = t;
+    if (nextT < 0) nextT += 1;
+    if (nextT > 1) nextT -= 1;
+    if (nextT < 1 / 6) return p + (q - p) * 6 * nextT;
+    if (nextT < 1 / 2) return q;
+    if (nextT < 2 / 3) return p + (q - p) * (2 / 3 - nextT) * 6;
+    return p;
+  };
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  return [
+    hueToRgb(p, q, h + 1 / 3) * 255,
+    hueToRgb(p, q, h) * 255,
+    hueToRgb(p, q, h - 1 / 3) * 255,
+  ];
+}
+
 function hexToRgba(color, alpha) {
   const normalized = normalizeHexColor(color).replace("#", "");
   const value = Number.parseInt(normalized, 16);
@@ -1208,17 +1324,13 @@ function pickSyllable(syllables, random) {
 }
 
 function createPlanetNameAssignments(systemNodes) {
-  const dictionaryPools = {
-    Greece: createDictionaryPool(PLANET_DICTIONARIES.Greece),
-    Norce: createDictionaryPool(PLANET_DICTIONARIES.Norce),
-    Egypt: createDictionaryPool(PLANET_DICTIONARIES.Egypt),
-    Feelings: createDictionaryPool(PLANET_DICTIONARIES.Feelings),
-  };
+  const dictionaryPools = planetDictionaryPools;
   const assignments = new Map();
 
   for (const node of systemNodes) {
     const random = createRandom(`${SEED}:planet-names:${node.id}`);
     const primaryDictionary = pickSystemPlanetDictionary(random);
+    systemPlanetDictionaries.set(node.id, primaryDictionary);
     const names = [];
 
     for (let index = 0; index < node.planets; index += 1) {
@@ -1235,6 +1347,15 @@ function createPlanetNameAssignments(systemNodes) {
   }
 
   return assignments;
+}
+
+function createPlanetDictionaryPools() {
+  return {
+    Greece: createDictionaryPool(PLANET_DICTIONARIES.Greece),
+    Norce: createDictionaryPool(PLANET_DICTIONARIES.Norce),
+    Egypt: createDictionaryPool(PLANET_DICTIONARIES.Egypt),
+    Feelings: createDictionaryPool(PLANET_DICTIONARIES.Feelings),
+  };
 }
 
 function createDictionaryPool(names) {
@@ -1268,6 +1389,26 @@ function createPlanetName({ random, systemName, planetIndex, primaryDictionary, 
 
 function createDefaultPlanetName(systemName, planetIndex) {
   return `${systemName} ${toRoman(planetIndex + 1)}`;
+}
+
+function getMoonNames(systemId, planetIndex, planetName, moonCount) {
+  const key = `${systemId}:${planetIndex}`;
+  if (moonNameAssignments.has(key)) {
+    return moonNameAssignments.get(key).slice(0, moonCount);
+  }
+
+  const primaryDictionary = systemPlanetDictionaries.get(systemId) ?? "Greece";
+  const random = createRandom(`${SEED}:moon-names:${systemId}:${planetIndex}`);
+  const names = Array.from({ length: moonCount }, (_, moonIndex) =>
+    createPlanetName({
+      random,
+      systemName: planetName,
+      planetIndex: moonIndex,
+      primaryDictionary,
+      dictionaryPools: planetDictionaryPools,
+    }));
+  moonNameAssignments.set(key, names);
+  return names;
 }
 
 function pickUniqueDictionaryName(pool, random) {
@@ -2262,7 +2403,12 @@ function createSystemGlowLayer() {
 }
 
 function onPointerDown(event) {
+  if (event.button !== 0 || isStarWindowOpen || isGraphEnteringSystem) {
+    return;
+  }
+
   isDragging = true;
+  activeGraphPointerId = event.pointerId;
   lastPointer.set(event.clientX, event.clientY);
   pointerDownPosition.set(event.clientX, event.clientY);
   sceneCanvas.classList.add("dragging");
@@ -2270,18 +2416,52 @@ function onPointerDown(event) {
 }
 
 function onPointerUp(event) {
-  const clickDistance = pointerDownPosition.distanceTo(new THREE.Vector2(event.clientX, event.clientY));
-  isDragging = false;
-  sceneCanvas.classList.remove("dragging");
-  if (sceneCanvas.hasPointerCapture(event.pointerId)) {
-    sceneCanvas.releasePointerCapture(event.pointerId);
+  if (activeGraphPointerId !== event.pointerId) {
+    return;
   }
+
+  if (event.type === "pointercancel") {
+    cancelGraphDrag(event);
+    return;
+  }
+
+  const clickDistance = pointerDownPosition.distanceTo(new THREE.Vector2(event.clientX, event.clientY));
+  cancelGraphDrag(event);
   if (clickDistance < 5) {
     selectNodeAt(event.clientX, event.clientY);
   }
 }
 
+function releaseStaleGraphCapture(event) {
+  if (event.target === sceneCanvas) {
+    return;
+  }
+
+  if (activeGraphPointerId !== null || isDragging) {
+    cancelGraphDrag();
+  }
+
+  if (!isStarWindowOpen) {
+    forceCloseViewOverlays();
+  }
+}
+
+function cancelGraphDrag(event) {
+  const pointerId = event?.pointerId ?? activeGraphPointerId;
+  isDragging = false;
+  activeGraphPointerId = null;
+  sceneCanvas.classList.remove("dragging");
+  if (pointerId !== null && pointerId !== undefined && sceneCanvas.hasPointerCapture(pointerId)) {
+    sceneCanvas.releasePointerCapture(pointerId);
+  }
+}
+
 function onPointerMove(event) {
+  if (isDragging && event.buttons !== undefined && (event.buttons & 1) === 0) {
+    cancelGraphDrag(event);
+  }
+
+  lastClientPointer.set(event.clientX, event.clientY);
   pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
   pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
   updateSystemParallax(event.clientX, event.clientY);
@@ -2297,6 +2477,28 @@ function onPointerMove(event) {
   }
 
   positionTooltip(event.clientX, event.clientY);
+}
+
+function forceCloseViewOverlays() {
+  if (!starWindow.classList.contains("visible") &&
+      !planetScreen.classList.contains("visible") &&
+      !document.body.classList.contains("system-open")) {
+    return;
+  }
+
+  isPlanetScreenOpen = false;
+  isPlanetEntryTransitioning = false;
+  isSystemTransitioning = false;
+  starWindow.classList.remove("visible", "system-transitioning", "planet-entry-moving");
+  starWindow.setAttribute("aria-hidden", "true");
+  planetScreen.classList.remove("visible");
+  planetScreen.setAttribute("aria-hidden", "true");
+  planetEntryOverlay.classList.remove("active", "leaving");
+  planetEntryOverlay.style.setProperty("--planet-entry-alpha", "0");
+  document.body.classList.remove("system-open");
+  starWindow.style.setProperty("--planet-entry-scale", "1");
+  setSystemTransitionOffset(0, 0);
+  setSystemTransitionOverlay(0);
 }
 
 function onWheel(event) {
@@ -2547,6 +2749,9 @@ function scheduleSystemTooltipTypewriter(body, immediate = false) {
 }
 
 function clearSystemHover() {
+  if (hoveredSystemBody?.userData?.label) {
+    hoveredSystemBody.userData.label.classList.remove("hidden");
+  }
   hoveredSystemBody = null;
   systemHoverNameWrap.classList.remove("visible", "fast-enter");
   systemHoverPanel.classList.remove("visible", "fast-enter", "typing", "typed");
@@ -2628,7 +2833,7 @@ function startGraphToSystemTransition(node, clientX, clientY) {
   }
 
   isGraphEnteringSystem = true;
-  isDragging = false;
+  cancelGraphDrag();
   rotationVelocity.set(0, 0);
   hoveredNode = null;
   hoverNameWrap.classList.remove("visible", "fast-enter");
@@ -2723,7 +2928,7 @@ function openStarWindow(node) {
   setSystemTransitionOffset(0, 0);
   setSystemTransitionOverlay(0);
   activeSystemNode = node;
-  isDragging = false;
+  cancelGraphDrag();
   rotationVelocity.set(0, 0);
   targetRotation.set(graphRoot.rotation.x, graphRoot.rotation.y, graphRoot.rotation.z);
   sceneCanvas.classList.remove("dragging");
@@ -2742,19 +2947,27 @@ function openStarWindow(node) {
 function closeStarWindow() {
   isStarWindowOpen = false;
   isSystemTransitioning = false;
+  isPlanetEntryTransitioning = false;
   document.body.classList.remove("system-open");
   isDraggingMusicPlayer = false;
   setMusicDropdownOpen(false);
   starWindow.classList.remove("system-transitioning");
+  starWindow.classList.remove("planet-entry-moving");
+  planetEntryOverlay.classList.remove("active", "leaving");
+  planetEntryOverlay.style.setProperty("--planet-entry-alpha", "0");
+  starWindow.style.setProperty("--planet-entry-scale", "1");
   setSystemTransitionOffset(0, 0);
   setSystemTransitionOverlay(0);
   releaseSystemPointerLock();
+  closePlanetScreen();
   closePlanetWindow();
   activeSystemNode = null;
   activeSystemStar = null;
   activeSystemStarSurface = null;
+  gasGiantTextureLayers.clear();
   clearSystemHover();
   systemStars.replaceChildren();
+  systemStarLayer.replaceChildren();
   systemParticles.replaceChildren();
   starWindow.classList.remove("visible");
   starWindow.setAttribute("aria-hidden", "true");
@@ -2812,6 +3025,15 @@ function updateSystemParallax(clientX, clientY, force = false) {
     return;
   }
 
+  if (!force && isPlanetEntryTransitioning) {
+    return;
+  }
+
+  if (isPlanetScreenOpen) {
+    updatePlanetScreenParallax(clientX, clientY);
+    return;
+  }
+
   if (!force && (isSystemTransitioning || isGraphEnteringSystem)) {
     return;
   }
@@ -2829,7 +3051,35 @@ function updateSystemParallax(clientX, clientY, force = false) {
   systemParticles.style.setProperty("--particle-parallax-y", `${particleOffsetY}px`);
   starSystem.style.setProperty("--system-parallax-x", `${systemOffsetX}px`);
   starSystem.style.setProperty("--system-parallax-y", `${systemOffsetY}px`);
+  systemStarLayer.style.setProperty("--system-parallax-x", `${systemOffsetX}px`);
+  systemStarLayer.style.setProperty("--system-parallax-y", `${systemOffsetY}px`);
   updateSystemGlow(clientX, clientY, systemOffsetX, systemOffsetY);
+}
+
+function updatePlanetScreenParallax(clientX, clientY) {
+  const offsetX = (clientX / window.innerWidth - 0.5) * 34;
+  const offsetY = (clientY / window.innerHeight - 0.5) * 24;
+  planetScreen.style.setProperty("--planet-screen-parallax-x", `${offsetX}px`);
+  planetScreen.style.setProperty("--planet-screen-parallax-y", `${offsetY}px`);
+  updatePlanetScreenGlow(clientX, clientY, offsetX, offsetY);
+}
+
+function updatePlanetScreenGlow(clientX, clientY, parallaxX = 0, parallaxY = 0) {
+  if (!activePlanetScreenStar?.element) {
+    return;
+  }
+
+  const depth = activePlanetScreenStar.depth;
+  const glowX = activePlanetScreenStar.x + parallaxX * depth;
+  const glowY = activePlanetScreenStar.y + parallaxY * depth;
+  const distanceToCenter = Math.hypot(clientX - glowX, clientY - glowY);
+  const distanceToEdge = Math.max(0, distanceToCenter - activePlanetScreenStar.radius);
+  const rightEdgeX = glowX + activePlanetScreenStar.radius;
+  const falloffRadius = Math.max(780, (window.innerWidth * 0.75 - rightEdgeX) * 3);
+  const proximity = 1 - THREE.MathUtils.clamp(distanceToEdge / falloffRadius, 0, 1);
+  activePlanetScreenStar.element.style.opacity = (proximity * 0.32).toFixed(3);
+  activePlanetScreenStar.element.style.transform =
+    `translate(-50%, -50%) scale(${(0.92 + proximity * 0.22).toFixed(3)})`;
 }
 
 function updateSystemGlow(clientX, clientY, systemOffsetX = 0, systemOffsetY = 0) {
@@ -2855,7 +3105,10 @@ function updateSystemGlow(clientX, clientY, systemOffsetX = 0, systemOffsetY = 0
 
 function renderStarSystem(node) {
   starSystem.replaceChildren();
+  systemStarLayer.replaceChildren();
+  gasGiantTextureLayers.clear();
   clearSystemHover();
+  closePlanetScreen();
   closePlanetWindow();
   systemTitle.textContent = `${node.name} SYSTEM`;
 
@@ -2894,7 +3147,7 @@ function renderStarSystem(node) {
     activeSystemStarSurface = starSurface;
     drawSystemStarSurface(starSurface, performance.now());
   }
-  starSystem.append(star);
+  systemStarLayer.append(star);
 
   const orbitLayer = createSystemOrbitLayer(width, height);
   const orbitItems = [];
@@ -2938,6 +3191,13 @@ function renderStarSystem(node) {
     const planetY = centerY + Math.sin(angle) * orbitRadius;
     occupiedPlanets.push({ x: planetX, y: planetY, radius: planetRadius });
     const planetKind = createPlanetKind(random, planetSizeIndex);
+    const gasGiantTextureSeed = `${SEED}:gas-giant:${node.id}:${index}`;
+    const gasGiantTexture = planetKind.label === "GAS GIANT"
+      ? createGasGiantTexture(gasGiantTextureSeed)
+      : null;
+    const zoneInfo = ZONE_DATA[node.starType];
+    const orbitFraction = (orbitRadius - minOrbit) / (maxOrbit - minOrbit) * 100;
+    const isTidallyLocked = zoneInfo && orbitFraction <= zoneInfo.tidalLock;
     const accretionDisk = createAccretionDisk(random, planetRadius, planetSizeIndex);
     const moonSystem = createMoonSystem({
       random,
@@ -2974,15 +3234,23 @@ function renderStarSystem(node) {
     planet.style.height = `${planetRadius * 2}px`;
     planet.style.left = `${planetX - planetRadius}px`;
     planet.style.top = `${planetY - planetRadius}px`;
-    planet.style.background = planetKind.background;
     planet.append(createPlanetGlow(planetRadius, starDirX, starDirY));
-    planet.append(createPlanetShadow(planetRadius, starDirX, starDirY));
+    planet.append(createPlanetSurface(
+      planetKind.background,
+      gasGiantTexture,
+      planetRadius,
+      starDirX,
+      starDirY,
+      false,
+      Boolean(isTidallyLocked),
+    ));
     starSystem.append(planet);
 
-    renderMoons(moonSystem);
+    renderMoons({ ...moonSystem, starDirX, starDirY });
 
     const constructionRadius = getPlanetConstructionRadius(planetRadius, accretionDisk, moonSystem);
     const planetName = planetNameAssignments.get(node.id)?.[index] ?? createDefaultPlanetName(node.name, index);
+    const moonNames = getMoonNames(node.id, index, planetName, moonSystem.moonCount);
     const label = document.createElement("div");
     label.className = "system-planet-label";
     label.textContent = planetName;
@@ -2997,9 +3265,6 @@ function renderStarSystem(node) {
     hitTarget.style.height = `${hitTargetRadius * 2}px`;
     hitTarget.style.left = `${planetX - hitTargetRadius}px`;
     hitTarget.style.top = `${planetY - hitTargetRadius}px`;
-    const zoneInfo = ZONE_DATA[node.starType];
-    const orbitFraction = (orbitRadius - minOrbit) / (maxOrbit - minOrbit) * 100;
-    const isTidallyLocked = zoneInfo && orbitFraction <= zoneInfo.tidalLock;
     hitTarget.dataset.name = planetName;
     hitTarget.dataset.kind = planetKind.label;
     hitTarget.dataset.hasDisk = accretionDisk ? "true" : "false";
@@ -3010,9 +3275,19 @@ function renderStarSystem(node) {
       name: planetName,
       kind: planetKind.label,
       background: planetKind.background,
+      gasGiantTexture,
+      gasGiantTextureSeed,
       sizeIndex: planetSizeIndex,
       element: planet,
       radius: planetRadius,
+      orbitRadius,
+      minOrbit,
+      maxOrbit,
+      systemStarRadius: starRadius,
+      systemStarColor: node.glowColor,
+      systemStarCoreColor: node.coreColor,
+      systemStarBlackCore: Boolean(node.blackCore),
+      systemId: node.id,
       // Window scale excludes the accretion disk so a planet with a large disk
       // is not shrunk; the disk is allowed to overflow the stage instead.
       extentRadius: accretionDisk
@@ -3024,10 +3299,11 @@ function renderStarSystem(node) {
       diskShadowAngle: Math.atan2(planetY - centerY, planetX - starX),
       moonCount: moonSystem.moonCount,
       moonOrbitRadius: moonSystem.orbitRadius,
-      moonList: moonSystem.moons.map((moon) => ({
+      moonList: moonSystem.moons.map((moon, moonIndex) => ({
         dx: moon.x - planetX,
         dy: moon.y - planetY,
         radius: moon.radius,
+        name: moonNames[moonIndex] ?? createDefaultPlanetName(planetName, moonIndex),
       })),
       hasDisk: Boolean(accretionDisk),
       tidallyLocked: Boolean(isTidallyLocked),
@@ -3048,7 +3324,8 @@ function renderStarSystem(node) {
     });
     hitTarget.addEventListener("click", (event) => {
       event.stopPropagation();
-      openPlanetWindow(planetInfo);
+      lastClientPointer.set(event.clientX, event.clientY);
+      startPlanetEntryTransition(planetInfo, event.clientX, event.clientY);
     });
     starSystem.append(hitTarget);
   }
@@ -3148,6 +3425,896 @@ function getPlanetSizeLabel(planet) {
   return `${sizeName} ${planet.kind}`.trim().toUpperCase();
 }
 
+async function startPlanetEntryTransition(planet, clientX, clientY) {
+  if (!planet || isPlanetEntryTransitioning || isPlanetScreenOpen || isSystemTransitioning) {
+    return;
+  }
+
+  isPlanetEntryTransitioning = true;
+  lastClientPointer.set(clientX, clientY);
+  clearSystemHover();
+  closePlanetWindow();
+  setPlanetEntryOverlayContent(planet);
+  starWindow.style.setProperty("--planet-entry-origin-x", `${clientX}px`);
+  starWindow.style.setProperty("--planet-entry-origin-y", `${clientY}px`);
+  starWindow.style.setProperty("--planet-entry-scale", "1");
+  planetEntryOverlay.classList.add("active");
+  planetEntryOverlay.style.setProperty("--planet-entry-alpha", "0");
+
+  await nextAnimationFrame();
+  starWindow.classList.add("planet-entry-moving");
+  starWindow.style.setProperty("--planet-entry-scale", "9");
+  planetEntryOverlay.style.setProperty("--planet-entry-alpha", "1");
+
+  const startedAt = performance.now();
+  await delay(520);
+  openPlanetScreen(planet);
+  await nextAnimationFrame();
+  await nextAnimationFrame();
+
+  const remaining = Math.max(0, 1500 - (performance.now() - startedAt));
+  await delay(remaining);
+
+  planetEntryOverlay.classList.add("leaving");
+  planetEntryOverlay.style.setProperty("--planet-entry-alpha", "0");
+  await delay(420);
+  planetEntryOverlay.classList.remove("active", "leaving");
+  starWindow.classList.remove("planet-entry-moving");
+  starWindow.style.setProperty("--planet-entry-scale", "1");
+  isPlanetEntryTransitioning = false;
+  updatePlanetScreenParallax(lastClientPointer.x, lastClientPointer.y);
+}
+
+function setPlanetEntryOverlayContent(planet) {
+  planetEntryOverlay.querySelector(".planet-entry-name").textContent = planet.name;
+  planetEntryOverlay.querySelector(".planet-entry-type").textContent = getPlanetSizeLabel(planet);
+}
+
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function nextAnimationFrame() {
+  return new Promise((resolve) => requestAnimationFrame(resolve));
+}
+
+function openPlanetScreen(planet) {
+  if (!planet) {
+    return;
+  }
+
+  setSystemHover(null);
+  closePlanetWindow();
+
+  try {
+    renderPlanetScreen(planet);
+  } catch (error) {
+    console.error("Planet screen render failed", error);
+    renderPlanetScreenFallback(planet);
+  }
+
+  isPlanetScreenOpen = true;
+  openPlanetData = planet;
+  planetScreen.classList.add("visible");
+  planetScreen.setAttribute("aria-hidden", "false");
+  updatePlanetScreenParallax(lastClientPointer.x, lastClientPointer.y);
+}
+
+function closePlanetScreen() {
+  isPlanetScreenOpen = false;
+  openPlanetData = null;
+  activePlanetScreenStar = null;
+  activePlanetScreenStarSurface = null;
+  disposePlanetScreen3D();
+  planetScreen.classList.remove("visible");
+  planetScreen.setAttribute("aria-hidden", "true");
+  planetScreen
+    .querySelectorAll(".planet-screen__layer, .planet-screen__title")
+    .forEach((element) => element.remove());
+}
+
+function renderPlanetScreenFallback(planet) {
+  activePlanetScreenStar = null;
+  activePlanetScreenStarSurface = null;
+  disposePlanetScreen3D();
+  planetScreen
+    .querySelectorAll(".planet-screen__layer, .planet-screen__title")
+    .forEach((element) => element.remove());
+
+  const title = document.createElement("div");
+  title.className = "planet-screen__title";
+  title.textContent = planet.name;
+  planetScreen.append(title);
+}
+
+function renderPlanetScreen(planet) {
+  activePlanetScreenStarSurface = null;
+  disposePlanetScreen3D();
+  planetScreen
+    .querySelectorAll(".planet-screen__layer, .planet-screen__title")
+    .forEach((element) => element.remove());
+
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  const random = createRandom(`${SEED}:planet-screen:${planet.systemId}:${planet.name}`);
+
+  const backgroundDepth = 0.26;
+  const backgroundLayer = createPlanetScreenLayer("planet-screen__layer--background", backgroundDepth);
+  const planetLayer = createPlanetScreenLayer("planet-screen__layer--planet", -0.18);
+  const moonLayers = [-1.24, -2.15, -3.24].map((depth, index) =>
+    createPlanetScreenLayer(`planet-screen__layer--moon planet-screen__layer--moon-${index + 1}`, depth));
+  const starGeometry = getPlanetScreenParentStarGeometry(planet, width, height);
+  const planetGeometry = getPlanetScreenPlanetGeometry(planet, width, height);
+  const starDir = getDirection(
+    starGeometry.x,
+    starGeometry.y,
+    planetGeometry.centerX,
+    planetGeometry.centerY,
+  );
+
+  renderPlanetScreenStars(backgroundLayer, random, width, height);
+  renderPlanetScreenParentStar(backgroundLayer, planet, starGeometry, backgroundDepth);
+  renderPlanetScreenPlanet(planetLayer, planet, planetGeometry, starDir, starGeometry);
+  renderPlanetScreenMoons(moonLayers, planet, width, height, starGeometry, starDir);
+  renderPlanetScreenTitle(planetScreen, planet);
+
+  planetScreen.prepend(...moonLayers.reverse());
+  planetScreen.prepend(planetLayer);
+  planetScreen.prepend(backgroundLayer);
+}
+
+function createPlanetScreenLayer(extraClass, depth) {
+  const layer = document.createElement("div");
+  layer.className = `planet-screen__layer ${extraClass}`;
+  layer.style.setProperty("--planet-screen-depth", String(depth));
+  return layer;
+}
+
+function renderPlanetScreenStars(layer, random, width, height) {
+  const count = Math.max(120, Math.floor((width * height) / 11000));
+  for (let index = 0; index < count; index += 1) {
+    const star = document.createElement("span");
+    star.className = "planet-screen__star";
+    star.style.left = `${random() * 100}%`;
+    star.style.top = `${random() * 100}%`;
+    star.style.opacity = `${0.18 + random() * 0.62}`;
+    layer.append(star);
+  }
+}
+
+function renderPlanetScreenTitle(root, planet) {
+  const title = document.createElement("div");
+  title.className = "planet-screen__title";
+  title.textContent = planet.name;
+  root.append(title);
+}
+
+function getPlanetScreenParentStarGeometry(planet, width, height) {
+  const distanceFraction = THREE.MathUtils.clamp(
+    (planet.orbitRadius - planet.minOrbit) / Math.max(1, planet.maxOrbit - planet.minOrbit),
+    0,
+    1,
+  );
+  const radius = Math.max(1, planet.systemStarRadius * 0.5 * (1 - distanceFraction));
+  return {
+    x: width * 0.74,
+    y: height * 0.22,
+    radius,
+  };
+}
+
+function renderPlanetScreenParentStar(layer, planet, geometry, depth) {
+  const hoverGlow = document.createElement("div");
+  hoverGlow.className = "planet-screen__star-hover-glow";
+  const hoverSize = Math.max(window.innerWidth, window.innerHeight) * 1.5;
+  hoverGlow.style.width = `${hoverSize}px`;
+  hoverGlow.style.height = `${hoverSize}px`;
+  hoverGlow.style.left = `${geometry.x}px`;
+  hoverGlow.style.top = `${geometry.y}px`;
+  hoverGlow.style.color = planet.systemStarColor;
+  layer.append(hoverGlow);
+  activePlanetScreenStar = {
+    element: hoverGlow,
+    x: geometry.x,
+    y: geometry.y,
+    radius: geometry.radius,
+    depth,
+  };
+
+  const star = document.createElement("div");
+  star.className = "planet-screen__parent-star";
+  star.style.width = `${geometry.radius * 2}px`;
+  star.style.height = `${geometry.radius * 2}px`;
+  star.style.left = `${geometry.x - geometry.radius}px`;
+  star.style.top = `${geometry.y - geometry.radius}px`;
+  star.style.color = planet.systemStarColor;
+  star.style.background = planet.systemStarBlackCore
+    ? "radial-gradient(circle, #000 0 100%)"
+    : `radial-gradient(circle, #fff 0 40%, ${planet.systemStarCoreColor} 55%, ${planet.systemStarColor} 78%, rgba(255,255,255,0) 100%)`;
+  if (!planet.systemStarBlackCore && geometry.radius >= 8) {
+    const starSurface = createSystemStarSurface({
+      id: `${planet.systemId}:planet-view`,
+      coreColor: planet.systemStarCoreColor,
+      glowColor: planet.systemStarColor,
+    }, geometry.radius, {
+      edgeScale: getPlanetViewStarEdgeScale(geometry.radius),
+    });
+    star.append(starSurface.canvas);
+    activePlanetScreenStarSurface = starSurface;
+    drawSystemStarSurface(starSurface, performance.now());
+  }
+  layer.append(star);
+}
+
+function getPlanetScreenPlanetGeometry(planet, width, height) {
+  const radius = THREE.MathUtils.lerp(width * 0.25, width * 2, planet.sizeIndex / 9);
+  return {
+    centerX: width / 2,
+    centerY: height + radius - height * 0.2,
+    radius,
+  };
+}
+
+function getDirection(targetX, targetY, originX, originY) {
+  const length = Math.hypot(targetX - originX, targetY - originY) || 1;
+  return {
+    x: (targetX - originX) / length,
+    y: (targetY - originY) / length,
+  };
+}
+
+function renderPlanetScreenPlanet(layer, planet, geometry, starDir, starGeometry) {
+  const { centerX, centerY, radius } = geometry;
+
+  const body = document.createElement("div");
+  body.className = "planet-screen__planet";
+  body.style.width = `${radius * 2}px`;
+  body.style.height = `${radius * 2}px`;
+  body.style.left = `${centerX - radius}px`;
+  body.style.top = `${centerY - radius}px`;
+  const texture = planet.gasGiantTextureSeed
+    ? createGasGiantTexture(planet.gasGiantTextureSeed, GAS_GIANT_WINDOW_TEXTURE_HEIGHT, GAS_GIANT_OCTAVES + 3)
+    : planet.gasGiantTexture;
+  const glowColor = texture?.edgeColor ?? planet.background ?? "#ffffff";
+  layer.append(body);
+
+  const sphere3D = createPlanetScreen3D(planet, texture, geometry, starDir, glowColor, starGeometry);
+  layer.append(sphere3D.canvas);
+  activePlanetScreen3D = sphere3D;
+  renderPlanetScreen3D(sphere3D);
+}
+
+function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, starDir) {
+  const moonSizes = [height * 0.03, height * 0.05, height * 0.07];
+  const positions = [
+    { x: width * 0.58, y: height * 0.46 },
+    { x: width * 0.83, y: height * 0.68 },
+    { x: width * 0.36, y: height * 0.72 },
+  ];
+  for (const [index, moon] of planet.moonList.slice(0, 3).entries()) {
+    const layer = layers[index];
+    const radius = moonSizes[Math.max(0, Math.min(2, Math.round((moon.radius - 1.2) / 0.4)))];
+    const position = positions[index];
+    const starSafeDistance = starGeometry.radius + radius + 36;
+    const distanceToStar = Math.hypot(position.x - starGeometry.x, position.y - starGeometry.y);
+    const x = distanceToStar < starSafeDistance
+      ? position.x - (starSafeDistance - distanceToStar)
+      : position.x;
+    const y = position.y;
+    const moonElement = document.createElement("div");
+    moonElement.className = "planet-screen__moon";
+    moonElement.style.width = `${radius * 2}px`;
+    moonElement.style.height = `${radius * 2}px`;
+    moonElement.style.left = `${x - radius}px`;
+    moonElement.style.top = `${y - radius}px`;
+    layer.append(moonElement);
+    const moonLabel = document.createElement("div");
+    moonLabel.className = "planet-screen__moon-label";
+    moonLabel.textContent = moon.name;
+    moonLabel.style.left = `${x}px`;
+    moonLabel.style.top = `${y - radius - 7}px`;
+    layer.append(moonLabel);
+  }
+}
+
+function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor, starGeometry) {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  const layerOverscan = 180;
+  const layerInsetCompensation = 80;
+  const canvas = document.createElement("canvas");
+  canvas.className = "planet-screen__sphere-surface";
+  const renderWidth = width + layerOverscan * 2;
+  const renderHeight = height + layerOverscan * 2;
+  canvas.style.width = `${renderWidth}px`;
+  canvas.style.height = `${renderHeight}px`;
+  canvas.style.left = `${layerInsetCompensation - layerOverscan}px`;
+  canvas.style.top = `${layerInsetCompensation - layerOverscan}px`;
+
+  const renderer3D = new THREE.WebGLRenderer({
+    canvas,
+    alpha: true,
+    antialias: true,
+    powerPreference: "high-performance",
+  });
+  renderer3D.setClearColor(0x000000, 0);
+  renderer3D.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+  renderer3D.setSize(renderWidth, renderHeight, false);
+  renderer3D.outputColorSpace = THREE.SRGBColorSpace;
+
+  const scene3D = new THREE.Scene();
+  const fov = 75;
+  const cameraDistance = renderHeight / (2 * Math.tan(THREE.MathUtils.degToRad(fov) / 2));
+  const camera3D = new THREE.PerspectiveCamera(
+    fov,
+    renderWidth / renderHeight,
+    0.1,
+    cameraDistance + geometry.radius * 6,
+  );
+  camera3D.position.set(renderWidth / 2, renderHeight / 2, cameraDistance);
+  camera3D.lookAt(renderWidth / 2, renderHeight / 2, 0);
+
+  const sourceCanvas = texture?.canvas ?? createFallbackPlanetTextureCanvas(planet.background);
+  const map = new THREE.CanvasTexture(sourceCanvas);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.wrapS = THREE.RepeatWrapping;
+  map.wrapT = THREE.ClampToEdgeWrapping;
+  map.anisotropy = Math.min(8, renderer3D.capabilities.getMaxAnisotropy());
+  map.needsUpdate = true;
+
+  const geometry3D = new THREE.SphereGeometry(geometry.radius, 128, 64);
+  const planetSizeFactor = THREE.MathUtils.clamp(planet.sizeIndex / 9, 0, 1);
+  const lightLift = THREE.MathUtils.lerp(0.23, 0.035, planetSizeFactor);
+  const shadowFeather = THREE.MathUtils.lerp(0.18, 0.08, planetSizeFactor);
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      planetMap: { value: map },
+      textureOffset: { value: new THREE.Vector2(0, 0) },
+      reflectedLightColor: { value: new THREE.Color(planet.systemStarColor) },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      varying vec3 vNormalView;
+      void main() {
+        vUv = uv;
+        vNormalView = normalize(normalMatrix * normal);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D planetMap;
+      uniform vec2 textureOffset;
+      uniform vec3 reflectedLightColor;
+      varying vec2 vUv;
+      varying vec3 vNormalView;
+      void main() {
+        vec2 uv = vec2(fract(vUv.x + textureOffset.x), vUv.y);
+        vec3 base = texture2D(planetMap, uv).rgb;
+        vec3 normalView = normalize(vNormalView);
+        vec3 lightView = normalize(vec3(0.0, ${lightLift.toFixed(4)}, -1.0));
+        float lit = smoothstep(0.0, ${shadowFeather.toFixed(4)}, dot(normalView, lightView));
+        vec3 color = base * lit;
+        float reflectedLight = pow(lit, 0.72) * 0.055;
+        float rim = pow(1.0 - abs(normalView.z), 1.55);
+        float litRim = rim * (0.045 + lit * 0.045);
+        color += base * reflectedLightColor * reflectedLight;
+        color += reflectedLightColor * litRim;
+        gl_FragColor = vec4(color, 1.0);
+      }
+    `,
+    transparent: true,
+  });
+  const mesh = new THREE.Mesh(geometry3D, material);
+  mesh.position.set(geometry.centerX + layerOverscan, height - geometry.centerY + layerOverscan, 0);
+  mesh.renderOrder = 1;
+  const textureDirectionAngle = Math.atan2(-starDir.y, starDir.x);
+  const baseQuaternion = new THREE.Quaternion()
+    .setFromAxisAngle(new THREE.Vector3(0, 0, 1), textureDirectionAngle);
+  mesh.quaternion.copy(baseQuaternion);
+
+  scene3D.add(mesh);
+
+  const disk3D = createPlanetScreen3DDisk(planet, geometry.radius);
+  if (disk3D) {
+    disk3D.group.position.copy(mesh.position);
+    scene3D.add(disk3D.group);
+  }
+
+  const glowPixelRatio = Math.min(window.devicePixelRatio, 1.5);
+  const glowTargetScale = 0.5;
+  const glowTargetWidth = Math.max(1, Math.ceil(renderWidth * glowPixelRatio * glowTargetScale));
+  const glowTargetHeight = Math.max(1, Math.ceil(renderHeight * glowPixelRatio * glowTargetScale));
+  const glowTargetOptions = {
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    format: THREE.RGBAFormat,
+    depthBuffer: false,
+    stencilBuffer: false,
+  };
+  const glowTargetA = new THREE.WebGLRenderTarget(glowTargetWidth, glowTargetHeight, glowTargetOptions);
+  const glowTargetB = new THREE.WebGLRenderTarget(glowTargetWidth, glowTargetHeight, glowTargetOptions);
+  glowTargetA.texture.colorSpace = THREE.SRGBColorSpace;
+  glowTargetB.texture.colorSpace = THREE.SRGBColorSpace;
+  const glowScene = new THREE.Scene();
+  const postScene = new THREE.Scene();
+  const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const rimGlowColor = new THREE.Color(glowColor).lerp(new THREE.Color(0xffffff), 0.34);
+  const glowGeometry = new THREE.SphereGeometry(geometry.radius, 160, 80);
+  const glowMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      glowColor: { value: rimGlowColor },
+      visibleOffset: { value: new THREE.Vector2(layerOverscan - layerInsetCompensation, layerOverscan - layerInsetCompensation) },
+      visibleSize: { value: new THREE.Vector2(width, height) },
+    },
+    vertexShader: `
+      varying vec3 vNormalView;
+      void main() {
+        vNormalView = normalize(normalMatrix * normal);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 glowColor;
+      uniform vec2 visibleOffset;
+      uniform vec2 visibleSize;
+      varying vec3 vNormalView;
+      const float PI = 3.141592653589793;
+      void main() {
+        vec3 normalView = normalize(vNormalView);
+        float silhouette = 1.0 - abs(normalView.z);
+        float broadGlow = pow(silhouette, 2.45) * 0.62;
+        float softCore = pow(silhouette, 8.0) * 0.9;
+        float screenX = clamp((gl_FragCoord.x - visibleOffset.x) / max(1.0, visibleSize.x), 0.0, 1.0);
+        float screenFade = pow(sin(screenX * PI), 1.15);
+        float alpha = (broadGlow + softCore) * screenFade;
+        if (alpha < 0.002) {
+          discard;
+        }
+        gl_FragColor = vec4(glowColor, alpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  });
+  const glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
+  glowMesh.position.copy(mesh.position);
+  glowMesh.quaternion.copy(baseQuaternion);
+  const glowScale = THREE.MathUtils.lerp(1.012, 1.0045, planetSizeFactor);
+  glowMesh.scale.setScalar(glowScale);
+  glowMesh.renderOrder = 3;
+  glowScene.add(glowMesh);
+
+  const blurMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      inputTexture: { value: glowTargetA.texture },
+      direction: { value: new THREE.Vector2(1, 0) },
+      resolution: { value: new THREE.Vector2(glowTargetWidth, glowTargetHeight) },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D inputTexture;
+      uniform vec2 direction;
+      uniform vec2 resolution;
+      varying vec2 vUv;
+      void main() {
+        vec2 stepSize = direction / resolution;
+        vec4 color = texture2D(inputTexture, vUv) * 0.227027;
+        color += texture2D(inputTexture, vUv + stepSize * 1.384615) * 0.316216;
+        color += texture2D(inputTexture, vUv - stepSize * 1.384615) * 0.316216;
+        color += texture2D(inputTexture, vUv + stepSize * 3.230769) * 0.070270;
+        color += texture2D(inputTexture, vUv - stepSize * 3.230769) * 0.070270;
+        gl_FragColor = color;
+      }
+    `,
+    depthWrite: false,
+    depthTest: false,
+  });
+  const blurQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), blurMaterial);
+  const blurScene = new THREE.Scene();
+  blurScene.add(blurQuad);
+
+  const compositeMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      inputTexture: { value: glowTargetA.texture },
+      resolution: { value: new THREE.Vector2(renderWidth * glowPixelRatio, renderHeight * glowPixelRatio) },
+      intensity: { value: 4.6 },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D inputTexture;
+      uniform vec2 resolution;
+      uniform float intensity;
+      varying vec2 vUv;
+      float noise(vec2 point) {
+        return fract(sin(dot(point, vec2(12.9898, 78.233))) * 43758.5453123);
+      }
+      void main() {
+        vec4 glow = texture2D(inputTexture, vUv);
+        float dither = (noise(gl_FragCoord.xy) - 0.5) / 255.0;
+        float energy = clamp(glow.a * intensity + dither, 0.0, 1.0);
+        if (energy <= 0.001) {
+          discard;
+        }
+        gl_FragColor = vec4(glow.rgb * energy, 0.0);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    blending: THREE.CustomBlending,
+    blendEquation: THREE.AddEquation,
+    blendSrc: THREE.OneFactor,
+    blendDst: THREE.OneFactor,
+    blendEquationAlpha: THREE.AddEquation,
+    blendSrcAlpha: THREE.ZeroFactor,
+    blendDstAlpha: THREE.OneFactor,
+    toneMapped: false,
+  });
+  postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), compositeMaterial));
+
+  return {
+    canvas,
+    renderer: renderer3D,
+    scene: scene3D,
+    camera: camera3D,
+    mesh,
+    texture: map,
+    geometry: geometry3D,
+    material,
+    disk3D,
+    glowScene,
+    glowTargetA,
+    glowTargetB,
+    glowGeometry,
+    glowMaterial,
+    blurScene,
+    blurMaterial,
+    compositeScene: postScene,
+    compositeCamera: postCamera,
+    compositeMaterial,
+    rotationSpeed: 0.00012,
+  };
+}
+
+function createPlanetScreen3DDisk(planet, planetScreenRadius) {
+  if (!planet.accretionDisk) {
+    return null;
+  }
+
+  const diskGeometry = getPlanetScreenDiskGeometry(planet, planetScreenRadius);
+  const sourceInner = diskGeometry.sourceInnerRadius;
+  const sourceThickness = diskGeometry.sourceThickness;
+  const group = new THREE.Group();
+  const geometries = [];
+  const materials = [];
+  const diskRandom = createRandom(`${SEED}:planet-screen-disk-3d:${planet.systemId}:${planet.name}`);
+  const baseColor = new THREE.Color(0xbfc0c2).lerp(new THREE.Color(planet.systemStarColor), 0.08);
+  const tintColor = new THREE.Color(hslToHex(diskRandom() * 360, 1.2 + diskRandom() * 2.2, 67 + diskRandom() * 5));
+  const segmentColor = baseColor.clone().lerp(tintColor, 0.04);
+
+  const cutHalfWidth = Math.max(planetScreenRadius * 0.006, 3.5);
+  const cutRanges = planet.accretionDisk.cutRadii
+    .map((cutRadius) => {
+      const relative = THREE.MathUtils.clamp((cutRadius - sourceInner) / sourceThickness, 0, 1);
+      const radius = THREE.MathUtils.lerp(diskGeometry.innerRadius, diskGeometry.outerRadius, relative);
+      return {
+        start: Math.max(diskGeometry.innerRadius, radius - cutHalfWidth),
+        end: Math.min(diskGeometry.outerRadius, radius + cutHalfWidth),
+      };
+    })
+    .filter((range) => range.end > range.start)
+    .sort((a, b) => a.start - b.start);
+
+  let cursor = diskGeometry.innerRadius;
+  const addRing = (innerRadius, outerRadius, color, opacity, radialSegments = 768) => {
+    if (outerRadius <= innerRadius + 0.1) {
+      return;
+    }
+
+    const ringGeometry = new THREE.RingGeometry(innerRadius, outerRadius, radialSegments, 1);
+    const ringMaterial = new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      depthWrite: false,
+      depthTest: true,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(ringGeometry, ringMaterial);
+    mesh.renderOrder = 2;
+    group.add(mesh);
+    geometries.push(ringGeometry);
+    materials.push(ringMaterial);
+  };
+
+  for (const range of cutRanges) {
+    addRing(cursor, range.start, segmentColor, 0.88);
+    cursor = Math.max(cursor, range.end);
+  }
+  addRing(cursor, diskGeometry.outerRadius, segmentColor, 0.88);
+
+  for (const band of planet.accretionDisk.bandRadii ?? []) {
+    const relative = THREE.MathUtils.clamp((band.radius - sourceInner) / sourceThickness, 0, 1);
+    const radius = THREE.MathUtils.lerp(diskGeometry.innerRadius, diskGeometry.outerRadius, relative);
+    const width = Math.max(planetScreenRadius * 0.0025, 1.6) * band.width;
+    const bandColor = segmentColor.clone().lerp(new THREE.Color(0xffffff), THREE.MathUtils.clamp(0.28 + band.alpha * 1.2, 0, 0.72));
+    addRing(radius - width * 0.5, radius + width * 0.5, bandColor, THREE.MathUtils.clamp(0.18 + band.alpha * 1.4, 0.18, 0.56), 768);
+  }
+
+  applyPlanetDiskRotationToGroup(group, planet);
+  group.renderOrder = 2;
+
+  return {
+    group,
+    geometries,
+    materials,
+  };
+}
+
+function getPlanetScreenDiskGeometry(planet, planetScreenRadius) {
+  const diskScale = planetScreenRadius / planet.radius;
+  const originalThickness = Math.max(1, (planet.accretionDisk.outerRadius - planet.accretionDisk.innerRadius) * diskScale);
+  const innerRadius = planetScreenRadius * 1.5;
+  const thickness = originalThickness;
+
+  return {
+    innerRadius,
+    outerRadius: innerRadius + thickness,
+    thickness,
+    sourceInnerRadius: planet.accretionDisk.innerRadius,
+    sourceThickness: Math.max(1, planet.accretionDisk.outerRadius - planet.accretionDisk.innerRadius),
+  };
+}
+
+function applyPlanetDiskRotationToGroup(group, planet) {
+  const rotationRandom = createRandom(`${SEED}:planet-screen-disk-rotation:${planet.systemId}:${planet.name}`);
+  const rotationX = THREE.MathUtils.lerp(-129, -21, rotationRandom());
+  group.rotation.set(
+    THREE.MathUtils.degToRad(rotationX),
+    THREE.MathUtils.degToRad(50),
+    0,
+  );
+}
+
+function renderPlanetScreen3D(surface) {
+  const renderer3D = surface.renderer;
+  renderer3D.setRenderTarget(null);
+  renderer3D.autoClear = true;
+  renderer3D.clear(true, true, true);
+  renderer3D.render(surface.scene, surface.camera);
+
+  renderer3D.setRenderTarget(surface.glowTargetA);
+  renderer3D.clear(true, true, true);
+  renderer3D.render(surface.glowScene, surface.camera);
+
+  surface.blurMaterial.uniforms.inputTexture.value = surface.glowTargetA.texture;
+  surface.blurMaterial.uniforms.direction.value.set(1, 0);
+  renderer3D.setRenderTarget(surface.glowTargetB);
+  renderer3D.clear(true, true, true);
+  renderer3D.render(surface.blurScene, surface.compositeCamera);
+
+  surface.blurMaterial.uniforms.inputTexture.value = surface.glowTargetB.texture;
+  surface.blurMaterial.uniforms.direction.value.set(0, 1);
+  renderer3D.setRenderTarget(surface.glowTargetA);
+  renderer3D.clear(true, true, true);
+  renderer3D.render(surface.blurScene, surface.compositeCamera);
+
+  surface.blurMaterial.uniforms.inputTexture.value = surface.glowTargetA.texture;
+  surface.blurMaterial.uniforms.direction.value.set(1, 0);
+  renderer3D.setRenderTarget(surface.glowTargetB);
+  renderer3D.clear(true, true, true);
+  renderer3D.render(surface.blurScene, surface.compositeCamera);
+
+  surface.blurMaterial.uniforms.inputTexture.value = surface.glowTargetB.texture;
+  surface.blurMaterial.uniforms.direction.value.set(0, 1);
+  renderer3D.setRenderTarget(surface.glowTargetA);
+  renderer3D.clear(true, true, true);
+  renderer3D.render(surface.blurScene, surface.compositeCamera);
+
+  renderer3D.setRenderTarget(null);
+  renderer3D.autoClear = false;
+  renderer3D.render(surface.compositeScene, surface.compositeCamera);
+  renderer3D.autoClear = true;
+}
+
+function updatePlanetScreen3D(surface, deltaSeconds) {
+  surface.texture.offset.x = (surface.texture.offset.x + deltaSeconds * 0.035) % 1;
+  surface.material.uniforms.textureOffset.value.x = surface.texture.offset.x;
+  renderPlanetScreen3D(surface);
+}
+
+function disposePlanetScreen3D() {
+  if (!activePlanetScreen3D) {
+    return;
+  }
+
+  activePlanetScreen3D.texture.dispose();
+  activePlanetScreen3D.geometry.dispose();
+  activePlanetScreen3D.material.dispose();
+  activePlanetScreen3D.disk3D?.geometries?.forEach((geometry) => geometry.dispose());
+  activePlanetScreen3D.disk3D?.materials?.forEach((material) => material.dispose());
+  activePlanetScreen3D.glowTargetA?.dispose();
+  activePlanetScreen3D.glowTargetB?.dispose();
+  activePlanetScreen3D.glowGeometry?.dispose();
+  activePlanetScreen3D.glowMaterial?.dispose();
+  activePlanetScreen3D.blurMaterial?.dispose();
+  activePlanetScreen3D.compositeMaterial?.dispose();
+  activePlanetScreen3D.renderer.dispose();
+  activePlanetScreen3D.renderer.forceContextLoss();
+  activePlanetScreen3D.renderer.domElement = null;
+  activePlanetScreen3D.canvas.width = 1;
+  activePlanetScreen3D.canvas.height = 1;
+  activePlanetScreen3D.canvas.remove();
+  activePlanetScreen3D = null;
+}
+
+function createPlanetScreenSphereSurface(planet, texture, geometry, starDir, glowColor) {
+  const overscan = 80;
+  const pixelRatio = Math.min(window.devicePixelRatio, 1.35);
+  const width = window.innerWidth + overscan * 2;
+  const height = window.innerHeight + overscan * 2;
+  const canvas = document.createElement("canvas");
+  canvas.className = "planet-screen__sphere-surface";
+  canvas.width = Math.ceil(width * pixelRatio);
+  canvas.height = Math.ceil(height * pixelRatio);
+  canvas.style.left = "0px";
+  canvas.style.top = "0px";
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  const source = texture?.canvas ?? createFallbackPlanetTextureCanvas(planet.background);
+  return {
+    canvas,
+    context: canvas.getContext("2d", { willReadFrequently: true }),
+    pixelRatio,
+    width,
+    height,
+    source,
+    sourceData: source.getContext("2d").getImageData(0, 0, source.width, source.height).data,
+    sourceWidth: source.width,
+    sourceHeight: source.height,
+    centerX: geometry.centerX + overscan,
+    centerY: geometry.centerY + overscan,
+    radius: geometry.radius,
+    starDir,
+    glowColor,
+    textureRepeatX: texture ? 2.4 : 1,
+    textureRepeatY: texture ? 5.4 : 1,
+    image: null,
+    lastDraw: 0,
+  };
+}
+
+function createFallbackPlanetTextureCanvas(background) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = 512;
+  const context = canvas.getContext("2d");
+  const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
+  gradient.addColorStop(0, "#f5f5f5");
+  gradient.addColorStop(0.5, "#d6d6d6");
+  gradient.addColorStop(1, "#8f8f8f");
+  context.fillStyle = background?.startsWith("#") ? background : gradient;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  return canvas;
+}
+
+function drawPlanetScreenSphereSurface(surface, now) {
+  const {
+    canvas,
+    context,
+    pixelRatio,
+    width,
+    height,
+    sourceData,
+    sourceWidth,
+    sourceHeight,
+    centerX,
+    centerY,
+    radius,
+    starDir,
+    textureRepeatX,
+    textureRepeatY,
+  } = surface;
+  const outWidth = canvas.width;
+  const outHeight = canvas.height;
+  const image = surface.image ?? context.createImageData(outWidth, outHeight);
+  surface.image = image;
+  image.data.fill(0);
+  const drift = (now * 0.018) % sourceWidth;
+  const scaledCenterX = centerX * pixelRatio;
+  const scaledCenterY = centerY * pixelRatio;
+  const scaledRadius = radius * pixelRatio;
+  const light = normalize2(starDir.x, starDir.y, 0.42);
+  const axisU = normalize2(starDir.x, starDir.y, 0);
+  const axisV = { x: -axisU.y, y: axisU.x };
+  const minX = Math.max(0, Math.floor((centerX - radius - 2) * pixelRatio));
+  const maxX = Math.min(outWidth - 1, Math.ceil((centerX + radius + 2) * pixelRatio));
+  const minY = Math.max(0, Math.floor((centerY - radius - 2) * pixelRatio));
+  const maxY = Math.min(outHeight - 1, Math.ceil((centerY + radius + 2) * pixelRatio));
+
+  for (let y = minY; y <= maxY; y += 1) {
+    const ny = (y + 0.5 - scaledCenterY) / scaledRadius;
+    for (let x = minX; x <= maxX; x += 1) {
+      const nx = (x + 0.5 - scaledCenterX) / scaledRadius;
+      const dist2 = nx * nx + ny * ny;
+      if (dist2 > 1) {
+        continue;
+      }
+
+      const nz = Math.sqrt(Math.max(0, 1 - dist2));
+      const spherize = Math.asin(Math.min(0.999, Math.sqrt(dist2))) / Math.max(0.0001, Math.sqrt(dist2));
+      const localU = (nx * axisU.x + ny * axisU.y) * spherize;
+      const localV = (nx * axisV.x + ny * axisV.y) * spherize;
+      const sampleX = (0.5 + localU * textureRepeatX) * sourceWidth + drift;
+      const sampleY = (0.5 + localV * textureRepeatY) * sourceHeight;
+      const [red, green, blue] = sampleTextureBilinear(
+        sourceData,
+        sourceWidth,
+        sourceHeight,
+        sampleX,
+        sampleY,
+      );
+      const lightDot = Math.max(0, nx * light.x + ny * light.y + nz * light.z);
+      const rim = Math.pow(1 - nz, 1.7);
+      const shade = THREE.MathUtils.clamp(0.22 + lightDot * 0.92 - rim * 0.1, 0.08, 1.12);
+      const alphaEdge = smoothstep(1, 0.996, dist2);
+      const outOffset = (y * outWidth + x) * 4;
+      image.data[outOffset] = Math.min(255, red * shade);
+      image.data[outOffset + 1] = Math.min(255, green * shade);
+      image.data[outOffset + 2] = Math.min(255, blue * shade);
+      image.data[outOffset + 3] = Math.round(255 * alphaEdge);
+    }
+  }
+
+  context.putImageData(image, 0, 0);
+}
+
+function sampleTextureBilinear(data, width, height, x, y) {
+  const wrappedX = ((x % width) + width) % width;
+  const clampedY = THREE.MathUtils.clamp(y, 0, height - 1.001);
+  const x0 = Math.floor(wrappedX);
+  const y0 = Math.floor(clampedY);
+  const x1 = (x0 + 1) % width;
+  const y1 = Math.min(height - 1, y0 + 1);
+  const tx = wrappedX - x0;
+  const ty = clampedY - y0;
+  const topOffset0 = (y0 * width + x0) * 4;
+  const topOffset1 = (y0 * width + x1) * 4;
+  const bottomOffset0 = (y1 * width + x0) * 4;
+  const bottomOffset1 = (y1 * width + x1) * 4;
+  const topRed = THREE.MathUtils.lerp(data[topOffset0], data[topOffset1], tx);
+  const topGreen = THREE.MathUtils.lerp(data[topOffset0 + 1], data[topOffset1 + 1], tx);
+  const topBlue = THREE.MathUtils.lerp(data[topOffset0 + 2], data[topOffset1 + 2], tx);
+  const bottomRed = THREE.MathUtils.lerp(data[bottomOffset0], data[bottomOffset1], tx);
+  const bottomGreen = THREE.MathUtils.lerp(data[bottomOffset0 + 1], data[bottomOffset1 + 1], tx);
+  const bottomBlue = THREE.MathUtils.lerp(data[bottomOffset0 + 2], data[bottomOffset1 + 2], tx);
+  return [
+    THREE.MathUtils.lerp(topRed, bottomRed, ty),
+    THREE.MathUtils.lerp(topGreen, bottomGreen, ty),
+    THREE.MathUtils.lerp(topBlue, bottomBlue, ty),
+  ];
+}
+
+function normalize2(x, y, z) {
+  const length = Math.hypot(x, y, z) || 1;
+  return { x: x / length, y: y / length, z: z / length };
+}
+
 function openPlanetWindow(planet) {
   if (!planet) {
     return;
@@ -3179,9 +4346,6 @@ function openPlanetWindow(planet) {
   if (planet.hasDisk) {
     tags.push("ACCRETION DISK");
   }
-  if (planet.moonCount > 0) {
-    tags.push(`${planet.moonCount} ${planet.moonCount === 1 ? "MOON" : "MOONS"}`);
-  }
   planetWindowTags.replaceChildren(...tags.map((text) => {
     const tag = document.createElement("span");
     tag.className = "planet-window__tag";
@@ -3197,56 +4361,127 @@ function openPlanetWindow(planet) {
 function renderPlanetStage(planet) {
   planetWindowStage.replaceChildren();
 
-  // Scale the whole planet + disk + moon system to fill the stage with large margins.
-  const scale = PLANET_STAGE_CONTENT_RADIUS / planet.extentRadius;
-  const center = PLANET_STAGE_SIZE / 2;
-  const displayPlanetRadius = planet.radius * scale;
-
-  if (planet.accretionDisk) {
-    const scaledDisk = {
-      innerRadius: planet.accretionDisk.innerRadius * scale,
-      outerRadius: planet.accretionDisk.outerRadius * scale,
-      cutRadii: planet.accretionDisk.cutRadii.map((cutRadius) => cutRadius * scale),
-    };
-    const disk = createAccretionDiskElement(
-      scaledDisk,
-      planet.diskShadowAngle,
-      displayPlanetRadius * 2,
-    );
-    disk.className = "planet-window__disk";
-    planetWindowStage.append(disk);
-  }
-
-  if (planet.moonCount > 0) {
-    const orbitRadius = planet.moonOrbitRadius * scale;
-    const orbit = document.createElement("div");
-    orbit.className = "planet-window__moon-orbit";
-    orbit.style.width = `${orbitRadius * 2}px`;
-    orbit.style.height = `${orbitRadius * 2}px`;
-    planetWindowStage.append(orbit);
-  }
+  const center = PLANET_STAGE_WIDTH / 2;
+  const displayPlanetRadius = THREE.MathUtils.clamp(planet.radius * 2.18, 24, 58);
+  const visibleMoonCount = Math.min(planet.moonList.length, 3);
+  const orbitGap = 30;
+  const moonOrbitRadii = planet.moonList
+    .slice(0, visibleMoonCount)
+    .map((moon, index) => displayPlanetRadius + orbitGap * (index + 1) + THREE.MathUtils.clamp(moon.radius * 0.9, 2, 5));
+  const diskScale = displayPlanetRadius / planet.radius;
+  const farMoonOrbit = moonOrbitRadii.at(-1) ?? displayPlanetRadius;
+  const scaledDisk = planet.accretionDisk
+    ? createPlanetWindowDiskGeometry(planet.accretionDisk, diskScale, farMoonOrbit)
+    : null;
+  const diskOuterRadius = scaledDisk?.outerRadius ?? 0;
+  const lowerExtent = Math.max(
+    displayPlanetRadius,
+    moonOrbitRadii.at(-1) ?? 0,
+    diskOuterRadius > 0 ? diskOuterRadius : 0,
+  );
+  const upperExtent = displayPlanetRadius;
+  const totalExtent = upperExtent + lowerExtent;
+  const planetY = THREE.MathUtils.clamp(
+    (PLANET_STAGE_HEIGHT - totalExtent) / 2 + upperExtent,
+    upperExtent + 8,
+    PLANET_STAGE_HEIGHT - lowerExtent - 8,
+  );
 
   const planetElement = document.createElement("div");
   planetElement.className = "planet-window__planet";
   planetElement.style.width = `${displayPlanetRadius * 2}px`;
   planetElement.style.height = `${displayPlanetRadius * 2}px`;
-  planetElement.style.background = planet.background;
+  planetElement.style.left = `${center - displayPlanetRadius}px`;
+  planetElement.style.top = `${planetY - displayPlanetRadius}px`;
   planetElement.append(createPlanetGlow(displayPlanetRadius, planet.starDirX, planet.starDirY));
-  planetElement.append(createPlanetShadow(displayPlanetRadius, planet.starDirX, planet.starDirY));
+  const displayGasGiantTexture = planet.gasGiantTextureSeed
+    ? createGasGiantTexture(planet.gasGiantTextureSeed, GAS_GIANT_WINDOW_TEXTURE_HEIGHT)
+    : planet.gasGiantTexture;
+  planetElement.append(createPlanetSurface(
+    planet.background,
+    displayGasGiantTexture,
+    displayPlanetRadius,
+    planet.starDirX,
+    planet.starDirY,
+    true,
+    false,
+  ));
   planetWindowStage.append(planetElement);
 
-  for (const moon of planet.moonList) {
-    const moonRadius = moon.radius * scale;
+  const caption = document.createElement("div");
+  caption.className = "planet-window__caption";
+  caption.style.left = `${Math.min(center + displayPlanetRadius + 12, PLANET_STAGE_WIDTH - 96)}px`;
+  caption.style.top = `${Math.max(10, planetY - displayPlanetRadius * 0.42)}px`;
+  caption.innerHTML = `
+    <div class="planet-window__caption-name"></div>
+    <div class="planet-window__caption-size"></div>
+  `;
+  caption.querySelector(".planet-window__caption-name").textContent = planet.name;
+  caption.querySelector(".planet-window__caption-size").textContent = getPlanetSizeLabel(planet);
+  planetWindowStage.append(caption);
+
+  for (const [index, moon] of planet.moonList.slice(0, visibleMoonCount).entries()) {
+    const moonRadius = THREE.MathUtils.clamp(moon.radius * 2.18, 2.6, 6.2);
+    const orbitRadius = moonOrbitRadii[index];
+    const angle = Math.PI / 2 + (index - (visibleMoonCount - 1) / 2) * 0.18;
+    const orbit = document.createElement("div");
+    orbit.className = "planet-window__moon-orbit";
+    orbit.style.width = `${orbitRadius * 2}px`;
+    orbit.style.height = `${orbitRadius * 2}px`;
+    orbit.style.left = `${center}px`;
+    orbit.style.top = `${planetY}px`;
+    planetWindowStage.append(orbit);
+
     const moonElement = document.createElement("div");
     moonElement.className = "planet-window__moon";
     moonElement.style.width = `${moonRadius * 2}px`;
     moonElement.style.height = `${moonRadius * 2}px`;
-    moonElement.style.left = `${center + moon.dx * scale - moonRadius}px`;
-    moonElement.style.top = `${center + moon.dy * scale - moonRadius}px`;
-    moonElement.append(createPlanetGlow(moonRadius, planet.starDirX, planet.starDirY));
-    moonElement.append(createPlanetShadow(moonRadius, planet.starDirX, planet.starDirY));
+    moonElement.style.left = `${center + Math.cos(angle) * orbitRadius - moonRadius}px`;
+    moonElement.style.top = `${planetY + Math.sin(angle) * orbitRadius - moonRadius}px`;
     planetWindowStage.append(moonElement);
   }
+
+  if (scaledDisk) {
+    const disk = createAccretionDiskElement(
+      scaledDisk,
+      planet.diskShadowAngle,
+      displayPlanetRadius * 2,
+    );
+    disk.className = "planet-window__disk planet-window__disk--bottom";
+    const diskSize = Number.parseFloat(disk.style.width);
+    disk.style.left = `${center - diskSize / 2}px`;
+    disk.style.top = `${planetY - diskSize / 2}px`;
+    planetWindowStage.append(disk);
+  }
+}
+
+function createPlanetWindowDiskGeometry(accretionDisk, diskScale, farMoonOrbit) {
+  const originalInner = accretionDisk.innerRadius * diskScale;
+  const originalThickness = Math.max(8, (accretionDisk.outerRadius - accretionDisk.innerRadius) * diskScale);
+  const minInnerRadius = farMoonOrbit + 38;
+  const maxOuterRadius = PLANET_STAGE_HEIGHT - 18;
+  const targetInnerRadius = Math.max(originalInner, minInnerRadius);
+  const availableThickness = Math.max(8, maxOuterRadius - targetInnerRadius);
+  const compressedThickness = Math.max(8, Math.min(originalThickness * 0.46, availableThickness));
+  const innerRadius = Math.min(targetInnerRadius, maxOuterRadius - compressedThickness);
+  const outerRadius = innerRadius + compressedThickness;
+  const cutRadii = accretionDisk.cutRadii
+    .map((cutRadius) => {
+      const t = THREE.MathUtils.clamp(
+        (cutRadius - accretionDisk.innerRadius) /
+          Math.max(1, accretionDisk.outerRadius - accretionDisk.innerRadius),
+        0,
+        1,
+      );
+      return innerRadius + t * compressedThickness;
+    })
+    .filter((cutRadius) => cutRadius > innerRadius + 1.4 && cutRadius < outerRadius - 1.4);
+
+  return {
+    innerRadius,
+    outerRadius,
+    cutRadii,
+  };
 }
 
 function updatePlanetLink() {
@@ -3739,17 +4974,12 @@ function startSystemJumpTransition(targetNode, directionX, directionY, gate, cli
 }
 
 function lockSystemPointer(element = starWindow) {
-  if (document.pointerLockElement || !element.requestPointerLock) {
-    return;
-  }
-
-  const lockResult = element.requestPointerLock();
-  if (lockResult?.catch) {
-    lockResult.catch(() => {});
-  }
+  document.body.classList.add("transition-pointer-frozen");
+  void element;
 }
 
 function releaseSystemPointerLock() {
+  document.body.classList.remove("transition-pointer-frozen");
   if (document.pointerLockElement && document.exitPointerLock) {
     document.exitPointerLock();
   }
@@ -3764,11 +4994,30 @@ function setSystemTransitionOverlay(opacity) {
   systemTransitionOverlay.style.opacity = String(THREE.MathUtils.clamp(opacity, 0, 1));
 }
 
+function updateGasGiantTextureLayers(deltaSeconds) {
+  if (!isStarWindowOpen || gasGiantTextureLayers.size === 0) {
+    return;
+  }
+
+  gasGiantTextureOffset += deltaSeconds * GAS_GIANT_TEXTURE_SPEED;
+  for (const layer of Array.from(gasGiantTextureLayers)) {
+    if (!layer.isConnected || layer.dataset.staticTexture === "true") {
+      gasGiantTextureLayers.delete(layer);
+      continue;
+    }
+
+    const tileWidth = layer.gasGiantTileWidth || 1;
+    const shift = -(gasGiantTextureOffset % tileWidth);
+    const angle = layer.gasGiantAngle || 0;
+    layer.style.transform = `translate3d(-50%, -50%, 0) rotate(${angle}rad) translate3d(${shift.toFixed(2)}px, 0, 0)`;
+  }
+}
+
 function getSystemPlanetRadius(sizeIndex) {
   return 4 + sizeIndex * ((27 - 4) / 9);
 }
 
-function createSystemStarSurface(node, starRadius) {
+function createSystemStarSurface(node, starRadius, options = {}) {
   const pixelRatio = Math.min(window.devicePixelRatio, 2);
   const displaySize = starRadius * 2;
   const overscan = 12;
@@ -3791,20 +5040,25 @@ function createSystemStarSurface(node, starRadius) {
     pixelRatio,
     coreColor: node.coreColor,
     glowColor: node.glowColor,
-    noise: createSystemStarSurfaceNoise(`${SEED}:system-surface:${node.id}`, starRadius),
+    edgeScale: options.edgeScale ?? 1,
+    noise: createSystemStarSurfaceNoise(`${SEED}:system-surface:${node.id}`, starRadius, options.edgeScale ?? 1),
   };
 }
 
-function createSystemStarSurfaceNoise(seed, radius) {
+function createSystemStarSurfaceNoise(seed, radius, edgeScale = 1) {
   const random = createRandom(seed);
   const circumference = Math.PI * 2 * radius;
   const layers = [
-    createLoopingNoiseLayer(random, circumference, 5.2, 64, 0.46),
-    createLoopingNoiseLayer(random, circumference, 2.7, 72, 0.34),
-    createLoopingNoiseLayer(random, circumference, 1.45, 80, 0.2),
+    createLoopingNoiseLayer(random, circumference, 5.2 * edgeScale, 64, 0.46),
+    createLoopingNoiseLayer(random, circumference, 2.7 * edgeScale, 72, 0.34),
+    createLoopingNoiseLayer(random, circumference, 1.45 * edgeScale, 80, 0.2),
   ];
 
   return { layers };
+}
+
+function getPlanetViewStarEdgeScale(radius) {
+  return THREE.MathUtils.clamp(radius / 560, 0.16, 2.4);
 }
 
 function createLoopingNoiseLayer(random, circumference, cellPx, timeCells, weight) {
@@ -3858,10 +5112,13 @@ function drawSystemStarSurface(surface, now) {
   const radius = displaySize / 2;
   const timeRatio = (now % 34200) / 34200;
   const points = Math.max(1800, Math.min(7200, Math.ceil(radius * 7.5)));
-  const amplitude = 2.5;
-  const innerBlend = 60;
-  const outerReach = 3;
+  const edgeScale = surface.edgeScale ?? 1;
+  const amplitude = THREE.MathUtils.clamp(2.5 * edgeScale, 0.28, 6);
+  const innerBlend = THREE.MathUtils.clamp(60 * edgeScale, 1, 110);
+  const outerReach = THREE.MathUtils.clamp(3 * edgeScale, 0.35, 7.2);
   const innerRadius = Math.max(0, radius - innerBlend);
+  const gradientInnerRadius = Math.max(0, radius - innerBlend);
+  const gradientOuterRadius = Math.max(gradientInnerRadius + 0.1, radius + outerReach);
 
   context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
   context.clearRect(0, 0, canvasSize, canvasSize);
@@ -3884,7 +5141,14 @@ function drawSystemStarSurface(surface, now) {
 
   context.closePath();
   context.arc(center, center, innerRadius, Math.PI * 2, 0, true);
-  const edgeGradient = context.createRadialGradient(center, center, radius - innerBlend, center, center, radius + outerReach);
+  const edgeGradient = context.createRadialGradient(
+    center,
+    center,
+    gradientInnerRadius,
+    center,
+    center,
+    gradientOuterRadius,
+  );
   edgeGradient.addColorStop(0, "rgba(255,255,255,0)");
   edgeGradient.addColorStop(0.32, hexToRgba(surface.glowColor, 0.12));
   edgeGradient.addColorStop(0.62, hexToRgba(surface.glowColor, 0.34));
@@ -4005,40 +5269,301 @@ function createPlanetKind(random, sizeIndex) {
   };
 }
 
+const GAS_GIANT_SYSTEM_TEXTURE_HEIGHT = 32;
+const GAS_GIANT_WINDOW_TEXTURE_HEIGHT = 1024;
+const GAS_GIANT_TEXTURE_ASPECT = 2;
+const GAS_GIANT_OCTAVES = 4;
+const GAS_GIANT_PERSISTENCE = 0.5;
+const gasGiantTextureCache = new Map();
+
+function createGasGiantTexture(seed, textureHeight = GAS_GIANT_SYSTEM_TEXTURE_HEIGHT, octaves = GAS_GIANT_OCTAVES) {
+  const cacheKey = `${seed}:${textureHeight}:${octaves}`;
+  if (gasGiantTextureCache.has(cacheKey)) {
+    return gasGiantTextureCache.get(cacheKey);
+  }
+
+  const random = createRandom(seed);
+  const palette = GAS_GIANT_PALETTES[Math.floor(random() * GAS_GIANT_PALETTES.length)] ?? GAS_GIANT_PALETTES[0];
+  const scale = 10 + Math.floor(random() * 15);
+  const stretch = 3 + random() * 6;
+  const width = textureHeight * GAS_GIANT_TEXTURE_ASPECT;
+  const height = textureHeight;
+  const field = createGasGiantNoiseField({ width, height, scale, stretch, random, octaves });
+  const colors = createShiftedGasGiantStops(palette, random);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  const image = context.createImageData(width, height);
+  for (let index = 0; index < field.length; index += 1) {
+    const color = samplePaletteStops(colors, field[index]);
+    const offset = index * 4;
+    image.data[offset] = color[0];
+    image.data[offset + 1] = color[1];
+    image.data[offset + 2] = color[2];
+    image.data[offset + 3] = 255;
+  }
+  context.putImageData(image, 0, 0);
+
+  const texture = {
+    url: `url(${canvas.toDataURL("image/png")})`,
+    canvas,
+    width,
+    height,
+    edgeColor: rgbToHex(samplePaletteStops(
+      colors,
+      field[Math.floor(height * 0.5) * width + Math.floor(width * 0.13)],
+    )),
+  };
+  gasGiantTextureCache.set(cacheKey, texture);
+  return texture;
+}
+
+function createGasGiantNoiseField({ width, height, scale, stretch, random, octaves = GAS_GIANT_OCTAVES }) {
+  const field = new Float32Array(width * height);
+  const octaveSeeds = Array.from({ length: octaves }, () => Math.floor(random() * 0xffffffff));
+  let offset = 0;
+
+  for (let y = 0; y < height; y += 1) {
+    const v = y / height;
+    for (let x = 0; x < width; x += 1) {
+      const u = x / width;
+      let sum = 0;
+      let amp = 1;
+      let ampSum = 0;
+      let freqY = scale;
+      let freqX = Math.max(1, Math.round(scale / stretch));
+      for (let octave = 0; octave < octaves; octave += 1) {
+        sum += sampleTileableValueNoise(u, v, freqX, freqY, octaveSeeds[octave]) * amp;
+        ampSum += amp;
+        amp *= GAS_GIANT_PERSISTENCE;
+        freqX = Math.max(1, freqX * 2);
+        freqY *= 2;
+      }
+      field[offset] = sum / ampSum;
+      offset += 1;
+    }
+  }
+
+  return field;
+}
+
+function sampleTileableValueNoise(u, v, freqX, freqY, seed) {
+  const gx = u * freqX;
+  const gy = v * freqY;
+  const fx = Math.floor(gx);
+  const fy = Math.floor(gy);
+  const tx = smoothNoiseStep(gx - fx);
+  const ty = smoothNoiseStep(gy - fy);
+  const x0 = ((fx % freqX) + freqX) % freqX;
+  const y0 = ((fy % freqY) + freqY) % freqY;
+  const x1 = (x0 + 1) % freqX;
+  const y1 = (y0 + 1) % freqY;
+  const a = gasGiantCornerHash(seed, x0, y0);
+  const b = gasGiantCornerHash(seed, x1, y0);
+  const c = gasGiantCornerHash(seed, x0, y1);
+  const d = gasGiantCornerHash(seed, x1, y1);
+  const top = THREE.MathUtils.lerp(a, b, tx);
+  const bottom = THREE.MathUtils.lerp(c, d, tx);
+  return THREE.MathUtils.lerp(top, bottom, ty);
+}
+
+function gasGiantCornerHash(seed, x, y) {
+  let hash = (seed ^ Math.imul(x + 1, 2654435761) ^ Math.imul(y + 1, 2246822519)) >>> 0;
+  hash = Math.imul(hash ^ (hash >>> 15), 2246822519);
+  hash = Math.imul(hash ^ (hash >>> 13), 3266489917);
+  hash ^= hash >>> 16;
+  return (hash >>> 0) / 4294967296;
+}
+
+function createShiftedGasGiantStops(palette, random) {
+  return palette.stops
+    .map((stop) => ({
+      pos: stop.pos,
+      rgb: hexToRgb(applyGasGiantColorShift(stop, random)),
+    }))
+    .sort((a, b) => a.pos - b.pos);
+}
+
+function applyGasGiantColorShift(stop, random) {
+  const hueShift = stop.hueShift ?? [0, 0];
+  const brightnessShift = stop.brightnessShift ?? [0, 0];
+  const hsl = rgbToHsl(hexToRgb(stop.color));
+  hsl[0] += hueShift[0] + random() * (hueShift[1] - hueShift[0]);
+  hsl[2] = THREE.MathUtils.clamp(
+    hsl[2] + brightnessShift[0] + random() * (brightnessShift[1] - brightnessShift[0]),
+    0,
+    100,
+  );
+  return rgbToHex(hslToRgb(hsl));
+}
+
+function samplePaletteStops(stops, value) {
+  if (value <= stops[0].pos) {
+    return stops[0].rgb;
+  }
+  const last = stops[stops.length - 1];
+  if (value >= last.pos) {
+    return last.rgb;
+  }
+
+  for (let index = 0; index < stops.length - 1; index += 1) {
+    const left = stops[index];
+    const right = stops[index + 1];
+    if (value <= right.pos) {
+      const t = (value - left.pos) / Math.max(0.0001, right.pos - left.pos);
+      return [
+        THREE.MathUtils.lerp(left.rgb[0], right.rgb[0], t),
+        THREE.MathUtils.lerp(left.rgb[1], right.rgb[1], t),
+        THREE.MathUtils.lerp(left.rgb[2], right.rgb[2], t),
+      ];
+    }
+  }
+
+  return last.rgb;
+}
+
+function applyGasGiantTexture(element, texture, displayRadius, isStatic = false, starDirX = -1, starDirY = 0) {
+  element.style.background = "transparent";
+  const isWindowSurface = element.classList.contains("planet-window__planet") ||
+    element.classList.contains("planet-window__surface");
+  element.classList.add(
+    "gas-giant-surface",
+    isWindowSurface ? "planet-window__planet--gas-giant" : "system-planet--gas-giant",
+  );
+
+  const textureLayer = document.createElement("span");
+  textureLayer.className = "gas-giant-texture";
+  const driftLayer = document.createElement("span");
+  driftLayer.className = "gas-giant-texture__drift";
+  driftLayer.style.setProperty("--gas-giant-texture", texture.url);
+  const tileWidth = isWindowSurface ? texture.width : displayRadius * 4;
+  driftLayer.style.setProperty("--gas-giant-tile-width", `${tileWidth}px`);
+  driftLayer.style.setProperty(
+    "--gas-giant-tile-height",
+    `${isWindowSurface ? texture.height : displayRadius * 2}px`,
+  );
+  const angle = Math.atan2(starDirY, starDirX);
+  driftLayer.style.setProperty("--gas-giant-angle", `${angle}rad`);
+  driftLayer.dataset.staticTexture = isStatic ? "true" : "false";
+  driftLayer.gasGiantTileWidth = tileWidth;
+  driftLayer.gasGiantAngle = angle;
+  if (isStatic) {
+    driftLayer.classList.add("gas-giant-texture__drift--static");
+    driftLayer.style.transform = `translate3d(-50%, -50%, 0) rotate(${angle}rad) translate3d(0, 0, 0)`;
+  } else {
+    gasGiantTextureLayers.add(driftLayer);
+  }
+  textureLayer.append(driftLayer);
+  element.append(textureLayer);
+
+  const highlight = document.createElement("span");
+  highlight.className = "gas-giant-highlight";
+  element.append(highlight);
+}
+
+function createPlanetSurface(
+  background,
+  gasGiantTexture,
+  radius,
+  starDirX,
+  starDirY,
+  isWindow = false,
+  isTextureStatic = false,
+  options = {},
+) {
+  const surface = document.createElement("div");
+  surface.className = isWindow ? "planet-window__surface" : "system-planet__surface";
+  surface.style.background = background;
+  if (gasGiantTexture) {
+    applyGasGiantTexture(surface, gasGiantTexture, radius, isTextureStatic, starDirX, starDirY);
+  }
+  if (options.innerLightColor) {
+    surface.append(createPlanetInnerLight(radius, starDirX, starDirY, options.innerLightColor));
+  }
+  surface.append(createPlanetShadow(radius, starDirX, starDirY, options));
+  return surface;
+}
+
 // Light circle offset toward the star; shadow width on axis equals this offset,
 // so 2R/5 leaves a shadow ~1/5 of the disc with a concave (curved) edge.
 const PLANET_SHADOW_OFFSET = 2 / 5;
 
-function createPlanetShadow(radius, starDirX, starDirY) {
+function createPlanetShadow(radius, starDirX, starDirY, options = {}) {
   // The circle is a sphere: cast a concave (crescent) shadow opposite the star,
-  // modelled as the planet minus an equal-radius "light" circle toward the star.
-  // The overlay is padded 1px so its solid black fully covers the planet rim on
-  // the dark side (any spill lands on black space and stays invisible).
-  const pad = 1;
-  const center = radius + pad;
-  const lightOffset = radius * PLANET_SHADOW_OFFSET;
+  // modelled as a soft multiply overlay rather than a solid cutout.
+  const overscan = Math.max(2.5, Math.min(5, radius * 0.08));
+  const center = radius + overscan;
+  const lightOffset = radius * (options.shadowOffset ?? (PLANET_SHADOW_OFFSET + 0.12));
   const lightCx = center + starDirX * lightOffset;
   const lightCy = center + starDirY * lightOffset;
-  const blur = Math.max(radius * 0.16, 0.6);
+  const blur = Math.max(radius * (options.shadowBlurScale ?? 0.68), 5.2);
 
   const shadow = document.createElement("div");
   shadow.className = "system-planet-shadow";
   shadow.style.width = `${center * 2}px`;
   shadow.style.height = `${center * 2}px`;
-  shadow.style.left = `${-pad}px`;
-  shadow.style.top = `${-pad}px`;
+  shadow.style.left = `${-overscan}px`;
+  shadow.style.top = `${-overscan}px`;
+  const shadowAlpha = options.shadowAlpha ?? 0.82;
   shadow.style.background =
     `radial-gradient(circle at ${lightCx.toFixed(2)}px ${lightCy.toFixed(2)}px, ` +
-    `rgba(0, 0, 0, 0) ${(radius - blur).toFixed(2)}px, ` +
-    `rgba(0, 0, 0, 1) ${(radius + blur).toFixed(2)}px)`;
+    `rgba(0, 0, 0, 0) ${(radius - blur * 0.92).toFixed(2)}px, ` +
+    `rgba(0, 0, 0, ${shadowAlpha}) ${(radius + blur * 0.48).toFixed(2)}px)`;
   return shadow;
+}
+
+function createPlanetScreenPlanetGlow(radius, starDirX, starDirY, color) {
+  const outerExtent = Math.max(3, Math.min(8, radius * 0.018));
+  const glow = document.createElement("div");
+  glow.className = "planet-screen__planet-glow";
+  glow.style.width = `${(radius + outerExtent) * 2}px`;
+  glow.style.height = `${(radius + outerExtent) * 2}px`;
+  glow.style.left = `${-outerExtent}px`;
+  glow.style.top = `${-outerExtent}px`;
+  glow.style.color = color;
+  glow.style.background =
+    `radial-gradient(circle, ` +
+    `rgba(255,255,255,0) ${(radius - outerExtent * 0.9).toFixed(2)}px, ` +
+    `currentColor ${(radius - outerExtent * 0.25).toFixed(2)}px, ` +
+    `currentColor ${(radius + 0.9).toFixed(2)}px, ` +
+    `rgba(255,255,255,0) ${(radius + outerExtent).toFixed(2)}px)`;
+
+  const maskRadius = radius + outerExtent;
+  const maskOffset = radius * 0.82 + outerExtent;
+  const maskCx = maskRadius + starDirX * maskOffset;
+  const maskCy = maskRadius + starDirY * maskOffset;
+  const soft = Math.max(radius * 0.22, 8);
+  const maskImage =
+    `radial-gradient(circle at ${maskCx.toFixed(2)}px ${maskCy.toFixed(2)}px, ` +
+    `#000 ${(radius - soft).toFixed(2)}px, ` +
+    `rgba(0,0,0,0) ${(radius + soft).toFixed(2)}px)`;
+  glow.style.maskImage = maskImage;
+  glow.style.webkitMaskImage = maskImage;
+  return glow;
+}
+
+function createPlanetInnerLight(radius, starDirX, starDirY, color) {
+  const light = document.createElement("div");
+  light.className = "system-planet-inner-light";
+  const lightCx = 50 + starDirX * 34;
+  const lightCy = 50 + starDirY * 34;
+  light.style.color = color;
+  light.style.background =
+    `radial-gradient(circle at ${lightCx.toFixed(2)}% ${lightCy.toFixed(2)}%, ` +
+    `color-mix(in srgb, currentColor 72%, white) 0 12%, ` +
+    `color-mix(in srgb, currentColor 44%, transparent) 34%, ` +
+    `color-mix(in srgb, currentColor 14%, transparent) 58%, ` +
+    `rgba(255,255,255,0) 84%)`;
+  return light;
 }
 
 function createPlanetGlow(radius, starDirX, starDirY) {
   // Rim glow, sized relative to the planet, masked off on the shadowed side so
   // the planet only glows where it is lit. The glow peaks exactly at the rim
   // (no gap) and the mask circle shares the shadow's terminator.
-  const glowExtent = Math.max(radius * 0.55, 3);
+  const glowExtent = Math.max(radius * 0.72, 4);
 
   const glow = document.createElement("div");
   glow.className = "system-planet-glow";
@@ -4049,20 +5574,22 @@ function createPlanetGlow(radius, starDirX, starDirY) {
   glow.style.background =
     `radial-gradient(circle, ` +
     `rgba(255, 255, 255, 0) ${(radius - 1).toFixed(2)}px, ` +
-    `rgba(255, 255, 255, 0.42) ${radius.toFixed(2)}px, ` +
-    `rgba(255, 255, 255, 0.13) ${(radius + glowExtent * 0.42).toFixed(2)}px, ` +
+    `rgba(255, 255, 255, 0.28) ${radius.toFixed(2)}px, ` +
+    `rgba(255, 255, 255, 0.09) ${(radius + glowExtent * 0.48).toFixed(2)}px, ` +
     `rgba(255, 255, 255, 0) ${(radius + glowExtent).toFixed(2)}px)`;
 
-  // Mask circle: same terminator as the shadow, enlarged to cover the rim glow.
+  // Mask circle: same terminator as the shadow, with a soft falloff so the
+  // reflected rim light fades naturally before the occluded crescent.
   const maskRadius = radius + glowExtent;
   const maskOffset = radius * PLANET_SHADOW_OFFSET + glowExtent;
   const maskCx = maskRadius + starDirX * maskOffset;
   const maskCy = maskRadius + starDirY * maskOffset;
-  const soft = radius * 0.4;
+  const maskTerminatorRadius = radius + glowExtent * 0.24;
+  const soft = Math.max(radius * 0.2, glowExtent * 0.5, 3.2);
   const maskImage =
     `radial-gradient(circle at ${maskCx.toFixed(2)}px ${maskCy.toFixed(2)}px, ` +
-    `#000 ${(maskRadius - soft).toFixed(2)}px, ` +
-    `rgba(0, 0, 0, 0) ${(maskRadius + soft).toFixed(2)}px)`;
+    `#000 ${(maskTerminatorRadius - soft).toFixed(2)}px, ` +
+    `rgba(0, 0, 0, 0) ${(maskTerminatorRadius + soft).toFixed(2)}px)`;
   glow.style.maskImage = maskImage;
   glow.style.webkitMaskImage = maskImage;
   return glow;
@@ -4107,22 +5634,34 @@ function createAccretionDisk(random, planetRadius, sizeIndex) {
   const outerRadius = innerRadius + thickness;
   const cuts = Math.floor(random() * 4);
   const cutRadii = [];
+  const bandCount = 1 + Math.floor(random() * 5);
+  const bandRadii = [];
 
   for (let index = 0; index < cuts; index += 1) {
     cutRadii.push(innerRadius + 2 + random() * Math.max(1, thickness - 4));
   }
 
+  for (let index = 0; index < bandCount; index += 1) {
+    bandRadii.push({
+      radius: innerRadius + 1 + random() * Math.max(1, thickness - 2),
+      width: 0.8 + random() * 1.7,
+      alpha: 0.1 + random() * 0.18,
+    });
+  }
+
   cutRadii.sort((a, b) => a - b);
+  bandRadii.sort((a, b) => a.radius - b.radius);
 
   return {
     innerRadius,
     outerRadius,
     cutRadii,
+    bandRadii,
     moonOrbitRadius: innerRadius + thickness / 2,
   };
 }
 
-function createAccretionDiskElement(accretionDisk, shadowAngle, shadowWidth) {
+function createAccretionDiskElement(accretionDisk, shadowAngle, shadowWidth, includeShadow = true, cutWidthScale = 1) {
   const size = Math.ceil(accretionDisk.outerRadius * 2 + 2);
   const pixelRatio = Math.min(window.devicePixelRatio, 2);
   const canvas = document.createElement("canvas");
@@ -4150,11 +5689,12 @@ function createAccretionDiskElement(accretionDisk, shadowAngle, shadowWidth) {
   addStop(accretionDisk.innerRadius - 0.8, "rgba(255,255,255,0)");
   addStop(accretionDisk.innerRadius, "rgba(255,255,255,0.2)");
 
+  const cutHalfWidth = Math.max(0.8, cutWidthScale * 0.8);
   for (const cutRadius of accretionDisk.cutRadii) {
-    addStop(cutRadius - 0.8, "rgba(255,255,255,0.2)");
-    addStop(cutRadius - 0.2, "rgba(255,255,255,0)");
-    addStop(cutRadius + 0.8, "rgba(255,255,255,0)");
-    addStop(cutRadius + 1.4, "rgba(255,255,255,0.2)");
+    addStop(cutRadius - cutHalfWidth, "rgba(255,255,255,0.2)");
+    addStop(cutRadius - cutHalfWidth * 0.25, "rgba(255,255,255,0)");
+    addStop(cutRadius + cutHalfWidth, "rgba(255,255,255,0)");
+    addStop(cutRadius + cutHalfWidth * 1.75, "rgba(255,255,255,0.2)");
   }
 
   addStop(accretionDisk.outerRadius, "rgba(255,255,255,0.2)");
@@ -4162,13 +5702,15 @@ function createAccretionDiskElement(accretionDisk, shadowAngle, shadowWidth) {
 
   context.fillStyle = gradient;
   context.fillRect(0, 0, size, size);
-  context.save();
-  context.globalCompositeOperation = "destination-out";
-  context.translate(center, center);
-  context.rotate(shadowAngle);
-  context.fillStyle = "rgba(0,0,0,1)";
-  context.fillRect(0, -shadowWidth / 2, accretionDisk.outerRadius * 1.8, shadowWidth);
-  context.restore();
+  if (includeShadow) {
+    context.save();
+    context.globalCompositeOperation = "destination-out";
+    context.translate(center, center);
+    context.rotate(shadowAngle);
+    context.fillStyle = "rgba(0,0,0,1)";
+    context.fillRect(0, -shadowWidth / 2, accretionDisk.outerRadius * 1.8, shadowWidth);
+    context.restore();
+  }
 
   return canvas;
 }
@@ -4225,7 +5767,7 @@ function createMoonSystem({
   return { moonCount, orbitRadius, moons, planetX, planetY };
 }
 
-function renderMoons({ moonCount, orbitRadius, moons, planetX, planetY }) {
+function renderMoons({ moonCount, orbitRadius, moons, planetX, planetY, starDirX, starDirY }) {
   if (moonCount === 0) {
     return;
   }
@@ -4824,6 +6366,26 @@ function animate() {
   } else if (activeSystemStarSurface) {
     drawSystemStarSurface(activeSystemStarSurface, now);
   }
+
+  if (isStarWindowOpen) {
+    updateSystemParallax(lastClientPointer.x, lastClientPointer.y);
+  }
+
+  if (isPlanetScreenOpen) {
+    if (activePlanetScreenStarSurface) {
+      drawSystemStarSurface(activePlanetScreenStarSurface, now);
+    }
+    if (activePlanetScreen3D) {
+      try {
+        updatePlanetScreen3D(activePlanetScreen3D, deltaSeconds);
+      } catch (error) {
+        console.error("Planet screen 3D update failed", error);
+        disposePlanetScreen3D();
+      }
+    }
+  }
+
+  updateGasGiantTextureLayers(deltaSeconds);
 
   if (isPlanetWindowOpen) {
     updatePlanetLink();
