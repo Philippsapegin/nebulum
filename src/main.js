@@ -1,36 +1,37 @@
 import "./styles.css";
 import * as THREE from "three";
 import {
-  LINK_DISTANCE,
-  MAX_LINKS_PER_NODE,
   MAX_SELECTION_FADING_SEGMENTS,
   MAX_SELECTION_POINTS,
   MAX_SELECTION_SEGMENTS,
   MUSIC_TRACKS,
-  NODE_COUNT,
   PLANET_SIZE_NAMES,
   PLANET_STAGE_CONTENT_RADIUS,
   PLANET_STAGE_HEIGHT,
   PLANET_STAGE_WIDTH,
-  STAR_TYPES,
   ZONE_DATA,
 } from "./constants.js";
 import { GAS_GIANT_PALETTES } from "./gasGiantPalettes.js";
-import { PLANET_DICTIONARIES } from "./planetDictionaries.js";
-import { GEN_SYLLABLES, MEGAGEN_SYLLABLES } from "./syllables.js";
 import {
-  hexToHsv,
+  createAdjacency,
+  createLinks,
+  createNodes,
+  createOuterLinks,
+  createStarName,
+} from "./graph/generate.js";
+import { createPlanetNameService } from "./planet/names.js";
+import { openColorPicker } from "./ui/colorPicker.js";
+import { createMusicPlayer } from "./ui/musicPlayer.js";
+import {
   hexToRgb,
   hexToRgba,
   hslToHex,
   hslToRgb,
-  hsvToHex,
   lightenHexColor,
-  normalizeHexColor,
   rgbToHex,
   rgbToHsl,
 } from "./utils/color.js";
-import { easeOutCubic, smoothstep, toRoman } from "./utils/math.js";
+import { easeOutCubic, smoothstep } from "./utils/math.js";
 import { createRandom } from "./utils/random.js";
 
 const params = new URLSearchParams(window.location.search);
@@ -62,20 +63,6 @@ const usedColors = document.querySelector("#used-colors");
 const clearButton = document.querySelector("#clear-button");
 const maskToolToggle = document.querySelector("#mask-tool-toggle");
 const skyGradientColorsElement = document.querySelector("#sky-gradient-colors");
-const musicPrevButton = document.querySelector("#music-prev");
-const musicPlayButton = document.querySelector("#music-play");
-const musicPlayIcon = document.querySelector("#music-play-icon");
-const musicNextButton = document.querySelector("#music-next");
-const musicModeButton = document.querySelector("#music-mode");
-const musicModeIcon = document.querySelector("#music-mode-icon");
-const musicVolume = document.querySelector("#music-volume");
-const musicTrackCurrent = document.querySelector("#music-track-current");
-const musicDropdownButton = document.querySelector("#music-dropdown");
-const musicPlayer = document.querySelector(".music-player");
-const musicTrackListBackdrop = document.querySelector("#music-track-list-backdrop");
-const musicTrackList = document.querySelector("#music-track-list");
-const musicTrackScrollbar = document.querySelector("#music-track-scrollbar");
-const musicTrackScrollbarThumb = document.querySelector("#music-track-scrollbar-thumb");
 const starWindow = document.querySelector("#star-window");
 const systemGlow = document.querySelector("#system-glow");
 const systemStars = document.querySelector("#system-stars");
@@ -158,17 +145,15 @@ scene.add(keyLight);
 
 const rand = createRandom(SEED);
 const nameRand = createRandom(`${SEED}:names`);
-const planetDictionaryPools = createPlanetDictionaryPools();
-const systemPlanetDictionaries = new Map();
-const moonNameAssignments = new Map();
+const planetNameService = createPlanetNameService({ seed: SEED });
 const nodes = createNodes(rand).map((node) => ({
   ...node,
   name: createStarName(nameRand),
 }));
-const planetNameAssignments = createPlanetNameAssignments(nodes);
+const planetNameAssignments = planetNameService.createPlanetNameAssignments(nodes);
 const links = createLinks(nodes);
 const outerLinks = createOuterLinks(nodes, createRandom(`${SEED}:outer-links`));
-const adjacency = createAdjacency(links);
+const adjacency = createAdjacency(links, nodes);
 const nodeMeshes = [];
 const labelElements = [];
 const hitTargets = [];
@@ -221,13 +206,6 @@ let lastFrameTime = performance.now();
 let skyRandomVersion = 0;
 let skyMesh = null;
 let targetCameraDistance = camera.position.z;
-let musicTrackIndex = 0;
-let musicMode = "order";
-let systemMusicPlayerPosition = null;
-let isDraggingMusicPlayer = false;
-let musicPlayerDragOffset = new THREE.Vector2();
-const musicAudio = new Audio();
-musicAudio.preload = "metadata";
 const skyGradientColors = ["#27648f", "#000000", "#884d26", "#000000"];
 const nodeColors = new Map();
 const nodeAnimationProgress = new Map();
@@ -238,9 +216,13 @@ const edgeExitAnimations = new Map();
 const selectionOverlay = createSelectionOverlay();
 const selectionScreenSize = new THREE.Vector2();
 const systemGlowLayer = createSystemGlowLayer();
+const musicPlayerController = createMusicPlayer({
+  tracks: MUSIC_TRACKS,
+  canDragInSystem: () => isStarWindowOpen && !isSystemTransitioning,
+});
 
 initPanel();
-initMusicPlayer();
+musicPlayerController.init();
 buildSky(createRandom(`${SEED}:sky`));
 buildLocalSpaceStars(createRandom(`${SEED}:local-space`));
 buildLinks(links);
@@ -386,327 +368,6 @@ function initPanel() {
 
 }
 
-function initMusicPlayer() {
-  if (!musicTrackList || MUSIC_TRACKS.length === 0) {
-    return;
-  }
-
-  MUSIC_TRACKS.forEach((file, index) => {
-    const item = document.createElement("button");
-    item.className = "music-track-item";
-    item.type = "button";
-    item.textContent = getMusicTrackTitle(file);
-    item.addEventListener("click", () => {
-      setMusicTrack(index, !musicAudio.paused);
-      setMusicDropdownOpen(false);
-    });
-    musicTrackList.append(item);
-  });
-
-  musicAudio.volume = Number(musicVolume.value);
-  musicVolume.style.setProperty("--vol-frac", musicVolume.value);
-  setMusicTrack(0, false);
-
-  musicPrevButton.addEventListener("click", () => playAdjacentTrack(-1));
-  musicNextButton.addEventListener("click", () => playAdjacentTrack(1));
-  musicPlayButton.addEventListener("click", toggleMusicPlayback);
-  musicModeButton.addEventListener("click", cycleMusicMode);
-  musicDropdownButton.addEventListener("click", (event) => {
-    event.stopPropagation();
-    setMusicDropdownOpen(musicTrackList.hidden);
-  });
-  musicTrackCurrent.addEventListener("click", (event) => {
-    event.stopPropagation();
-    setMusicDropdownOpen(musicTrackList.hidden);
-  });
-  musicVolume.addEventListener("input", () => {
-    musicAudio.volume = Number(musicVolume.value);
-    musicVolume.style.setProperty("--vol-frac", musicVolume.value);
-  });
-  musicTrackCurrent.addEventListener("pointerdown", (event) => {
-    seekMusicFromTrackButton(event);
-  });
-  musicTrackCurrent.addEventListener("pointermove", (event) => {
-    if (event.buttons === 1) {
-      seekMusicFromTrackButton(event);
-    }
-  });
-  musicTrackList.addEventListener("scroll", updateMusicTrackScrollbar);
-  musicTrackScrollbar?.addEventListener("pointerdown", onMusicScrollbarPointerDown);
-  musicPlayer?.addEventListener("pointerdown", onMusicPlayerPointerDown);
-
-  musicAudio.addEventListener("play", updateMusicPlayButton);
-  musicAudio.addEventListener("pause", updateMusicPlayButton);
-  musicAudio.addEventListener("loadedmetadata", updateMusicProgress);
-  musicAudio.addEventListener("timeupdate", updateMusicProgress);
-  musicAudio.addEventListener("ended", handleMusicEnded);
-  document.addEventListener("pointerdown", (event) => {
-    if (
-      musicTrackList.hidden ||
-      musicTrackList.contains(event.target) ||
-      musicTrackScrollbar?.contains(event.target) ||
-      musicDropdownButton.contains(event.target) ||
-      musicTrackCurrent.contains(event.target)
-    ) {
-      return;
-    }
-    setMusicDropdownOpen(false);
-  });
-}
-
-function setMusicTrack(index, shouldPlay) {
-  musicTrackIndex = THREE.MathUtils.euclideanModulo(index, MUSIC_TRACKS.length);
-  const file = MUSIC_TRACKS[musicTrackIndex];
-  musicAudio.src = `/Music/${encodeURIComponent(file)}`;
-  musicTrackCurrent.textContent = getMusicTrackTitle(file);
-  updateMusicTrackListUi();
-  musicTrackCurrent.style.setProperty("--music-progress", "0%");
-
-  if (shouldPlay) {
-    musicAudio.play().catch(() => {});
-  }
-
-  updateMusicPlayButton();
-}
-
-function toggleMusicPlayback() {
-  if (musicAudio.paused) {
-    musicAudio.play().catch(() => {});
-  } else {
-    musicAudio.pause();
-  }
-}
-
-function playAdjacentTrack(direction) {
-  if (musicMode === "shuffle") {
-    playRandomTrack();
-    return;
-  }
-
-  setMusicTrack(musicTrackIndex + direction, !musicAudio.paused);
-}
-
-function handleMusicEnded() {
-  if (musicMode === "repeat") {
-    musicAudio.currentTime = 0;
-    musicAudio.play().catch(() => {});
-    return;
-  }
-
-  if (musicMode === "shuffle") {
-    playRandomTrack();
-    return;
-  }
-
-  setMusicTrack(musicTrackIndex + 1, true);
-}
-
-function playRandomTrack() {
-  if (MUSIC_TRACKS.length <= 1) {
-    setMusicTrack(0, true);
-    return;
-  }
-
-  let nextIndex = musicTrackIndex;
-  while (nextIndex === musicTrackIndex) {
-    nextIndex = Math.floor(Math.random() * MUSIC_TRACKS.length);
-  }
-  setMusicTrack(nextIndex, true);
-}
-
-function cycleMusicMode() {
-  musicMode = musicMode === "order" ? "repeat" : musicMode === "repeat" ? "shuffle" : "order";
-  const icons = {
-    order: "/Musplayer/order.svg",
-    repeat: "/Musplayer/repeat.svg",
-    shuffle: "/Musplayer/shuffle.svg",
-  };
-  musicModeIcon.src = icons[musicMode];
-  musicModeButton.dataset.mode = musicMode;
-}
-
-function updateMusicPlayButton() {
-  musicPlayIcon.src = musicAudio.paused ? "/Musplayer/play.svg" : "/Musplayer/pause.svg";
-  musicPlayIcon.classList.toggle("music-button__icon--play", musicAudio.paused);
-}
-
-function updateMusicProgress() {
-  if (!Number.isFinite(musicAudio.duration) || musicAudio.duration <= 0) {
-    return;
-  }
-
-  musicTrackCurrent.style.setProperty("--music-progress", `${(musicAudio.currentTime / musicAudio.duration) * 100}%`);
-}
-
-function getMusicTrackTitle(file) {
-  return file.replace(/\.mp3$/i, "").replace(/^\d+\.\s*/, "");
-}
-
-function setMusicDropdownOpen(isOpen) {
-  musicTrackList.hidden = !isOpen;
-  if (musicTrackListBackdrop) {
-    musicTrackListBackdrop.hidden = !isOpen;
-  }
-  if (musicTrackScrollbar) {
-    musicTrackScrollbar.hidden = !isOpen;
-  }
-  musicDropdownButton.setAttribute("aria-expanded", isOpen ? "true" : "false");
-  if (isOpen) {
-    requestAnimationFrame(updateMusicTrackScrollbar);
-  }
-}
-
-function updateMusicTrackListUi() {
-  musicTrackList.querySelectorAll(".music-track-item").forEach((item, index) => {
-    item.classList.toggle("active", index === musicTrackIndex);
-  });
-  updateMusicTrackScrollbar();
-}
-
-function updateMusicTrackScrollbar() {
-  if (!musicTrackList || !musicTrackScrollbar || !musicTrackScrollbarThumb || musicTrackList.hidden) {
-    return;
-  }
-
-  const visibleHeight = musicTrackList.clientHeight;
-  const scrollHeight = musicTrackList.scrollHeight;
-  const canScroll = scrollHeight > visibleHeight + 1;
-  if (musicTrackListBackdrop) {
-    musicTrackListBackdrop.style.height = `${musicTrackList.offsetHeight}px`;
-  }
-  musicTrackScrollbar.hidden = !canScroll;
-  if (!canScroll) {
-    return;
-  }
-
-  const scrollMargin = 3;
-  musicTrackScrollbar.style.height = `${musicTrackList.offsetHeight}px`;
-  const thumbHeight = Math.max(28, (visibleHeight / scrollHeight) * visibleHeight);
-  const maxThumbTop = visibleHeight - thumbHeight - scrollMargin * 2;
-  const maxScrollTop = scrollHeight - visibleHeight;
-  const thumbTop = scrollMargin + (maxScrollTop > 0 ? (musicTrackList.scrollTop / maxScrollTop) * maxThumbTop : 0);
-  musicTrackScrollbarThumb.style.height = `${thumbHeight}px`;
-  musicTrackScrollbarThumb.style.transform = `translateY(${thumbTop}px)`;
-}
-
-function onMusicPlayerPointerDown(event) {
-  if (!isStarWindowOpen || isSystemTransitioning || !musicPlayer || event.button !== 0) {
-    return;
-  }
-
-  if (event.target.closest("button, input, .music-track-list, .music-track-scrollbar")) {
-    return;
-  }
-
-  event.preventDefault();
-  isDraggingMusicPlayer = true;
-  setMusicDropdownOpen(false);
-  const rect = musicPlayer.getBoundingClientRect();
-  musicPlayerDragOffset.set(event.clientX - rect.left, event.clientY - rect.top);
-  musicPlayer.setPointerCapture?.(event.pointerId);
-
-  const onMove = (moveEvent) => {
-    if (!isDraggingMusicPlayer) {
-      return;
-    }
-    setSystemMusicPlayerPosition(
-      moveEvent.clientX - musicPlayerDragOffset.x,
-      moveEvent.clientY - musicPlayerDragOffset.y
-    );
-  };
-  const onUp = (upEvent) => {
-    isDraggingMusicPlayer = false;
-    musicPlayer.releasePointerCapture?.(upEvent.pointerId);
-    window.removeEventListener("pointermove", onMove);
-    window.removeEventListener("pointerup", onUp);
-    window.removeEventListener("pointercancel", onUp);
-  };
-
-  window.addEventListener("pointermove", onMove);
-  window.addEventListener("pointerup", onUp);
-  window.addEventListener("pointercancel", onUp);
-}
-
-function setSystemMusicPlayerPosition(left, top) {
-  if (!musicPlayer) {
-    return;
-  }
-
-  const width = musicPlayer.offsetWidth || 214;
-  const height = musicPlayer.offsetHeight || 78;
-  const clampedLeft = THREE.MathUtils.clamp(left, 0, Math.max(0, window.innerWidth - width));
-  const clampedTop = THREE.MathUtils.clamp(top, 0, Math.max(0, window.innerHeight - height));
-  systemMusicPlayerPosition = { left: clampedLeft, top: clampedTop };
-  musicPlayer.style.setProperty("--system-player-left", `${clampedLeft}px`);
-  musicPlayer.style.setProperty("--system-player-top", `${clampedTop}px`);
-}
-
-function ensureSystemMusicPlayerPosition() {
-  if (!musicPlayer) {
-    return;
-  }
-
-  if (!systemMusicPlayerPosition) {
-    const left = 18;
-    const top = 18 + 30 + 14;
-    setSystemMusicPlayerPosition(left, top);
-    return;
-  }
-
-  setSystemMusicPlayerPosition(systemMusicPlayerPosition.left, systemMusicPlayerPosition.top);
-}
-
-function onMusicScrollbarPointerDown(event) {
-  if (!musicTrackList || !musicTrackScrollbar || !musicTrackScrollbarThumb) {
-    return;
-  }
-
-  event.preventDefault();
-  event.stopPropagation();
-  musicTrackScrollbar.setPointerCapture?.(event.pointerId);
-
-  const scrollbarRect = musicTrackScrollbar.getBoundingClientRect();
-  const thumbRect = musicTrackScrollbarThumb.getBoundingClientRect();
-  const grabOffset = event.clientY >= thumbRect.top && event.clientY <= thumbRect.bottom
-    ? event.clientY - thumbRect.top
-    : thumbRect.height / 2;
-
-  const moveThumb = (clientY) => {
-    const scrollMargin = 3;
-    const visibleHeight = musicTrackList.clientHeight;
-    const scrollHeight = musicTrackList.scrollHeight;
-    const thumbHeight = musicTrackScrollbarThumb.offsetHeight;
-    const maxThumbTop = visibleHeight - thumbHeight - scrollMargin * 2;
-    const maxScrollTop = scrollHeight - visibleHeight;
-    const thumbTop = THREE.MathUtils.clamp(clientY - scrollbarRect.top - grabOffset - scrollMargin, 0, maxThumbTop);
-    musicTrackList.scrollTop = maxThumbTop > 0 ? (thumbTop / maxThumbTop) * maxScrollTop : 0;
-  };
-
-  const onMove = (moveEvent) => moveThumb(moveEvent.clientY);
-  const onUp = (upEvent) => {
-    musicTrackScrollbar.releasePointerCapture?.(upEvent.pointerId);
-    window.removeEventListener("pointermove", onMove);
-    window.removeEventListener("pointerup", onUp);
-    window.removeEventListener("pointercancel", onUp);
-  };
-
-  moveThumb(event.clientY);
-  window.addEventListener("pointermove", onMove);
-  window.addEventListener("pointerup", onUp);
-  window.addEventListener("pointercancel", onUp);
-}
-
-function seekMusicFromTrackButton(event) {
-  if (!Number.isFinite(musicAudio.duration) || musicAudio.duration <= 0) {
-    return;
-  }
-
-  const rect = musicTrackCurrent.getBoundingClientRect();
-  const progress = THREE.MathUtils.clamp((event.clientX - rect.left) / rect.width, 0, 1);
-  musicAudio.currentTime = progress * musicAudio.duration;
-  musicTrackCurrent.style.setProperty("--music-progress", `${progress * 100}%`);
-}
-
 function updateMaskToolUi() {
   maskToolToggle.classList.toggle("active", isMaskToolEnabled);
   maskToolToggle.textContent = isMaskToolEnabled ? "On" : "Off";
@@ -815,438 +476,6 @@ function updateUsedColorsUi() {
 
 function getUsedMaskColors() {
   return Array.from(new Set(nodeColors.values())).sort();
-}
-
-let colorPicker = null;
-
-function openColorPicker(anchor, color, onChange) {
-  if (!colorPicker) {
-    colorPicker = createColorPicker();
-  }
-
-  colorPicker.anchor = anchor;
-  colorPicker.onChange = onChange;
-  setColorPickerColor(color, false);
-  positionColorPicker(anchor);
-  colorPicker.root.hidden = false;
-}
-
-function createColorPicker() {
-  const root = document.createElement("div");
-  root.className = "color-popover";
-  root.hidden = true;
-  root.innerHTML = `
-    <div class="color-popover__plane">
-      <span class="color-popover__handle"></span>
-    </div>
-    <input class="color-popover__hue" type="range" min="0" max="360" step="1" />
-    <input class="color-popover__hex" type="text" autocomplete="off" spellcheck="false" maxlength="7" />
-  `;
-  document.body.append(root);
-
-  const picker = {
-    root,
-    plane: root.querySelector(".color-popover__plane"),
-    handle: root.querySelector(".color-popover__handle"),
-    hue: root.querySelector(".color-popover__hue"),
-    hex: root.querySelector(".color-popover__hex"),
-    hsv: { h: 0, s: 1, v: 1 },
-    anchor: null,
-    onChange: null,
-  };
-
-  picker.plane.addEventListener("pointerdown", (event) => {
-    picker.plane.setPointerCapture(event.pointerId);
-    updatePickerFromPlane(event);
-  });
-  picker.plane.addEventListener("pointermove", (event) => {
-    if (event.buttons !== 1) {
-      return;
-    }
-    updatePickerFromPlane(event);
-  });
-  picker.hue.addEventListener("input", () => {
-    picker.hsv.h = Number(picker.hue.value);
-    emitPickerColor();
-  });
-  picker.hex.addEventListener("input", () => {
-    const normalized = normalizeHexColor(picker.hex.value);
-    if (!/^#[0-9a-f]{6}$/.test(normalized)) {
-      return;
-    }
-    setColorPickerColor(normalized, true);
-  });
-  root.addEventListener("pointerdown", (event) => event.stopPropagation());
-  document.addEventListener("pointerdown", (event) => {
-    if (root.hidden || root.contains(event.target) || picker.anchor?.contains(event.target)) {
-      return;
-    }
-    root.hidden = true;
-  });
-  window.addEventListener("resize", () => {
-    if (!root.hidden && picker.anchor) {
-      positionColorPicker(picker.anchor);
-    }
-  });
-
-  return picker;
-}
-
-function positionColorPicker(anchor) {
-  const rect = anchor.getBoundingClientRect();
-  const width = 234;
-  const left = Math.min(window.innerWidth - width - 8, Math.max(8, rect.left));
-  const top = Math.min(window.innerHeight - 278, rect.bottom + 8);
-  colorPicker.root.style.left = `${left}px`;
-  colorPicker.root.style.top = `${Math.max(8, top)}px`;
-}
-
-function updatePickerFromPlane(event) {
-  const rect = colorPicker.plane.getBoundingClientRect();
-  const x = THREE.MathUtils.clamp((event.clientX - rect.left) / rect.width, 0, 1);
-  const y = THREE.MathUtils.clamp((event.clientY - rect.top) / rect.height, 0, 1);
-  colorPicker.hsv.s = x;
-  colorPicker.hsv.v = 1 - y;
-  emitPickerColor();
-}
-
-function setColorPickerColor(color, emit) {
-  colorPicker.hsv = hexToHsv(color);
-  if (emit) {
-    emitPickerColor();
-  } else {
-    updateColorPickerUi(color);
-  }
-}
-
-function emitPickerColor() {
-  const color = hsvToHex(colorPicker.hsv);
-  updateColorPickerUi(color);
-  colorPicker.onChange?.(color);
-}
-
-function updateColorPickerUi(color) {
-  const { h, s, v } = colorPicker.hsv;
-  colorPicker.root.style.setProperty("--picker-hue", `hsl(${h} 100% 50%)`);
-  colorPicker.handle.style.left = `${s * 100}%`;
-  colorPicker.handle.style.top = `${(1 - v) * 100}%`;
-  colorPicker.hue.value = String(Math.round(h));
-  colorPicker.hex.value = color;
-}
-
-function createNodes(random) {
-  return Array.from({ length: NODE_COUNT }, (_, id) => {
-    const star = createStarProfile(random);
-    const radius = 1.4 + random() * 3.55;
-    const theta = random() * Math.PI * 2;
-    const phi = Math.acos(2 * random() - 1);
-    const drift = new THREE.Vector3(
-      (random() - 0.5) * 1.8,
-      (random() - 0.5) * 1.4,
-      (random() - 0.5) * 1.8,
-    );
-
-    return {
-      id,
-      position: new THREE.Vector3(
-        Math.sin(phi) * Math.cos(theta) * radius,
-        Math.cos(phi) * radius * 0.78,
-        Math.sin(phi) * Math.sin(theta) * radius,
-      ).add(drift),
-      size: star.size,
-      starType: star.type,
-      glowColor: star.color,
-      coreColor: star.coreColor,
-      blackCore: star.blackCore,
-      glowBoost: (star.type === "Neutron Star" || star.type === "Strange Star") ? 1.28 : 1,
-      glowScaleBoost: (star.type === "Neutron Star" || star.type === "Strange Star") ? 1 : 1,
-      planets: Math.floor(random() * 14),
-    };
-  });
-}
-
-function createStarProfile(random) {
-  const variant = STAR_TYPES[Math.floor(random() * STAR_TYPES.length)];
-  const [minSize, maxSize] = variant.size;
-  const color = variant.blackCore
-    ? hslToHex(random() * 360, 1, 0.87)
-    : variant.color;
-
-  return {
-    ...variant,
-    color,
-    size: minSize + random() * (maxSize - minSize),
-  };
-}
-
-function createStarName(random) {
-  const useMega = random() >= 0.7;
-  const syllables = useMega ? MEGAGEN_SYLLABLES : GEN_SYLLABLES;
-  const variant = random();
-
-  if (useMega) {
-    if (variant < 0.5) {
-      return joinSyllables(syllables, random, 2);
-    }
-    if (variant < 0.9) {
-      return `${pickSyllable(syllables, random)}-${pickNameNumber(random)}`.toUpperCase();
-    }
-    return pickSyllable(syllables, random).toUpperCase();
-  }
-
-  if (variant < 0.5) {
-    return joinSyllables(syllables, random, 2);
-  }
-  if (variant < 0.8) {
-    return joinSyllables(syllables, random, 3);
-  }
-  if (variant < 0.9) {
-    return `${pickSyllable(syllables, random)}-${pickNameNumber(random)}`.toUpperCase();
-  }
-  if (variant < 0.95) {
-    return `${pickSyllable(syllables, random)}-${pickSyllable(syllables, random)}`.toUpperCase();
-  }
-  return `${pickSyllable(syllables, random)}'${pickSyllable(syllables, random)}`.toUpperCase();
-}
-
-function joinSyllables(syllables, random, count) {
-  return Array.from({ length: count }, () => pickSyllable(syllables, random))
-    .join("")
-    .toUpperCase();
-}
-
-function pickNameNumber(random) {
-  return Math.floor(random() * 999) + 1;
-}
-
-function pickSyllable(syllables, random) {
-  return syllables[Math.floor(random() * syllables.length)];
-}
-
-function createPlanetNameAssignments(systemNodes) {
-  const dictionaryPools = planetDictionaryPools;
-  const assignments = new Map();
-
-  for (const node of systemNodes) {
-    const random = createRandom(`${SEED}:planet-names:${node.id}`);
-    const primaryDictionary = pickSystemPlanetDictionary(random);
-    systemPlanetDictionaries.set(node.id, primaryDictionary);
-    const names = [];
-
-    for (let index = 0; index < node.planets; index += 1) {
-      names.push(createPlanetName({
-        random,
-        systemName: node.name,
-        planetIndex: index,
-        primaryDictionary,
-        dictionaryPools,
-      }));
-    }
-
-    assignments.set(node.id, names);
-  }
-
-  return assignments;
-}
-
-function createPlanetDictionaryPools() {
-  return {
-    Greece: createDictionaryPool(PLANET_DICTIONARIES.Greece),
-    Norce: createDictionaryPool(PLANET_DICTIONARIES.Norce),
-    Egypt: createDictionaryPool(PLANET_DICTIONARIES.Egypt),
-    Feelings: createDictionaryPool(PLANET_DICTIONARIES.Feelings),
-  };
-}
-
-function createDictionaryPool(names) {
-  return {
-    names,
-    used: new Set(),
-  };
-}
-
-function pickSystemPlanetDictionary(random) {
-  const variants = ["Greece", "Norce", "Egypt"];
-  return variants[Math.floor(random() * variants.length)];
-}
-
-function createPlanetName({ random, systemName, planetIndex, primaryDictionary, dictionaryPools }) {
-  if (random() >= 0.7) {
-    return createDefaultPlanetName(systemName, planetIndex);
-  }
-
-  const sourceRoll = random();
-  if (sourceRoll < 0.6) {
-    return pickUniqueDictionaryName(dictionaryPools[primaryDictionary], random)
-      ?? createGenPlanetName(random);
-  }
-  if (sourceRoll < 0.7) {
-    return pickUniqueDictionaryName(dictionaryPools.Feelings, random)
-      ?? createGenPlanetName(random);
-  }
-  return createGenPlanetName(random);
-}
-
-function createDefaultPlanetName(systemName, planetIndex) {
-  return `${systemName} ${toRoman(planetIndex + 1)}`;
-}
-
-function getMoonNames(systemId, planetIndex, planetName, moonCount) {
-  const key = `${systemId}:${planetIndex}`;
-  if (moonNameAssignments.has(key)) {
-    return moonNameAssignments.get(key).slice(0, moonCount);
-  }
-
-  const primaryDictionary = systemPlanetDictionaries.get(systemId) ?? "Greece";
-  const random = createRandom(`${SEED}:moon-names:${systemId}:${planetIndex}`);
-  const names = Array.from({ length: moonCount }, (_, moonIndex) =>
-    createPlanetName({
-      random,
-      systemName: planetName,
-      planetIndex: moonIndex,
-      primaryDictionary,
-      dictionaryPools: planetDictionaryPools,
-    }));
-  moonNameAssignments.set(key, names);
-  return names;
-}
-
-function pickUniqueDictionaryName(pool, random) {
-  if (!pool || pool.used.size >= pool.names.length) {
-    return null;
-  }
-
-  const startIndex = Math.floor(random() * pool.names.length);
-  for (let offset = 0; offset < pool.names.length; offset += 1) {
-    const index = (startIndex + offset) % pool.names.length;
-    const name = pool.names[index];
-    if (!pool.used.has(name)) {
-      pool.used.add(name);
-      return name.toUpperCase();
-    }
-  }
-
-  return null;
-}
-
-function createGenPlanetName(random) {
-  const roll = random();
-  const gen = () => pickSyllable(GEN_SYLLABLES, random);
-  const mega = () => pickSyllable(MEGAGEN_SYLLABLES, random);
-
-  if (roll < 0.2) {
-    return `${gen()}${gen()}`.toUpperCase();
-  }
-  if (roll < 0.325) {
-    return `${gen()}'${gen()}`.toUpperCase();
-  }
-  if (roll < 0.45) {
-    return `${gen()}${mega()}`.toUpperCase();
-  }
-  if (roll < 0.575) {
-    return `${mega()}${gen()}`.toUpperCase();
-  }
-  if (roll < 0.7) {
-    return `${gen()}'${mega()}`.toUpperCase();
-  }
-  if (roll < 0.825) {
-    return `${mega()}'${gen()}`.toUpperCase();
-  }
-  if (roll < 0.95) {
-    return `${gen()} ${pickNameNumber(random)}`.toUpperCase();
-  }
-  return `${gen()}-${mega()}`.toUpperCase();
-}
-
-function createLinks(points) {
-  const candidates = [];
-  const used = new Set();
-  const links = [];
-  const degree = new Map(points.map((node) => [node.id, 0]));
-
-  for (let a = 0; a < points.length; a += 1) {
-    for (let b = a + 1; b < points.length; b += 1) {
-      const distance = points[a].position.distanceTo(points[b].position);
-      if (distance < LINK_DISTANCE) {
-        candidates.push({ a, b, distance });
-      }
-    }
-  }
-
-  candidates.sort((left, right) => left.distance - right.distance);
-
-  for (let nodeIndex = 1; nodeIndex < points.length; nodeIndex += 1) {
-    let nearest = null;
-    for (let otherIndex = 0; otherIndex < nodeIndex; otherIndex += 1) {
-      const distance = points[nodeIndex].position.distanceTo(points[otherIndex].position);
-      if (!nearest || distance < nearest.distance) {
-        nearest = { a: nodeIndex, b: otherIndex, distance };
-      }
-    }
-    addLink(nearest);
-  }
-
-  for (const link of candidates) {
-    if (degree.get(link.a) >= MAX_LINKS_PER_NODE || degree.get(link.b) >= MAX_LINKS_PER_NODE) {
-      continue;
-    }
-    addLink(link);
-  }
-
-  return links;
-
-  function addLink(link) {
-    const low = Math.min(link.a, link.b);
-    const high = Math.max(link.a, link.b);
-    const key = `${low}:${high}`;
-    if (used.has(key)) {
-      return;
-    }
-    used.add(key);
-    links.push({ a: low, b: high, distance: link.distance });
-    degree.set(low, degree.get(low) + 1);
-    degree.set(high, degree.get(high) + 1);
-  }
-}
-
-function createOuterLinks(points, random) {
-  const targetCount = 4 + Math.floor(random() * 3);
-  const edgeNodes = [...points]
-    .sort((left, right) => right.position.lengthSq() - left.position.lengthSq())
-    .slice(0, Math.max(targetCount * 2, Math.ceil(points.length * 0.32)));
-  const picked = [];
-
-  while (picked.length < targetCount && edgeNodes.length > 0) {
-    const index = Math.floor(random() * edgeNodes.length);
-    const [node] = edgeNodes.splice(index, 1);
-    const outward = node.position.clone().normalize();
-    const jitter = new THREE.Vector3(
-      random() - 0.5,
-      (random() - 0.5) * 0.7,
-      random() - 0.5,
-    );
-    jitter.addScaledVector(outward, -jitter.dot(outward)).normalize();
-    const direction = outward.addScaledVector(jitter, 0.16 + random() * 0.18).normalize();
-    const length = 1.15 + random() * 1.35;
-
-    picked.push({
-      parentId: node.id,
-      start: node.position.clone(),
-      end: node.position.clone().addScaledVector(direction, length),
-      opacity: 0.26 + random() * 0.18,
-    });
-  }
-
-  return picked;
-}
-
-function createAdjacency(edges) {
-  const adjacencyMap = new Map(nodes.map((node) => [node.id, new Set()]));
-  for (const edge of edges) {
-    adjacencyMap.get(edge.a).add(edge.b);
-    adjacencyMap.get(edge.b).add(edge.a);
-  }
-  return adjacencyMap;
 }
 
 function buildNodes(points) {
@@ -2618,7 +1847,7 @@ function openStarWindow(node) {
   isStarWindowOpen = true;
   isSystemTransitioning = false;
   document.body.classList.add("system-open");
-  ensureSystemMusicPlayerPosition();
+  musicPlayerController.ensureSystemPosition();
   starWindow.classList.remove("system-transitioning");
   setSystemTransitionOffset(0, 0);
   setSystemTransitionOverlay(0);
@@ -2644,8 +1873,8 @@ function closeStarWindow() {
   isSystemTransitioning = false;
   isPlanetEntryTransitioning = false;
   document.body.classList.remove("system-open");
-  isDraggingMusicPlayer = false;
-  setMusicDropdownOpen(false);
+  musicPlayerController.cancelDrag();
+  musicPlayerController.closeDropdown();
   starWindow.classList.remove("system-transitioning");
   starWindow.classList.remove("planet-entry-moving");
   planetEntryOverlay.classList.remove("active", "leaving");
@@ -2944,8 +2173,8 @@ function renderStarSystem(node) {
     renderMoons({ ...moonSystem, starDirX, starDirY });
 
     const constructionRadius = getPlanetConstructionRadius(planetRadius, accretionDisk, moonSystem);
-    const planetName = planetNameAssignments.get(node.id)?.[index] ?? createDefaultPlanetName(node.name, index);
-    const moonNames = getMoonNames(node.id, index, planetName, moonSystem.moonCount);
+    const planetName = planetNameAssignments.get(node.id)?.[index] ?? planetNameService.createDefaultPlanetName(node.name, index);
+    const moonNames = planetNameService.getMoonNames(node.id, index, planetName, moonSystem.moonCount);
     const label = document.createElement("div");
     label.className = "system-planet-label";
     label.textContent = planetName;
@@ -2998,7 +2227,7 @@ function renderStarSystem(node) {
         dx: moon.x - planetX,
         dy: moon.y - planetY,
         radius: moon.radius,
-        name: moonNames[moonIndex] ?? createDefaultPlanetName(planetName, moonIndex),
+        name: moonNames[moonIndex] ?? planetNameService.createDefaultPlanetName(planetName, moonIndex),
       })),
       hasDisk: Boolean(accretionDisk),
       tidallyLocked: Boolean(isTidallyLocked),
@@ -6009,9 +5238,9 @@ function resize() {
     }
   });
   if (isStarWindowOpen) {
-    ensureSystemMusicPlayerPosition();
+    musicPlayerController.ensureSystemPosition();
   }
-  updateMusicTrackScrollbar();
+  musicPlayerController.updateScrollbar();
 }
 
 function animate() {
