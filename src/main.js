@@ -1,17 +1,40 @@
 import "./styles.css";
 import * as THREE from "three";
+import {
+  LINK_DISTANCE,
+  MAX_LINKS_PER_NODE,
+  MAX_SELECTION_FADING_SEGMENTS,
+  MAX_SELECTION_POINTS,
+  MAX_SELECTION_SEGMENTS,
+  MUSIC_TRACKS,
+  NODE_COUNT,
+  PLANET_SIZE_NAMES,
+  PLANET_STAGE_CONTENT_RADIUS,
+  PLANET_STAGE_HEIGHT,
+  PLANET_STAGE_WIDTH,
+  STAR_TYPES,
+  ZONE_DATA,
+} from "./constants.js";
 import { GAS_GIANT_PALETTES } from "./gasGiantPalettes.js";
 import { PLANET_DICTIONARIES } from "./planetDictionaries.js";
 import { GEN_SYLLABLES, MEGAGEN_SYLLABLES } from "./syllables.js";
+import {
+  hexToHsv,
+  hexToRgb,
+  hexToRgba,
+  hslToHex,
+  hslToRgb,
+  hsvToHex,
+  lightenHexColor,
+  normalizeHexColor,
+  rgbToHex,
+  rgbToHsl,
+} from "./utils/color.js";
+import { easeOutCubic, smoothstep, toRoman } from "./utils/math.js";
+import { createRandom } from "./utils/random.js";
 
 const params = new URLSearchParams(window.location.search);
 const SEED = params.get("seed") || "nebulum";
-const NODE_COUNT = 42;
-const LINK_DISTANCE = 2.35;
-const MAX_LINKS_PER_NODE = 4;
-const MAX_SELECTION_POINTS = 48;
-const MAX_SELECTION_SEGMENTS = 128;
-const MAX_SELECTION_FADING_SEGMENTS = 24;
 const glowTexture = createNodeGlowTexture();
 const linkPulseTexture = createLinkPulseTexture();
 const blackHoleDiskTexture = createBlackHoleDiskTexture();
@@ -24,133 +47,6 @@ const blackHoleDiskMaterial = new THREE.SpriteMaterial({
   depthTest: false,
   blending: THREE.NormalBlending,
 });
-const STAR_TYPES = [
-  {
-    type: "Red Dwarf",
-    color: "#ff7467",
-    coreColor: "#fffafa",
-    size: [0.018, 0.023],
-  },
-  {
-    type: "Orange Dwarf",
-    color: "#e4974b",
-    coreColor: "#fffaf5",
-    size: [0.019, 0.024],
-  },
-  {
-    type: "Orange Star",
-    color: "#ffc88e",
-    coreColor: "#fff3df",
-    size: [0.024, 0.031],
-  },
-  {
-    type: "Yellow Star",
-    color: "#ffe476",
-    coreColor: "#fff9df",
-    size: [0.026, 0.033],
-  },
-  {
-    type: "Yellow-White Star",
-    color: "#fff1b7",
-    coreColor: "#fffdf2",
-    size: [0.027, 0.034],
-  },
-  {
-    type: "White Star",
-    color: "#ffffff",
-    coreColor: "#ffffff",
-    size: [0.034, 0.04],
-  },
-  {
-    type: "Blue Star",
-    color: "#bfd9ff",
-    coreColor: "#f8fbff",
-    size: [0.035, 0.041],
-  },
-  {
-    type: "Blue Giant",
-    color: "#bfd9ff",
-    coreColor: "#edf5ff",
-    size: [0.041, 0.045],
-  },
-  {
-    type: "Red Giant",
-    color: "#ffaaa2",
-    coreColor: "#fff0ed",
-    size: [0.041, 0.045],
-  },
-  {
-    type: "Blue Supergiant",
-    color: "#a9ccff",
-    coreColor: "#eaf3ff",
-    size: [0.045, 0.046],
-  },
-  {
-    type: "Red Supergiant",
-    color: "#ffaaa2",
-    coreColor: "#ffe8e4",
-    size: [0.045, 0.046],
-  },
-  {
-    type: "Neutron Star",
-    color: "#c6ffe1",
-    coreColor: "#f6fffa",
-    size: [0.018, 0.021],
-  },
-  {
-    type: "Strange Star",
-    color: "#c6ffe1",
-    coreColor: "#f6fffa",
-    size: [0.018, 0.046],
-  },
-  {
-    type: "Black Hole",
-    color: "#fff4bf",
-    coreColor: "#020202",
-    size: [0.018, 0.046],
-    blackCore: true,
-  },
-];
-const ZONE_DATA = {
-  "Red Dwarf":          { tidalLock: 5,  hzInner: 2,  hzOuter: 12 },
-  "Orange Dwarf":       { tidalLock: 8,  hzInner: 4,  hzOuter: 15 },
-  "Orange Star":        { tidalLock: 10, hzInner: 8,  hzOuter: 21 },
-  "Yellow Star":        { tidalLock: 12, hzInner: 12, hzOuter: 31 },
-  "Yellow-White Star":  { tidalLock: 15, hzInner: 15, hzOuter: 46 },
-  "White Star":         { tidalLock: 18, hzInner: 20, hzOuter: 56 },
-  "Blue Star":          { tidalLock: 24, hzInner: 28, hzOuter: 75 },
-  "Blue Giant":         { tidalLock: 45, hzInner: 38, hzOuter: 81 },
-  "Red Giant":          { tidalLock: 30, hzInner: 20, hzOuter: 47 },
-  "Blue Supergiant":    { tidalLock: 75, hzInner: 56, hzOuter: 100 },
-  "Red Supergiant":     { tidalLock: 60, hzInner: 30, hzOuter: 56 },
-  "Neutron Star":       { tidalLock: 8,  hzInner: 5,  hzOuter: 12 },
-  "Strange Star":       { tidalLock: 30, hzInner: 56, hzOuter: 88 },
-  "Black Hole":         { tidalLock: 95, hzInner: null, hzOuter: null },
-};
-const PLANET_SIZE_NAMES = {
-  "PLANET": ["tiny", "small", "", "large", "mega", "super", "super type 2", "super type 3", "super type 4", "super type 5"],
-  "GAS GIANT": ["anomalous", "anomalous", "anomalous", "tiny", "small", "", "", "", "", ""],
-};
-// Planet detail window stage geometry (must match styles.css .planet-window layout).
-const PLANET_STAGE_WIDTH = 292;
-const PLANET_STAGE_HEIGHT = 380;
-const PLANET_STAGE_CONTENT_RADIUS = 80;
-const MUSIC_TRACKS = [
-  "1. Nebulum.mp3",
-  "2. Afar from home.mp3",
-  "3. Defining the rays.mp3",
-  "4. Sparkling horizon.mp3",
-  "5. Weight of light.mp3",
-  "6. Finite but countless.mp3",
-  "7. Sagan was small.mp3",
-  "8. Glacial Starch.mp3",
-  "9. Neutron Lullaby.mp3",
-  "10. TON 618.mp3",
-  "11. Under the skyes.mp3",
-  "12. Vast Nothingness.mp3",
-  "13. Orbit around the end.mp3",
-];
-
 const sceneCanvas = document.querySelector("#scene");
 const starLabels = document.querySelector("#star-labels");
 const hoverNameWrap = document.querySelector("#hover-name-wrap");
@@ -166,8 +62,6 @@ const usedColors = document.querySelector("#used-colors");
 const clearButton = document.querySelector("#clear-button");
 const maskToolToggle = document.querySelector("#mask-tool-toggle");
 const skyGradientColorsElement = document.querySelector("#sky-gradient-colors");
-const addSkyColorButton = document.querySelector("#add-sky-color");
-const regenerateSkyButton = document.querySelector("#regenerate-sky");
 const musicPrevButton = document.querySelector("#music-prev");
 const musicPlayButton = document.querySelector("#music-play");
 const musicPlayIcon = document.querySelector("#music-play-icon");
@@ -490,11 +384,6 @@ function initPanel() {
     updateUsedColorsUi();
   });
 
-  addSkyColorButton?.addEventListener("click", () => {
-    addSkyGradientColorAt(skyGradientColors.findIndex((color) => !color));
-  });
-
-  regenerateSkyButton?.addEventListener("click", regenerateSkyGradient);
 }
 
 function initMusicPlayer() {
@@ -826,9 +715,6 @@ function updateMaskToolUi() {
 
 function renderSkyGradientControls() {
   skyGradientColorsElement.replaceChildren();
-  if (addSkyColorButton) {
-    addSkyColorButton.disabled = skyGradientColors.every(Boolean);
-  }
 
   for (let index = 0; index < 4; index += 1) {
     const wrapper = document.createElement("div");
@@ -929,19 +815,6 @@ function updateUsedColorsUi() {
 
 function getUsedMaskColors() {
   return Array.from(new Set(nodeColors.values())).sort();
-}
-
-function normalizeHexColor(color) {
-  const trimmed = color.trim().toLowerCase();
-  const withHash = trimmed.startsWith("#") ? trimmed : `#${trimmed}`;
-  const shortMatch = withHash.match(/^#([0-9a-f]{3})$/);
-  if (shortMatch) {
-    return `#${shortMatch[1]
-      .split("")
-      .map((char) => `${char}${char}`)
-      .join("")}`;
-  }
-  return withHash;
 }
 
 let colorPicker = null;
@@ -1059,179 +932,6 @@ function updateColorPickerUi(color) {
   colorPicker.handle.style.top = `${(1 - v) * 100}%`;
   colorPicker.hue.value = String(Math.round(h));
   colorPicker.hex.value = color;
-}
-
-function hexToHsv(color) {
-  const normalized = normalizeHexColor(color).replace("#", "");
-  const red = Number.parseInt(normalized.slice(0, 2), 16) / 255;
-  const green = Number.parseInt(normalized.slice(2, 4), 16) / 255;
-  const blue = Number.parseInt(normalized.slice(4, 6), 16) / 255;
-  const max = Math.max(red, green, blue);
-  const min = Math.min(red, green, blue);
-  const delta = max - min;
-  let h = 0;
-
-  if (delta > 0) {
-    if (max === red) {
-      h = 60 * (((green - blue) / delta) % 6);
-    } else if (max === green) {
-      h = 60 * ((blue - red) / delta + 2);
-    } else {
-      h = 60 * ((red - green) / delta + 4);
-    }
-  }
-
-  return {
-    h: h < 0 ? h + 360 : h,
-    s: max === 0 ? 0 : delta / max,
-    v: max,
-  };
-}
-
-function hsvToHex({ h, s, v }) {
-  const chroma = v * s;
-  const hue = h / 60;
-  const x = chroma * (1 - Math.abs((hue % 2) - 1));
-  const match = hue < 1
-    ? [chroma, x, 0]
-    : hue < 2
-      ? [x, chroma, 0]
-      : hue < 3
-        ? [0, chroma, x]
-        : hue < 4
-          ? [0, x, chroma]
-          : hue < 5
-            ? [x, 0, chroma]
-            : [chroma, 0, x];
-  const m = v - chroma;
-  return `#${match
-    .map((channel) => Math.round((channel + m) * 255).toString(16).padStart(2, "0"))
-    .join("")}`;
-}
-
-function hslToHex(h, s, l) {
-  const chroma = (1 - Math.abs(2 * l - 1)) * s;
-  const hue = h / 60;
-  const x = chroma * (1 - Math.abs((hue % 2) - 1));
-  const match = hue < 1
-    ? [chroma, x, 0]
-    : hue < 2
-      ? [x, chroma, 0]
-      : hue < 3
-        ? [0, chroma, x]
-        : hue < 4
-          ? [0, x, chroma]
-          : hue < 5
-            ? [x, 0, chroma]
-            : [chroma, 0, x];
-  const m = l - chroma / 2;
-  return `#${match
-    .map((channel) => Math.round((channel + m) * 255).toString(16).padStart(2, "0"))
-    .join("")}`;
-}
-
-function rgbToHex([red, green, blue]) {
-  return `#${[red, green, blue]
-    .map((channel) => Math.round(THREE.MathUtils.clamp(channel, 0, 255)).toString(16).padStart(2, "0"))
-    .join("")}`;
-}
-
-function hexToRgb(color) {
-  const normalized = normalizeHexColor(color).replace("#", "");
-  const value = Number.parseInt(normalized, 16);
-  return [
-    (value >> 16) & 255,
-    (value >> 8) & 255,
-    value & 255,
-  ];
-}
-
-function rgbToHsl([red, green, blue]) {
-  const r = red / 255;
-  const g = green / 255;
-  const b = blue / 255;
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const lightness = (max + min) / 2;
-  if (max === min) {
-    return [0, 0, lightness * 100];
-  }
-
-  const delta = max - min;
-  const saturation = lightness > 0.5
-    ? delta / (2 - max - min)
-    : delta / (max + min);
-  const hue = max === r
-    ? ((g - b) / delta + (g < b ? 6 : 0))
-    : max === g
-      ? ((b - r) / delta + 2)
-      : ((r - g) / delta + 4);
-
-  return [hue * 60, saturation * 100, lightness * 100];
-}
-
-function hslToRgb([hue, saturation, lightness]) {
-  const h = (((hue % 360) + 360) % 360) / 360;
-  const s = saturation / 100;
-  const l = lightness / 100;
-  if (s === 0) {
-    return [l * 255, l * 255, l * 255];
-  }
-
-  const hueToRgb = (p, q, t) => {
-    let nextT = t;
-    if (nextT < 0) nextT += 1;
-    if (nextT > 1) nextT -= 1;
-    if (nextT < 1 / 6) return p + (q - p) * 6 * nextT;
-    if (nextT < 1 / 2) return q;
-    if (nextT < 2 / 3) return p + (q - p) * (2 / 3 - nextT) * 6;
-    return p;
-  };
-  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-  const p = 2 * l - q;
-  return [
-    hueToRgb(p, q, h + 1 / 3) * 255,
-    hueToRgb(p, q, h) * 255,
-    hueToRgb(p, q, h - 1 / 3) * 255,
-  ];
-}
-
-function hexToRgba(color, alpha) {
-  const normalized = normalizeHexColor(color).replace("#", "");
-  const value = Number.parseInt(normalized, 16);
-  const red = (value >> 16) & 255;
-  const green = (value >> 8) & 255;
-  const blue = value & 255;
-  return `rgba(${red},${green},${blue},${alpha})`;
-}
-
-function lightenHexColor(color, amount = 0.5) {
-  const normalized = normalizeHexColor(color).replace("#", "");
-  const value = Number.parseInt(normalized, 16);
-  const red = (value >> 16) & 255;
-  const green = (value >> 8) & 255;
-  const blue = value & 255;
-  const lighten = (channel) => Math.round(channel + (255 - channel) * amount);
-  return new THREE.Color(
-    lighten(red) / 255,
-    lighten(green) / 255,
-    lighten(blue) / 255,
-  );
-}
-
-function createRandom(seed) {
-  let hash = 1779033703 ^ seed.length;
-  for (let index = 0; index < seed.length; index += 1) {
-    hash = Math.imul(hash ^ seed.charCodeAt(index), 3432918353);
-    hash = (hash << 13) | (hash >>> 19);
-  }
-
-  return () => {
-    hash = Math.imul(hash ^ (hash >>> 16), 2246822507);
-    hash = Math.imul(hash ^ (hash >>> 13), 3266489909);
-    hash ^= hash >>> 16;
-    return (hash >>> 0) / 4294967296;
-  };
 }
 
 function createNodes(random) {
@@ -2089,11 +1789,6 @@ function createBlackHoleDiskTexture() {
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
-}
-
-function smoothstep(edge0, edge1, value) {
-  const x = THREE.MathUtils.clamp((value - edge0) / (edge1 - edge0), 0, 1);
-  return x * x * (3 - 2 * x);
 }
 
 function createSelectionOverlay() {
@@ -5910,24 +5605,6 @@ function getSystemStarRadius(node, height, random) {
   return THREE.MathUtils.clamp(height * scale * jitter, height * 0.2, height * 3);
 }
 
-function toRoman(value) {
-  return [
-    "I",
-    "II",
-    "III",
-    "IV",
-    "V",
-    "VI",
-    "VII",
-    "VIII",
-    "IX",
-    "X",
-    "XI",
-    "XII",
-    "XIII",
-  ][value - 1] ?? String(value);
-}
-
 function startNodeExitAnimation(nodeId, color) {
   nodeExitAnimations.set(nodeId, { color, progress: 1 });
 
@@ -5998,10 +5675,6 @@ function updateSelectionAnimations() {
       edgeExitAnimations.delete(key);
     }
   }
-}
-
-function easeOutCubic(value) {
-  return 1 - Math.pow(1 - value, 3);
 }
 
 function getNodeHit() {

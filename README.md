@@ -2,7 +2,7 @@
 
 Nebulum is an interactive procedural space generator built with Vite and Three.js.
 
-The entire universe is generated deterministically from a seed string. Stars, constellation links, names, star classes, planets, moons, sky gradients, and ambient effects are all driven by seeded randomness — the same seed always yields the same universe.
+The entire universe is generated deterministically from a seed string. Stars, constellation links, names, star classes, planets, moons, sky gradients, and ambient effects are all driven by seeded randomness - the same seed always yields the same universe.
 
 ## Screenshots
 
@@ -38,7 +38,7 @@ Toggle astrophysics-based overlays — the habitable zone and the tidal-lock zon
 - Procedural sky gradient and distant star field.
 - Clickable colored masks for connected star regions.
 - Custom color picker for mask and sky gradient colors.
-- 14 real-world star classes — from Red Dwarf to Neutron Star, Strange Star, and Black Hole.
+- 14 real-world star classes - from Red Dwarf to Neutron Star, Strange Star, and Black Hole.
 - Explorable star systems with procedural planets, moons, asteroid belts, accretion disks, and jump gates.
 - Astrophysics-based habitable and tidal-lock zone overlays, scaled per star class.
 - Mythology-based procedural planet names (Greek, Norse, Egyptian) plus a syllable generator.

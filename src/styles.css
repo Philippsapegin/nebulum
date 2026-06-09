@@ -1380,12 +1380,6 @@ body.system-open .music-player {
   outline-offset: 2px;
 }
 
-.current-color {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
 .swatch {
   display: inline-block;
   width: 22px;
@@ -1508,31 +1502,6 @@ body.system-open .music-player {
   padding: 0;
 }
 
-.gradient-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-}
-
-.mini-button {
-  height: 20px;
-  border: 0;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.045);
-  color: rgba(255, 255, 255, 0.72);
-  cursor: pointer;
-  font: inherit;
-  font-size: 10px;
-  line-height: 1;
-  text-transform: uppercase;
-}
-
-.mini-button:disabled {
-  color: rgba(255, 255, 255, 0.24);
-  cursor: default;
-}
-
-.mini-button:focus-visible,
 .gradient-color:focus-visible,
 .gradient-regen:focus-visible {
   border: 0;
