@@ -11,7 +11,6 @@ import {
   PLANET_STAGE_WIDTH,
   ZONE_DATA,
 } from "./constants.js";
-import { GAS_GIANT_PALETTES } from "./gasGiantPalettes.js";
 import {
   createAdjacency,
   createLinks,
@@ -20,19 +19,12 @@ import {
   createStarName,
 } from "./graph/generate.js";
 import { createPlanetNameService } from "./planet/names.js";
+import { GAS_GIANT_WINDOW_TEXTURE_HEIGHT, createGasGiantTexture } from "./planet/gasGiantTexture.js";
 import { createPlanetScreenController } from "./screens/planetScreen.js";
 import { createSystemScreenController } from "./screens/systemScreen.js";
 import { openColorPicker } from "./ui/colorPicker.js";
 import { createMusicPlayer } from "./ui/musicPlayer.js";
-import {
-  hexToRgb,
-  hexToRgba,
-  hslToHex,
-  hslToRgb,
-  lightenHexColor,
-  rgbToHex,
-  rgbToHsl,
-} from "./utils/color.js";
+import { hexToRgba, lightenHexColor } from "./utils/color.js";
 import { easeOutCubic, smoothstep } from "./utils/math.js";
 import { createRandom } from "./utils/random.js";
 
@@ -211,6 +203,8 @@ const edgeExitAnimations = new Map();
 const selectionOverlay = createSelectionOverlay();
 const selectionScreenSize = new THREE.Vector2();
 const systemGlowLayer = createSystemGlowLayer();
+let planetScreenRenderer = null;
+let planetScreenRendererPromise = null;
 const systemScreenController = createSystemScreenController({ root: starWindow });
 const musicPlayerController = createMusicPlayer({
   tracks: MUSIC_TRACKS,
@@ -223,11 +217,17 @@ const planetScreenController = createPlanetScreenController({
     setSystemHover(null);
     closePlanetWindow();
   },
-  render: renderPlanetScreen,
-  renderFallback: renderPlanetScreenFallback,
-  dispose3D: disposePlanetScreen3D,
+  render: (planet) => planetScreenRenderer?.render(planet),
+  renderFallback: (planet) => {
+    planetScreenRenderer?.renderFallback(planet);
+  },
+  dispose3D: () => {
+    planetScreenRenderer?.dispose3D();
+  },
   drawStarSurface: drawSystemStarSurface,
-  update3D: updatePlanetScreen3D,
+  update3D: (surface, deltaSeconds) => {
+    planetScreenRenderer?.update3D(surface, deltaSeconds);
+  },
   setOpenPlanetData: (planet) => {
     openPlanetData = planet;
   },
@@ -1898,6 +1898,32 @@ function cancelPlanetEntryTransition() {
   starWindow.style.setProperty("--planet-entry-scale", "1");
 }
 
+async function loadPlanetScreenRenderer() {
+  if (planetScreenRenderer) {
+    return planetScreenRenderer;
+  }
+
+  if (!planetScreenRendererPromise) {
+    planetScreenRendererPromise = import("./screens/planetScreenRenderer.js")
+      .then(({ createPlanetScreenRenderer }) => {
+        planetScreenRenderer = createPlanetScreenRenderer({
+          root: planetScreen,
+          controller: planetScreenController,
+          seed: SEED,
+          createSystemStarSurface,
+          drawSystemStarSurface,
+        });
+        return planetScreenRenderer;
+      })
+      .catch((error) => {
+        planetScreenRendererPromise = null;
+        throw error;
+      });
+  }
+
+  return planetScreenRendererPromise;
+}
+
 function returnToStarSystemFromPlanet() {
   const activeNode = systemScreenController.state.activeNode;
   if (!activeNode) {
@@ -2351,6 +2377,7 @@ async function startPlanetEntryTransition(planet, clientX, clientY) {
 
   isPlanetEntryTransitioning = true;
   const transitionToken = ++planetEntryTransitionToken;
+  const rendererPromise = loadPlanetScreenRenderer();
   lastClientPointer.set(clientX, clientY);
   clearSystemHover();
   closePlanetWindow();
@@ -2373,6 +2400,16 @@ async function startPlanetEntryTransition(planet, clientX, clientY) {
   const startedAt = performance.now();
   await delay(520);
   if (transitionToken !== planetEntryTransitionToken) {
+    return;
+  }
+
+  try {
+    await rendererPromise;
+  } catch (error) {
+    console.error("Planet screen module failed to load", error);
+    if (transitionToken === planetEntryTransitionToken) {
+      cancelPlanetEntryTransition();
+    }
     return;
   }
 
@@ -2418,805 +2455,6 @@ function delay(ms) {
 
 function nextAnimationFrame() {
   return new Promise((resolve) => requestAnimationFrame(resolve));
-}
-
-function renderPlanetScreenFallback(planet) {
-  planetScreenController.state.activeStar = null;
-  planetScreenController.state.activeStarSurface = null;
-  disposePlanetScreen3D();
-  planetScreenController.clearRendered();
-
-  const title = document.createElement("div");
-  title.className = "planet-screen__title";
-  title.textContent = planet.name;
-  planetScreen.append(title);
-}
-
-function renderPlanetScreen(planet) {
-  planetScreenController.state.activeStarSurface = null;
-  disposePlanetScreen3D();
-  planetScreenController.clearRendered();
-
-  const width = window.innerWidth;
-  const height = window.innerHeight;
-  const random = createRandom(`${SEED}:planet-screen:${planet.systemId}:${planet.name}`);
-
-  const backgroundDepth = 0.26;
-  const backgroundLayer = createPlanetScreenLayer("planet-screen__layer--background", backgroundDepth);
-  const planetLayer = createPlanetScreenLayer("planet-screen__layer--planet", -0.18);
-  const moonLayers = [-1.24, -2.15, -3.24].map((depth, index) =>
-    createPlanetScreenLayer(`planet-screen__layer--moon planet-screen__layer--moon-${index + 1}`, depth));
-  const starGeometry = getPlanetScreenParentStarGeometry(planet, width, height);
-  const planetGeometry = getPlanetScreenPlanetGeometry(planet, width, height);
-  const starDir = getDirection(
-    starGeometry.x,
-    starGeometry.y,
-    planetGeometry.centerX,
-    planetGeometry.centerY,
-  );
-
-  renderPlanetScreenStars(backgroundLayer, random, width, height);
-  renderPlanetScreenParentStar(backgroundLayer, planet, starGeometry, backgroundDepth);
-  renderPlanetScreenPlanet(planetLayer, planet, planetGeometry, starDir, starGeometry);
-  renderPlanetScreenMoons(moonLayers, planet, width, height, starGeometry, starDir);
-  renderPlanetScreenTitle(planetScreen, planet);
-
-  planetScreen.prepend(...moonLayers.reverse());
-  planetScreen.prepend(planetLayer);
-  planetScreen.prepend(backgroundLayer);
-}
-
-function createPlanetScreenLayer(extraClass, depth) {
-  const layer = document.createElement("div");
-  layer.className = `planet-screen__layer ${extraClass}`;
-  layer.style.setProperty("--planet-screen-depth", String(depth));
-  return layer;
-}
-
-function renderPlanetScreenStars(layer, random, width, height) {
-  const count = Math.max(120, Math.floor((width * height) / 11000));
-  for (let index = 0; index < count; index += 1) {
-    const star = document.createElement("span");
-    star.className = "planet-screen__star";
-    star.style.left = `${random() * 100}%`;
-    star.style.top = `${random() * 100}%`;
-    star.style.opacity = `${0.18 + random() * 0.62}`;
-    layer.append(star);
-  }
-}
-
-function renderPlanetScreenTitle(root, planet) {
-  const title = document.createElement("div");
-  title.className = "planet-screen__title";
-  title.textContent = planet.name;
-  root.append(title);
-}
-
-function getPlanetScreenParentStarGeometry(planet, width, height) {
-  const distanceFraction = THREE.MathUtils.clamp(
-    (planet.orbitRadius - planet.minOrbit) / Math.max(1, planet.maxOrbit - planet.minOrbit),
-    0,
-    1,
-  );
-  const radius = Math.max(1, planet.systemStarRadius * 0.5 * (1 - distanceFraction));
-  return {
-    x: width * 0.74,
-    y: height * 0.22,
-    radius,
-  };
-}
-
-function renderPlanetScreenParentStar(layer, planet, geometry, depth) {
-  const hoverGlow = document.createElement("div");
-  hoverGlow.className = "planet-screen__star-hover-glow";
-  const hoverSize = Math.max(window.innerWidth, window.innerHeight) * 1.5;
-  hoverGlow.style.width = `${hoverSize}px`;
-  hoverGlow.style.height = `${hoverSize}px`;
-  hoverGlow.style.left = `${geometry.x}px`;
-  hoverGlow.style.top = `${geometry.y}px`;
-  hoverGlow.style.color = planet.systemStarColor;
-  layer.append(hoverGlow);
-  planetScreenController.state.activeStar = {
-    element: hoverGlow,
-    x: geometry.x,
-    y: geometry.y,
-    radius: geometry.radius,
-    depth,
-  };
-
-  const star = document.createElement("div");
-  star.className = "planet-screen__parent-star";
-  star.style.width = `${geometry.radius * 2}px`;
-  star.style.height = `${geometry.radius * 2}px`;
-  star.style.left = `${geometry.x - geometry.radius}px`;
-  star.style.top = `${geometry.y - geometry.radius}px`;
-  star.style.color = planet.systemStarColor;
-  star.style.background = planet.systemStarBlackCore
-    ? "radial-gradient(circle, #000 0 100%)"
-    : `radial-gradient(circle, #fff 0 40%, ${planet.systemStarCoreColor} 55%, ${planet.systemStarColor} 78%, rgba(255,255,255,0) 100%)`;
-  if (!planet.systemStarBlackCore && geometry.radius >= 8) {
-    const starSurface = createSystemStarSurface({
-      id: `${planet.systemId}:planet-view`,
-      coreColor: planet.systemStarCoreColor,
-      glowColor: planet.systemStarColor,
-    }, geometry.radius, {
-      edgeScale: getPlanetViewStarEdgeScale(geometry.radius),
-    });
-    star.append(starSurface.canvas);
-    planetScreenController.state.activeStarSurface = starSurface;
-    drawSystemStarSurface(starSurface, performance.now());
-  }
-  layer.append(star);
-}
-
-function getPlanetScreenPlanetGeometry(planet, width, height) {
-  const radius = THREE.MathUtils.lerp(width * 0.25, width * 2, planet.sizeIndex / 9);
-  return {
-    centerX: width / 2,
-    centerY: height + radius - height * 0.2,
-    radius,
-  };
-}
-
-function getDirection(targetX, targetY, originX, originY) {
-  const length = Math.hypot(targetX - originX, targetY - originY) || 1;
-  return {
-    x: (targetX - originX) / length,
-    y: (targetY - originY) / length,
-  };
-}
-
-function renderPlanetScreenPlanet(layer, planet, geometry, starDir, starGeometry) {
-  const { centerX, centerY, radius } = geometry;
-
-  const body = document.createElement("div");
-  body.className = "planet-screen__planet";
-  body.style.width = `${radius * 2}px`;
-  body.style.height = `${radius * 2}px`;
-  body.style.left = `${centerX - radius}px`;
-  body.style.top = `${centerY - radius}px`;
-  const texture = planet.gasGiantTextureSeed
-    ? createGasGiantTexture(planet.gasGiantTextureSeed, GAS_GIANT_WINDOW_TEXTURE_HEIGHT, GAS_GIANT_OCTAVES + 3)
-    : planet.gasGiantTexture;
-  const glowColor = texture?.edgeColor ?? planet.background ?? "#ffffff";
-  layer.append(body);
-
-  const sphere3D = createPlanetScreen3D(planet, texture, geometry, starDir, glowColor, starGeometry);
-  layer.append(sphere3D.canvas);
-  planetScreenController.state.active3D = sphere3D;
-  renderPlanetScreen3D(sphere3D);
-}
-
-function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, starDir) {
-  const moonSizes = [height * 0.03, height * 0.05, height * 0.07];
-  const positions = [
-    { x: width * 0.58, y: height * 0.46 },
-    { x: width * 0.83, y: height * 0.68 },
-    { x: width * 0.36, y: height * 0.72 },
-  ];
-  for (const [index, moon] of planet.moonList.slice(0, 3).entries()) {
-    const layer = layers[index];
-    const radius = moonSizes[Math.max(0, Math.min(2, Math.round((moon.radius - 1.2) / 0.4)))];
-    const position = positions[index];
-    const starSafeDistance = starGeometry.radius + radius + 36;
-    const distanceToStar = Math.hypot(position.x - starGeometry.x, position.y - starGeometry.y);
-    const x = distanceToStar < starSafeDistance
-      ? position.x - (starSafeDistance - distanceToStar)
-      : position.x;
-    const y = position.y;
-    const moonElement = document.createElement("div");
-    moonElement.className = "planet-screen__moon";
-    moonElement.style.width = `${radius * 2}px`;
-    moonElement.style.height = `${radius * 2}px`;
-    moonElement.style.left = `${x - radius}px`;
-    moonElement.style.top = `${y - radius}px`;
-    layer.append(moonElement);
-    const moonLabel = document.createElement("div");
-    moonLabel.className = "planet-screen__moon-label";
-    moonLabel.textContent = moon.name;
-    moonLabel.style.left = `${x}px`;
-    moonLabel.style.top = `${y - radius - 7}px`;
-    layer.append(moonLabel);
-  }
-}
-
-function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor, starGeometry) {
-  const width = window.innerWidth;
-  const height = window.innerHeight;
-  const layerOverscan = 180;
-  const layerInsetCompensation = 80;
-  const canvas = document.createElement("canvas");
-  canvas.className = "planet-screen__sphere-surface";
-  const renderWidth = width + layerOverscan * 2;
-  const renderHeight = height + layerOverscan * 2;
-  canvas.style.width = `${renderWidth}px`;
-  canvas.style.height = `${renderHeight}px`;
-  canvas.style.left = `${layerInsetCompensation - layerOverscan}px`;
-  canvas.style.top = `${layerInsetCompensation - layerOverscan}px`;
-
-  const renderer3D = new THREE.WebGLRenderer({
-    canvas,
-    alpha: true,
-    antialias: true,
-    powerPreference: "high-performance",
-  });
-  renderer3D.setClearColor(0x000000, 0);
-  renderer3D.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-  renderer3D.setSize(renderWidth, renderHeight, false);
-  renderer3D.outputColorSpace = THREE.SRGBColorSpace;
-
-  const scene3D = new THREE.Scene();
-  const fov = 75;
-  const cameraDistance = renderHeight / (2 * Math.tan(THREE.MathUtils.degToRad(fov) / 2));
-  const camera3D = new THREE.PerspectiveCamera(
-    fov,
-    renderWidth / renderHeight,
-    0.1,
-    cameraDistance + geometry.radius * 6,
-  );
-  camera3D.position.set(renderWidth / 2, renderHeight / 2, cameraDistance);
-  camera3D.lookAt(renderWidth / 2, renderHeight / 2, 0);
-
-  const sourceCanvas = texture?.canvas ?? createFallbackPlanetTextureCanvas(planet.background);
-  const map = new THREE.CanvasTexture(sourceCanvas);
-  map.colorSpace = THREE.SRGBColorSpace;
-  map.wrapS = THREE.RepeatWrapping;
-  map.wrapT = THREE.ClampToEdgeWrapping;
-  map.anisotropy = Math.min(8, renderer3D.capabilities.getMaxAnisotropy());
-  map.needsUpdate = true;
-
-  const geometry3D = new THREE.SphereGeometry(geometry.radius, 128, 64);
-  const planetSizeFactor = THREE.MathUtils.clamp(planet.sizeIndex / 9, 0, 1);
-  const lightLift = THREE.MathUtils.lerp(0.23, 0.035, planetSizeFactor);
-  const shadowFeather = THREE.MathUtils.lerp(0.18, 0.08, planetSizeFactor);
-  const material = new THREE.ShaderMaterial({
-    uniforms: {
-      planetMap: { value: map },
-      textureOffset: { value: new THREE.Vector2(0, 0) },
-      reflectedLightColor: { value: new THREE.Color(planet.systemStarColor) },
-    },
-    vertexShader: `
-      varying vec2 vUv;
-      varying vec3 vNormalView;
-      void main() {
-        vUv = uv;
-        vNormalView = normalize(normalMatrix * normal);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      uniform sampler2D planetMap;
-      uniform vec2 textureOffset;
-      uniform vec3 reflectedLightColor;
-      varying vec2 vUv;
-      varying vec3 vNormalView;
-      void main() {
-        vec2 uv = vec2(fract(vUv.x + textureOffset.x), vUv.y);
-        vec3 base = texture2D(planetMap, uv).rgb;
-        vec3 normalView = normalize(vNormalView);
-        vec3 lightView = normalize(vec3(0.0, ${lightLift.toFixed(4)}, -1.0));
-        float lit = smoothstep(0.0, ${shadowFeather.toFixed(4)}, dot(normalView, lightView));
-        vec3 color = base * lit;
-        float reflectedLight = pow(lit, 0.72) * 0.055;
-        float rim = pow(1.0 - abs(normalView.z), 1.55);
-        float litRim = rim * (0.045 + lit * 0.045);
-        color += base * reflectedLightColor * reflectedLight;
-        color += reflectedLightColor * litRim;
-        gl_FragColor = vec4(color, 1.0);
-      }
-    `,
-    transparent: true,
-  });
-  const mesh = new THREE.Mesh(geometry3D, material);
-  mesh.position.set(geometry.centerX + layerOverscan, height - geometry.centerY + layerOverscan, 0);
-  mesh.renderOrder = 1;
-  const textureDirectionAngle = Math.atan2(-starDir.y, starDir.x);
-  const baseQuaternion = new THREE.Quaternion()
-    .setFromAxisAngle(new THREE.Vector3(0, 0, 1), textureDirectionAngle);
-  mesh.quaternion.copy(baseQuaternion);
-
-  scene3D.add(mesh);
-
-  const disk3D = createPlanetScreen3DDisk(planet, geometry.radius);
-  if (disk3D) {
-    disk3D.group.position.copy(mesh.position);
-    scene3D.add(disk3D.group);
-  }
-
-  const glowPixelRatio = Math.min(window.devicePixelRatio, 1.5);
-  const glowTargetScale = 0.5;
-  const glowTargetWidth = Math.max(1, Math.ceil(renderWidth * glowPixelRatio * glowTargetScale));
-  const glowTargetHeight = Math.max(1, Math.ceil(renderHeight * glowPixelRatio * glowTargetScale));
-  const glowTargetOptions = {
-    minFilter: THREE.LinearFilter,
-    magFilter: THREE.LinearFilter,
-    format: THREE.RGBAFormat,
-    depthBuffer: false,
-    stencilBuffer: false,
-  };
-  const glowTargetA = new THREE.WebGLRenderTarget(glowTargetWidth, glowTargetHeight, glowTargetOptions);
-  const glowTargetB = new THREE.WebGLRenderTarget(glowTargetWidth, glowTargetHeight, glowTargetOptions);
-  glowTargetA.texture.colorSpace = THREE.SRGBColorSpace;
-  glowTargetB.texture.colorSpace = THREE.SRGBColorSpace;
-  const glowScene = new THREE.Scene();
-  const postScene = new THREE.Scene();
-  const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-  const rimGlowColor = new THREE.Color(glowColor).lerp(new THREE.Color(0xffffff), 0.34);
-  const glowGeometry = new THREE.SphereGeometry(geometry.radius, 160, 80);
-  const glowMaterial = new THREE.ShaderMaterial({
-    uniforms: {
-      glowColor: { value: rimGlowColor },
-      visibleOffset: { value: new THREE.Vector2(layerOverscan - layerInsetCompensation, layerOverscan - layerInsetCompensation) },
-      visibleSize: { value: new THREE.Vector2(width, height) },
-    },
-    vertexShader: `
-      varying vec3 vNormalView;
-      void main() {
-        vNormalView = normalize(normalMatrix * normal);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      uniform vec3 glowColor;
-      uniform vec2 visibleOffset;
-      uniform vec2 visibleSize;
-      varying vec3 vNormalView;
-      const float PI = 3.141592653589793;
-      void main() {
-        vec3 normalView = normalize(vNormalView);
-        float silhouette = 1.0 - abs(normalView.z);
-        float broadGlow = pow(silhouette, 2.45) * 0.62;
-        float softCore = pow(silhouette, 8.0) * 0.9;
-        float screenX = clamp((gl_FragCoord.x - visibleOffset.x) / max(1.0, visibleSize.x), 0.0, 1.0);
-        float screenFade = pow(sin(screenX * PI), 1.15);
-        float alpha = (broadGlow + softCore) * screenFade;
-        if (alpha < 0.002) {
-          discard;
-        }
-        gl_FragColor = vec4(glowColor, alpha);
-      }
-    `,
-    transparent: true,
-    depthWrite: false,
-    depthTest: false,
-    blending: THREE.AdditiveBlending,
-    toneMapped: false,
-  });
-  const glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
-  glowMesh.position.copy(mesh.position);
-  glowMesh.quaternion.copy(baseQuaternion);
-  const glowScale = THREE.MathUtils.lerp(1.012, 1.0045, planetSizeFactor);
-  glowMesh.scale.setScalar(glowScale);
-  glowMesh.renderOrder = 3;
-  glowScene.add(glowMesh);
-
-  const blurMaterial = new THREE.ShaderMaterial({
-    uniforms: {
-      inputTexture: { value: glowTargetA.texture },
-      direction: { value: new THREE.Vector2(1, 0) },
-      resolution: { value: new THREE.Vector2(glowTargetWidth, glowTargetHeight) },
-    },
-    vertexShader: `
-      varying vec2 vUv;
-      void main() {
-        vUv = uv;
-        gl_Position = vec4(position.xy, 0.0, 1.0);
-      }
-    `,
-    fragmentShader: `
-      uniform sampler2D inputTexture;
-      uniform vec2 direction;
-      uniform vec2 resolution;
-      varying vec2 vUv;
-      void main() {
-        vec2 stepSize = direction / resolution;
-        vec4 color = texture2D(inputTexture, vUv) * 0.227027;
-        color += texture2D(inputTexture, vUv + stepSize * 1.384615) * 0.316216;
-        color += texture2D(inputTexture, vUv - stepSize * 1.384615) * 0.316216;
-        color += texture2D(inputTexture, vUv + stepSize * 3.230769) * 0.070270;
-        color += texture2D(inputTexture, vUv - stepSize * 3.230769) * 0.070270;
-        gl_FragColor = color;
-      }
-    `,
-    depthWrite: false,
-    depthTest: false,
-  });
-  const blurQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), blurMaterial);
-  const blurScene = new THREE.Scene();
-  blurScene.add(blurQuad);
-
-  const compositeMaterial = new THREE.ShaderMaterial({
-    uniforms: {
-      inputTexture: { value: glowTargetA.texture },
-      resolution: { value: new THREE.Vector2(renderWidth * glowPixelRatio, renderHeight * glowPixelRatio) },
-      intensity: { value: 4.6 },
-    },
-    vertexShader: `
-      varying vec2 vUv;
-      void main() {
-        vUv = uv;
-        gl_Position = vec4(position.xy, 0.0, 1.0);
-      }
-    `,
-    fragmentShader: `
-      uniform sampler2D inputTexture;
-      uniform vec2 resolution;
-      uniform float intensity;
-      varying vec2 vUv;
-      float noise(vec2 point) {
-        return fract(sin(dot(point, vec2(12.9898, 78.233))) * 43758.5453123);
-      }
-      void main() {
-        vec4 glow = texture2D(inputTexture, vUv);
-        float dither = (noise(gl_FragCoord.xy) - 0.5) / 255.0;
-        float energy = clamp(glow.a * intensity + dither, 0.0, 1.0);
-        if (energy <= 0.001) {
-          discard;
-        }
-        gl_FragColor = vec4(glow.rgb * energy, 0.0);
-      }
-    `,
-    transparent: true,
-    depthWrite: false,
-    depthTest: false,
-    blending: THREE.CustomBlending,
-    blendEquation: THREE.AddEquation,
-    blendSrc: THREE.OneFactor,
-    blendDst: THREE.OneFactor,
-    blendEquationAlpha: THREE.AddEquation,
-    blendSrcAlpha: THREE.ZeroFactor,
-    blendDstAlpha: THREE.OneFactor,
-    toneMapped: false,
-  });
-  postScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), compositeMaterial));
-
-  return {
-    canvas,
-    renderer: renderer3D,
-    scene: scene3D,
-    camera: camera3D,
-    mesh,
-    texture: map,
-    geometry: geometry3D,
-    material,
-    disk3D,
-    glowScene,
-    glowTargetA,
-    glowTargetB,
-    glowGeometry,
-    glowMaterial,
-    blurScene,
-    blurMaterial,
-    compositeScene: postScene,
-    compositeCamera: postCamera,
-    compositeMaterial,
-    rotationSpeed: 0.00012,
-  };
-}
-
-function createPlanetScreen3DDisk(planet, planetScreenRadius) {
-  if (!planet.accretionDisk) {
-    return null;
-  }
-
-  const diskGeometry = getPlanetScreenDiskGeometry(planet, planetScreenRadius);
-  const sourceInner = diskGeometry.sourceInnerRadius;
-  const sourceThickness = diskGeometry.sourceThickness;
-  const group = new THREE.Group();
-  const geometries = [];
-  const materials = [];
-  const diskRandom = createRandom(`${SEED}:planet-screen-disk-3d:${planet.systemId}:${planet.name}`);
-  const baseColor = new THREE.Color(0xbfc0c2).lerp(new THREE.Color(planet.systemStarColor), 0.08);
-  const tintColor = new THREE.Color(hslToHex(diskRandom() * 360, 1.2 + diskRandom() * 2.2, 67 + diskRandom() * 5));
-  const segmentColor = baseColor.clone().lerp(tintColor, 0.04);
-
-  const cutHalfWidth = Math.max(planetScreenRadius * 0.006, 3.5);
-  const cutRanges = planet.accretionDisk.cutRadii
-    .map((cutRadius) => {
-      const relative = THREE.MathUtils.clamp((cutRadius - sourceInner) / sourceThickness, 0, 1);
-      const radius = THREE.MathUtils.lerp(diskGeometry.innerRadius, diskGeometry.outerRadius, relative);
-      return {
-        start: Math.max(diskGeometry.innerRadius, radius - cutHalfWidth),
-        end: Math.min(diskGeometry.outerRadius, radius + cutHalfWidth),
-      };
-    })
-    .filter((range) => range.end > range.start)
-    .sort((a, b) => a.start - b.start);
-
-  let cursor = diskGeometry.innerRadius;
-  const addRing = (innerRadius, outerRadius, color, opacity, radialSegments = 768) => {
-    if (outerRadius <= innerRadius + 0.1) {
-      return;
-    }
-
-    const ringGeometry = new THREE.RingGeometry(innerRadius, outerRadius, radialSegments, 1);
-    const ringMaterial = new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity,
-      depthWrite: false,
-      depthTest: true,
-      side: THREE.DoubleSide,
-    });
-    const mesh = new THREE.Mesh(ringGeometry, ringMaterial);
-    mesh.renderOrder = 2;
-    group.add(mesh);
-    geometries.push(ringGeometry);
-    materials.push(ringMaterial);
-  };
-
-  for (const range of cutRanges) {
-    addRing(cursor, range.start, segmentColor, 0.88);
-    cursor = Math.max(cursor, range.end);
-  }
-  addRing(cursor, diskGeometry.outerRadius, segmentColor, 0.88);
-
-  for (const band of planet.accretionDisk.bandRadii ?? []) {
-    const relative = THREE.MathUtils.clamp((band.radius - sourceInner) / sourceThickness, 0, 1);
-    const radius = THREE.MathUtils.lerp(diskGeometry.innerRadius, diskGeometry.outerRadius, relative);
-    const width = Math.max(planetScreenRadius * 0.0025, 1.6) * band.width;
-    const bandColor = segmentColor.clone().lerp(new THREE.Color(0xffffff), THREE.MathUtils.clamp(0.28 + band.alpha * 1.2, 0, 0.72));
-    addRing(radius - width * 0.5, radius + width * 0.5, bandColor, THREE.MathUtils.clamp(0.18 + band.alpha * 1.4, 0.18, 0.56), 768);
-  }
-
-  applyPlanetDiskRotationToGroup(group, planet);
-  group.renderOrder = 2;
-
-  return {
-    group,
-    geometries,
-    materials,
-  };
-}
-
-function getPlanetScreenDiskGeometry(planet, planetScreenRadius) {
-  const diskScale = planetScreenRadius / planet.radius;
-  const originalThickness = Math.max(1, (planet.accretionDisk.outerRadius - planet.accretionDisk.innerRadius) * diskScale);
-  const innerRadius = planetScreenRadius * 1.5;
-  const thickness = originalThickness;
-
-  return {
-    innerRadius,
-    outerRadius: innerRadius + thickness,
-    thickness,
-    sourceInnerRadius: planet.accretionDisk.innerRadius,
-    sourceThickness: Math.max(1, planet.accretionDisk.outerRadius - planet.accretionDisk.innerRadius),
-  };
-}
-
-function applyPlanetDiskRotationToGroup(group, planet) {
-  const rotationRandom = createRandom(`${SEED}:planet-screen-disk-rotation:${planet.systemId}:${planet.name}`);
-  const rotationX = THREE.MathUtils.lerp(-129, -21, rotationRandom());
-  group.rotation.set(
-    THREE.MathUtils.degToRad(rotationX),
-    THREE.MathUtils.degToRad(50),
-    0,
-  );
-}
-
-function renderPlanetScreen3D(surface) {
-  const renderer3D = surface.renderer;
-  renderer3D.setRenderTarget(null);
-  renderer3D.autoClear = true;
-  renderer3D.clear(true, true, true);
-  renderer3D.render(surface.scene, surface.camera);
-
-  renderer3D.setRenderTarget(surface.glowTargetA);
-  renderer3D.clear(true, true, true);
-  renderer3D.render(surface.glowScene, surface.camera);
-
-  surface.blurMaterial.uniforms.inputTexture.value = surface.glowTargetA.texture;
-  surface.blurMaterial.uniforms.direction.value.set(1, 0);
-  renderer3D.setRenderTarget(surface.glowTargetB);
-  renderer3D.clear(true, true, true);
-  renderer3D.render(surface.blurScene, surface.compositeCamera);
-
-  surface.blurMaterial.uniforms.inputTexture.value = surface.glowTargetB.texture;
-  surface.blurMaterial.uniforms.direction.value.set(0, 1);
-  renderer3D.setRenderTarget(surface.glowTargetA);
-  renderer3D.clear(true, true, true);
-  renderer3D.render(surface.blurScene, surface.compositeCamera);
-
-  surface.blurMaterial.uniforms.inputTexture.value = surface.glowTargetA.texture;
-  surface.blurMaterial.uniforms.direction.value.set(1, 0);
-  renderer3D.setRenderTarget(surface.glowTargetB);
-  renderer3D.clear(true, true, true);
-  renderer3D.render(surface.blurScene, surface.compositeCamera);
-
-  surface.blurMaterial.uniforms.inputTexture.value = surface.glowTargetB.texture;
-  surface.blurMaterial.uniforms.direction.value.set(0, 1);
-  renderer3D.setRenderTarget(surface.glowTargetA);
-  renderer3D.clear(true, true, true);
-  renderer3D.render(surface.blurScene, surface.compositeCamera);
-
-  renderer3D.setRenderTarget(null);
-  renderer3D.autoClear = false;
-  renderer3D.render(surface.compositeScene, surface.compositeCamera);
-  renderer3D.autoClear = true;
-}
-
-function updatePlanetScreen3D(surface, deltaSeconds) {
-  surface.texture.offset.x = (surface.texture.offset.x + deltaSeconds * 0.035) % 1;
-  surface.material.uniforms.textureOffset.value.x = surface.texture.offset.x;
-  renderPlanetScreen3D(surface);
-}
-
-function disposePlanetScreen3D() {
-  const activePlanetScreen3D = planetScreenController.state.active3D;
-  if (!activePlanetScreen3D) {
-    return;
-  }
-
-  activePlanetScreen3D.texture.dispose();
-  activePlanetScreen3D.geometry.dispose();
-  activePlanetScreen3D.material.dispose();
-  activePlanetScreen3D.disk3D?.geometries?.forEach((geometry) => geometry.dispose());
-  activePlanetScreen3D.disk3D?.materials?.forEach((material) => material.dispose());
-  activePlanetScreen3D.glowTargetA?.dispose();
-  activePlanetScreen3D.glowTargetB?.dispose();
-  activePlanetScreen3D.glowGeometry?.dispose();
-  activePlanetScreen3D.glowMaterial?.dispose();
-  activePlanetScreen3D.blurMaterial?.dispose();
-  activePlanetScreen3D.compositeMaterial?.dispose();
-  activePlanetScreen3D.renderer.dispose();
-  activePlanetScreen3D.renderer.forceContextLoss();
-  activePlanetScreen3D.renderer.domElement = null;
-  activePlanetScreen3D.canvas.width = 1;
-  activePlanetScreen3D.canvas.height = 1;
-  activePlanetScreen3D.canvas.remove();
-  planetScreenController.state.active3D = null;
-}
-
-function createPlanetScreenSphereSurface(planet, texture, geometry, starDir, glowColor) {
-  const overscan = 80;
-  const pixelRatio = Math.min(window.devicePixelRatio, 1.35);
-  const width = window.innerWidth + overscan * 2;
-  const height = window.innerHeight + overscan * 2;
-  const canvas = document.createElement("canvas");
-  canvas.className = "planet-screen__sphere-surface";
-  canvas.width = Math.ceil(width * pixelRatio);
-  canvas.height = Math.ceil(height * pixelRatio);
-  canvas.style.left = "0px";
-  canvas.style.top = "0px";
-  canvas.style.width = `${width}px`;
-  canvas.style.height = `${height}px`;
-  const source = texture?.canvas ?? createFallbackPlanetTextureCanvas(planet.background);
-  return {
-    canvas,
-    context: canvas.getContext("2d", { willReadFrequently: true }),
-    pixelRatio,
-    width,
-    height,
-    source,
-    sourceData: source.getContext("2d").getImageData(0, 0, source.width, source.height).data,
-    sourceWidth: source.width,
-    sourceHeight: source.height,
-    centerX: geometry.centerX + overscan,
-    centerY: geometry.centerY + overscan,
-    radius: geometry.radius,
-    starDir,
-    glowColor,
-    textureRepeatX: texture ? 2.4 : 1,
-    textureRepeatY: texture ? 5.4 : 1,
-    image: null,
-    lastDraw: 0,
-  };
-}
-
-function createFallbackPlanetTextureCanvas(background) {
-  const canvas = document.createElement("canvas");
-  canvas.width = 1024;
-  canvas.height = 512;
-  const context = canvas.getContext("2d");
-  const gradient = context.createLinearGradient(0, 0, canvas.width, canvas.height);
-  gradient.addColorStop(0, "#f5f5f5");
-  gradient.addColorStop(0.5, "#d6d6d6");
-  gradient.addColorStop(1, "#8f8f8f");
-  context.fillStyle = background?.startsWith("#") ? background : gradient;
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  return canvas;
-}
-
-function drawPlanetScreenSphereSurface(surface, now) {
-  const {
-    canvas,
-    context,
-    pixelRatio,
-    width,
-    height,
-    sourceData,
-    sourceWidth,
-    sourceHeight,
-    centerX,
-    centerY,
-    radius,
-    starDir,
-    textureRepeatX,
-    textureRepeatY,
-  } = surface;
-  const outWidth = canvas.width;
-  const outHeight = canvas.height;
-  const image = surface.image ?? context.createImageData(outWidth, outHeight);
-  surface.image = image;
-  image.data.fill(0);
-  const drift = (now * 0.018) % sourceWidth;
-  const scaledCenterX = centerX * pixelRatio;
-  const scaledCenterY = centerY * pixelRatio;
-  const scaledRadius = radius * pixelRatio;
-  const light = normalize2(starDir.x, starDir.y, 0.42);
-  const axisU = normalize2(starDir.x, starDir.y, 0);
-  const axisV = { x: -axisU.y, y: axisU.x };
-  const minX = Math.max(0, Math.floor((centerX - radius - 2) * pixelRatio));
-  const maxX = Math.min(outWidth - 1, Math.ceil((centerX + radius + 2) * pixelRatio));
-  const minY = Math.max(0, Math.floor((centerY - radius - 2) * pixelRatio));
-  const maxY = Math.min(outHeight - 1, Math.ceil((centerY + radius + 2) * pixelRatio));
-
-  for (let y = minY; y <= maxY; y += 1) {
-    const ny = (y + 0.5 - scaledCenterY) / scaledRadius;
-    for (let x = minX; x <= maxX; x += 1) {
-      const nx = (x + 0.5 - scaledCenterX) / scaledRadius;
-      const dist2 = nx * nx + ny * ny;
-      if (dist2 > 1) {
-        continue;
-      }
-
-      const nz = Math.sqrt(Math.max(0, 1 - dist2));
-      const spherize = Math.asin(Math.min(0.999, Math.sqrt(dist2))) / Math.max(0.0001, Math.sqrt(dist2));
-      const localU = (nx * axisU.x + ny * axisU.y) * spherize;
-      const localV = (nx * axisV.x + ny * axisV.y) * spherize;
-      const sampleX = (0.5 + localU * textureRepeatX) * sourceWidth + drift;
-      const sampleY = (0.5 + localV * textureRepeatY) * sourceHeight;
-      const [red, green, blue] = sampleTextureBilinear(
-        sourceData,
-        sourceWidth,
-        sourceHeight,
-        sampleX,
-        sampleY,
-      );
-      const lightDot = Math.max(0, nx * light.x + ny * light.y + nz * light.z);
-      const rim = Math.pow(1 - nz, 1.7);
-      const shade = THREE.MathUtils.clamp(0.22 + lightDot * 0.92 - rim * 0.1, 0.08, 1.12);
-      const alphaEdge = smoothstep(1, 0.996, dist2);
-      const outOffset = (y * outWidth + x) * 4;
-      image.data[outOffset] = Math.min(255, red * shade);
-      image.data[outOffset + 1] = Math.min(255, green * shade);
-      image.data[outOffset + 2] = Math.min(255, blue * shade);
-      image.data[outOffset + 3] = Math.round(255 * alphaEdge);
-    }
-  }
-
-  context.putImageData(image, 0, 0);
-}
-
-function sampleTextureBilinear(data, width, height, x, y) {
-  const wrappedX = ((x % width) + width) % width;
-  const clampedY = THREE.MathUtils.clamp(y, 0, height - 1.001);
-  const x0 = Math.floor(wrappedX);
-  const y0 = Math.floor(clampedY);
-  const x1 = (x0 + 1) % width;
-  const y1 = Math.min(height - 1, y0 + 1);
-  const tx = wrappedX - x0;
-  const ty = clampedY - y0;
-  const topOffset0 = (y0 * width + x0) * 4;
-  const topOffset1 = (y0 * width + x1) * 4;
-  const bottomOffset0 = (y1 * width + x0) * 4;
-  const bottomOffset1 = (y1 * width + x1) * 4;
-  const topRed = THREE.MathUtils.lerp(data[topOffset0], data[topOffset1], tx);
-  const topGreen = THREE.MathUtils.lerp(data[topOffset0 + 1], data[topOffset1 + 1], tx);
-  const topBlue = THREE.MathUtils.lerp(data[topOffset0 + 2], data[topOffset1 + 2], tx);
-  const bottomRed = THREE.MathUtils.lerp(data[bottomOffset0], data[bottomOffset1], tx);
-  const bottomGreen = THREE.MathUtils.lerp(data[bottomOffset0 + 1], data[bottomOffset1 + 1], tx);
-  const bottomBlue = THREE.MathUtils.lerp(data[bottomOffset0 + 2], data[bottomOffset1 + 2], tx);
-  return [
-    THREE.MathUtils.lerp(topRed, bottomRed, ty),
-    THREE.MathUtils.lerp(topGreen, bottomGreen, ty),
-    THREE.MathUtils.lerp(topBlue, bottomBlue, ty),
-  ];
-}
-
-function normalize2(x, y, z) {
-  const length = Math.hypot(x, y, z) || 1;
-  return { x: x / length, y: y / length, z: z / length };
 }
 
 function openPlanetWindow(planet) {
@@ -3959,10 +3197,6 @@ function createSystemStarSurfaceNoise(seed, radius, edgeScale = 1) {
   return { layers };
 }
 
-function getPlanetViewStarEdgeScale(radius) {
-  return THREE.MathUtils.clamp(radius / 560, 0.16, 2.4);
-}
-
 function createLoopingNoiseLayer(random, circumference, cellPx, timeCells, weight) {
   const spatialCells = Math.max(96, Math.min(4096, Math.round(circumference / cellPx)));
   const values = new Float32Array(spatialCells * timeCells);
@@ -4169,161 +3403,6 @@ function createPlanetKind(random, sizeIndex) {
     label: "GAS GIANT",
     background: `radial-gradient(circle at 38% 34%, hsl(${hue} ${saturation}% ${Math.min(96, lightness + 14)}%) 0 22%, hsl(${hue} ${saturation}% ${lightness}%) 52%, hsl(${hue} ${Math.max(8, saturation - 8)}% ${Math.max(48, lightness - 22)}%) 100%)`,
   };
-}
-
-const GAS_GIANT_SYSTEM_TEXTURE_HEIGHT = 32;
-const GAS_GIANT_WINDOW_TEXTURE_HEIGHT = 1024;
-const GAS_GIANT_TEXTURE_ASPECT = 2;
-const GAS_GIANT_OCTAVES = 4;
-const GAS_GIANT_PERSISTENCE = 0.5;
-const gasGiantTextureCache = new Map();
-
-function createGasGiantTexture(seed, textureHeight = GAS_GIANT_SYSTEM_TEXTURE_HEIGHT, octaves = GAS_GIANT_OCTAVES) {
-  const cacheKey = `${seed}:${textureHeight}:${octaves}`;
-  if (gasGiantTextureCache.has(cacheKey)) {
-    return gasGiantTextureCache.get(cacheKey);
-  }
-
-  const random = createRandom(seed);
-  const palette = GAS_GIANT_PALETTES[Math.floor(random() * GAS_GIANT_PALETTES.length)] ?? GAS_GIANT_PALETTES[0];
-  const scale = 10 + Math.floor(random() * 15);
-  const stretch = 3 + random() * 6;
-  const width = textureHeight * GAS_GIANT_TEXTURE_ASPECT;
-  const height = textureHeight;
-  const field = createGasGiantNoiseField({ width, height, scale, stretch, random, octaves });
-  const colors = createShiftedGasGiantStops(palette, random);
-
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext("2d");
-  const image = context.createImageData(width, height);
-  for (let index = 0; index < field.length; index += 1) {
-    const color = samplePaletteStops(colors, field[index]);
-    const offset = index * 4;
-    image.data[offset] = color[0];
-    image.data[offset + 1] = color[1];
-    image.data[offset + 2] = color[2];
-    image.data[offset + 3] = 255;
-  }
-  context.putImageData(image, 0, 0);
-
-  const texture = {
-    url: `url(${canvas.toDataURL("image/png")})`,
-    canvas,
-    width,
-    height,
-    edgeColor: rgbToHex(samplePaletteStops(
-      colors,
-      field[Math.floor(height * 0.5) * width + Math.floor(width * 0.13)],
-    )),
-  };
-  gasGiantTextureCache.set(cacheKey, texture);
-  return texture;
-}
-
-function createGasGiantNoiseField({ width, height, scale, stretch, random, octaves = GAS_GIANT_OCTAVES }) {
-  const field = new Float32Array(width * height);
-  const octaveSeeds = Array.from({ length: octaves }, () => Math.floor(random() * 0xffffffff));
-  let offset = 0;
-
-  for (let y = 0; y < height; y += 1) {
-    const v = y / height;
-    for (let x = 0; x < width; x += 1) {
-      const u = x / width;
-      let sum = 0;
-      let amp = 1;
-      let ampSum = 0;
-      let freqY = scale;
-      let freqX = Math.max(1, Math.round(scale / stretch));
-      for (let octave = 0; octave < octaves; octave += 1) {
-        sum += sampleTileableValueNoise(u, v, freqX, freqY, octaveSeeds[octave]) * amp;
-        ampSum += amp;
-        amp *= GAS_GIANT_PERSISTENCE;
-        freqX = Math.max(1, freqX * 2);
-        freqY *= 2;
-      }
-      field[offset] = sum / ampSum;
-      offset += 1;
-    }
-  }
-
-  return field;
-}
-
-function sampleTileableValueNoise(u, v, freqX, freqY, seed) {
-  const gx = u * freqX;
-  const gy = v * freqY;
-  const fx = Math.floor(gx);
-  const fy = Math.floor(gy);
-  const tx = smoothNoiseStep(gx - fx);
-  const ty = smoothNoiseStep(gy - fy);
-  const x0 = ((fx % freqX) + freqX) % freqX;
-  const y0 = ((fy % freqY) + freqY) % freqY;
-  const x1 = (x0 + 1) % freqX;
-  const y1 = (y0 + 1) % freqY;
-  const a = gasGiantCornerHash(seed, x0, y0);
-  const b = gasGiantCornerHash(seed, x1, y0);
-  const c = gasGiantCornerHash(seed, x0, y1);
-  const d = gasGiantCornerHash(seed, x1, y1);
-  const top = THREE.MathUtils.lerp(a, b, tx);
-  const bottom = THREE.MathUtils.lerp(c, d, tx);
-  return THREE.MathUtils.lerp(top, bottom, ty);
-}
-
-function gasGiantCornerHash(seed, x, y) {
-  let hash = (seed ^ Math.imul(x + 1, 2654435761) ^ Math.imul(y + 1, 2246822519)) >>> 0;
-  hash = Math.imul(hash ^ (hash >>> 15), 2246822519);
-  hash = Math.imul(hash ^ (hash >>> 13), 3266489917);
-  hash ^= hash >>> 16;
-  return (hash >>> 0) / 4294967296;
-}
-
-function createShiftedGasGiantStops(palette, random) {
-  return palette.stops
-    .map((stop) => ({
-      pos: stop.pos,
-      rgb: hexToRgb(applyGasGiantColorShift(stop, random)),
-    }))
-    .sort((a, b) => a.pos - b.pos);
-}
-
-function applyGasGiantColorShift(stop, random) {
-  const hueShift = stop.hueShift ?? [0, 0];
-  const brightnessShift = stop.brightnessShift ?? [0, 0];
-  const hsl = rgbToHsl(hexToRgb(stop.color));
-  hsl[0] += hueShift[0] + random() * (hueShift[1] - hueShift[0]);
-  hsl[2] = THREE.MathUtils.clamp(
-    hsl[2] + brightnessShift[0] + random() * (brightnessShift[1] - brightnessShift[0]),
-    0,
-    100,
-  );
-  return rgbToHex(hslToRgb(hsl));
-}
-
-function samplePaletteStops(stops, value) {
-  if (value <= stops[0].pos) {
-    return stops[0].rgb;
-  }
-  const last = stops[stops.length - 1];
-  if (value >= last.pos) {
-    return last.rgb;
-  }
-
-  for (let index = 0; index < stops.length - 1; index += 1) {
-    const left = stops[index];
-    const right = stops[index + 1];
-    if (value <= right.pos) {
-      const t = (value - left.pos) / Math.max(0.0001, right.pos - left.pos);
-      return [
-        THREE.MathUtils.lerp(left.rgb[0], right.rgb[0], t),
-        THREE.MathUtils.lerp(left.rgb[1], right.rgb[1], t),
-        THREE.MathUtils.lerp(left.rgb[2], right.rgb[2], t),
-      ];
-    }
-  }
-
-  return last.rgb;
 }
 
 function applyGasGiantTexture(element, texture, displayRadius, isStatic = false, starDirX = -1, starDirY = 0) {

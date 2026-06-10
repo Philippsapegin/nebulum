@@ -1,7 +1,8 @@
-import { defineConfig } from "vite";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { visualizer } from "rollup-plugin-visualizer";
+import { defineConfig } from "vite";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const gasPalettesPath = path.join(rootDir, "src", "gasGiantPalettes.js");
@@ -46,7 +47,33 @@ function gasGiantPaletteWriter() {
   };
 }
 
-export default defineConfig({
-  base: "./",
-  plugins: [gasGiantPaletteWriter()],
+export default defineConfig(({ mode }) => {
+  const shouldAnalyze = mode === "analyze" || process.env.ANALYZE === "true";
+
+  return {
+    base: "./",
+    build: {
+      chunkSizeWarningLimit: 600,
+      copyPublicDir: mode !== "analyze",
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes("node_modules/three")) {
+              return "three-vendor";
+            }
+          },
+        },
+      },
+    },
+    plugins: [
+      gasGiantPaletteWriter(),
+      shouldAnalyze &&
+        visualizer({
+          filename: "dist/bundle-analysis.html",
+          gzipSize: true,
+          open: false,
+          template: "treemap",
+        }),
+    ].filter(Boolean),
+  };
 });
