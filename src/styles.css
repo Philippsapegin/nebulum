@@ -504,6 +504,24 @@ body.system-open .music-player {
   pointer-events: none;
 }
 
+.star-window.planet-screen-open .star-system,
+.star-window.planet-screen-open .system-star-layer,
+.star-window.planet-screen-open .system-stars,
+.star-window.planet-screen-open .system-particles,
+.star-window.planet-screen-open .system-glow,
+.star-window.planet-screen-open .planet-link {
+  visibility: hidden;
+}
+
+.star-window.planet-screen-open .system-top-bar,
+.star-window.planet-screen-open .system-jump,
+.star-window.planet-screen-open .system-planet-hit,
+.star-window.planet-screen-open .system-hover-name-wrap,
+.star-window.planet-screen-open .system-hover-panel {
+  pointer-events: none;
+  visibility: hidden;
+}
+
 .planet-entry-overlay {
   position: absolute;
   inset: 0;
