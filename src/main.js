@@ -217,9 +217,19 @@ const planetScreenController = createPlanetScreenController({
     setSystemHover(null);
     closePlanetWindow();
   },
-  render: (planet) => planetScreenRenderer?.render(planet),
+  render: (planet) => {
+    if (planetScreenRenderer) {
+      planetScreenRenderer.render(planet);
+      return;
+    }
+    renderPlanetScreenLoadFallback(planet);
+  },
   renderFallback: (planet) => {
-    planetScreenRenderer?.renderFallback(planet);
+    if (planetScreenRenderer) {
+      planetScreenRenderer.renderFallback(planet);
+      return;
+    }
+    renderPlanetScreenLoadFallback(planet);
   },
   dispose3D: () => {
     planetScreenRenderer?.dispose3D();
@@ -1867,6 +1877,7 @@ function openStarWindow(node) {
   renderSystemStars(node);
   renderSystemParticles(node);
   updateSystemGlow(window.innerWidth / 2, window.innerHeight / 2, 0, 0);
+  preloadPlanetScreenRenderer();
 }
 
 function closeStarWindow() {
@@ -1924,6 +1935,23 @@ async function loadPlanetScreenRenderer() {
   return planetScreenRendererPromise;
 }
 
+function preloadPlanetScreenRenderer() {
+  loadPlanetScreenRenderer().catch((error) => {
+    console.warn("Planet screen module preload failed", error);
+  });
+}
+
+function renderPlanetScreenLoadFallback(planet) {
+  planetScreenController.state.activeStar = null;
+  planetScreenController.state.activeStarSurface = null;
+  planetScreenController.clearRendered();
+
+  const title = document.createElement("div");
+  title.className = "planet-screen__title";
+  title.textContent = planet.name;
+  planetScreen.append(title);
+}
+
 function returnToStarSystemFromPlanet() {
   const activeNode = systemScreenController.state.activeNode;
   if (!activeNode) {
@@ -1943,6 +1971,7 @@ function returnToStarSystemFromPlanet() {
   renderSystemParticles(activeNode);
   updateSystemGlow(window.innerWidth / 2, window.innerHeight / 2, 0, 0);
   updateSystemParallax(lastClientPointer.x, lastClientPointer.y, true);
+  preloadPlanetScreenRenderer();
 }
 
 function renderSystemStars(node) {
@@ -2407,10 +2436,6 @@ async function startPlanetEntryTransition(planet, clientX, clientY) {
     await rendererPromise;
   } catch (error) {
     console.error("Planet screen module failed to load", error);
-    if (transitionToken === planetEntryTransitionToken) {
-      cancelPlanetEntryTransition();
-    }
-    return;
   }
 
   planetScreenController.open(planet);
@@ -3081,6 +3106,7 @@ function startSystemJumpTransition(targetNode, directionX, directionY, gate, cli
     renderStarSystem(targetNode);
     renderSystemStars(targetNode);
     renderSystemParticles(targetNode);
+    preloadPlanetScreenRenderer();
     systemScreenController.setActiveNode(targetNode);
     setSystemTransitionOffset(exitX, exitY);
     updateSystemGlow(clientX, clientY, exitX, exitY);
