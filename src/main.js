@@ -170,6 +170,9 @@ let planetEntryTransitionToken = 0;
 const gasGiantTextureLayers = new Set();
 let gasGiantTextureOffset = 0;
 const GAS_GIANT_TEXTURE_SPEED = 26;
+const PLANET_ENTRY_MIN_OVERLAY_MS = 1500;
+const PLANET_ENTRY_ZOOM_MS = 520;
+const PLANET_ENTRY_FADE_MS = 420;
 let activeSystemStar = null;
 let activeSystemStarSurface = null;
 let tooltipTypingTimeout = null;
@@ -2416,6 +2419,7 @@ async function startPlanetEntryTransition(planet, clientX, clientY) {
   starWindow.style.setProperty("--planet-entry-scale", "1");
   planetEntryOverlay.classList.add("active");
   planetEntryOverlay.style.setProperty("--planet-entry-alpha", "0");
+  const minOverlayVisiblePromise = delay(PLANET_ENTRY_MIN_OVERLAY_MS);
 
   await nextAnimationFrame();
   if (transitionToken !== planetEntryTransitionToken) {
@@ -2426,8 +2430,7 @@ async function startPlanetEntryTransition(planet, clientX, clientY) {
   starWindow.style.setProperty("--planet-entry-scale", "9");
   planetEntryOverlay.style.setProperty("--planet-entry-alpha", "1");
 
-  const startedAt = performance.now();
-  await delay(520);
+  await delay(PLANET_ENTRY_ZOOM_MS);
   if (transitionToken !== planetEntryTransitionToken) {
     return;
   }
@@ -2449,15 +2452,14 @@ async function startPlanetEntryTransition(planet, clientX, clientY) {
     return;
   }
 
-  const remaining = Math.max(0, 1500 - (performance.now() - startedAt));
-  await delay(remaining);
+  await minOverlayVisiblePromise;
   if (transitionToken !== planetEntryTransitionToken) {
     return;
   }
 
   planetEntryOverlay.classList.add("leaving");
   planetEntryOverlay.style.setProperty("--planet-entry-alpha", "0");
-  await delay(420);
+  await delay(PLANET_ENTRY_FADE_MS);
   if (transitionToken !== planetEntryTransitionToken) {
     return;
   }
