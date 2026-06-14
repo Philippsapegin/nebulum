@@ -2,7 +2,9 @@ import * as THREE from "three";
 import { GAS_GIANT_OCTAVES, GAS_GIANT_WINDOW_TEXTURE_HEIGHT, createGasGiantTexture } from "../planet/gasGiantTexture.js";
 import { createRandom } from "../utils/random.js";
 
+const PLANET_SCREEN_DISK_INNER_RADIUS_SCALE = 1.62;
 const PLANET_SCREEN_DISK_THICKNESS_SCALE = 1.22;
+const PLANET_SCREEN_DISK_OUTER_RADIUS_SCALE = 2;
 const PLANET_SCREEN_DISK_LIGHT_LAYER = 1;
 const PLANET_SCREEN_DISK_LIGHT_RIGHT_OFFSET = 0.28;
 const PLANET_SCREEN_DISK_LIGHT_FAR_EDGE_OFFSET = 1.18;
@@ -12,6 +14,11 @@ const PLANET_SCREEN_DISK_LIGHT_THICKNESS_SCALE = 1.30606;
 const PLANET_SCREEN_DISK_WHITE_LIGHT_DISTANCE_SCALE = 0.58;
 const PLANET_SCREEN_DISK_BAND_MIN_COUNT = 12;
 const PLANET_SCREEN_DISK_BAND_MAX_COUNT = 26;
+const PLANET_SCREEN_DISK_EXTRA_CUT_MIN_COUNT = 2;
+const PLANET_SCREEN_DISK_EXTRA_CUT_MAX_COUNT = 7;
+const PLANET_SCREEN_DISK_BRIGHT_BAND_MIN_COUNT = 1;
+const PLANET_SCREEN_DISK_BRIGHT_BAND_MAX_COUNT = 4;
+const PLANET_SCREEN_BUMP_STRENGTH = 1;
 
 export function createPlanetScreenRenderer({
   root,
@@ -282,41 +289,67 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
     uniforms: {
       planetMap: { value: map },
       textureOffset: { value: new THREE.Vector2(0, 0) },
+      bumpStrength: { value: texture?.canvas ? PLANET_SCREEN_BUMP_STRENGTH : 0 },
+      bumpTexelSize: { value: new THREE.Vector2(1 / sourceCanvas.width, 1 / sourceCanvas.height) },
       reflectedLightColor: { value: new THREE.Color(planet.systemStarColor) },
       diskShadowNormal: { value: new THREE.Vector3(0, 0, 1) },
       diskShadowStrength: { value: 0 },
     },
     vertexShader: `
-      varying vec2 vUv;
       varying vec3 vLocalPosition;
       varying vec3 vNormalView;
+      varying vec3 vTangentUView;
+      varying vec3 vTangentVView;
       void main() {
-        vUv = uv;
+        vec3 localNormal = normalize(position);
+        vec3 tangentU = vec3(localNormal.z, 0.0, -localNormal.x);
+        tangentU = normalize(mix(vec3(1.0, 0.0, 0.0), tangentU, step(0.0001, dot(tangentU, tangentU))));
+        vec3 tangentV = vec3(0.0, 1.0, 0.0) - localNormal * localNormal.y;
+        tangentV = normalize(mix(vec3(0.0, 0.0, 1.0), tangentV, step(0.0001, dot(tangentV, tangentV))));
         vLocalPosition = position;
         vNormalView = normalize(normalMatrix * normal);
+        vTangentUView = normalize(normalMatrix * tangentU);
+        vTangentVView = normalize(normalMatrix * tangentV);
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
     fragmentShader: `
       uniform sampler2D planetMap;
       uniform vec2 textureOffset;
+      uniform float bumpStrength;
+      uniform vec2 bumpTexelSize;
       uniform vec3 reflectedLightColor;
       uniform vec3 diskShadowNormal;
       uniform float diskShadowStrength;
-      varying vec2 vUv;
       varying vec3 vLocalPosition;
       varying vec3 vNormalView;
+      varying vec3 vTangentUView;
+      varying vec3 vTangentVView;
+      const float PI = 3.141592653589793;
+      float getPlanetBumpHeight(vec3 color) {
+        return dot(color, vec3(0.299, 0.587, 0.114));
+      }
       void main() {
-        vec2 uv = vec2(fract(vUv.x + textureOffset.x), vUv.y);
+        vec3 localNormal = normalize(vLocalPosition);
+        float cylindricalU = atan(localNormal.x, localNormal.z) / (2.0 * PI) + 0.5;
+        float cylindricalV = clamp(localNormal.y * 0.5 + 0.5, 0.0, 1.0);
+        vec2 uv = vec2(cylindricalU + textureOffset.x, cylindricalV);
         vec3 base = texture2D(planetMap, uv).rgb;
-        vec3 normalView = normalize(vNormalView);
+        float heightLeft = getPlanetBumpHeight(texture2D(planetMap, uv - vec2(bumpTexelSize.x, 0.0)).rgb);
+        float heightRight = getPlanetBumpHeight(texture2D(planetMap, uv + vec2(bumpTexelSize.x, 0.0)).rgb);
+        float heightDown = getPlanetBumpHeight(texture2D(planetMap, uv - vec2(0.0, bumpTexelSize.y)).rgb);
+        float heightUp = getPlanetBumpHeight(texture2D(planetMap, uv + vec2(0.0, bumpTexelSize.y)).rgb);
+        vec2 heightGradient = vec2(heightRight - heightLeft, heightUp - heightDown);
+        float bumpPoleFade = smoothstep(0.04, 0.18, cylindricalV) * (1.0 - smoothstep(0.82, 0.96, cylindricalV));
+        vec3 normalView = normalize(
+          vNormalView - (vTangentUView * heightGradient.x + vTangentVView * heightGradient.y) * bumpStrength * bumpPoleFade
+        );
         vec3 lightView = normalize(vec3(0.0, ${lightLift.toFixed(4)}, -1.0));
         float lit = smoothstep(0.0, ${shadowFeather.toFixed(4)}, dot(normalView, lightView));
         vec3 color = base * lit;
         float reflectedLight = pow(lit, 0.72) * 0.055;
         float rim = pow(1.0 - abs(normalView.z), 1.55);
         float litRim = rim * (0.045 + lit * 0.045);
-        vec3 localNormal = normalize(vLocalPosition);
         float diskPlaneDistance = abs(dot(localNormal, normalize(diskShadowNormal)));
         float diskBand = 1.0 - smoothstep(0.045, 0.18, diskPlaneDistance);
         float diskShadow = diskBand * smoothstep(0.04, 0.7, lit) * diskShadowStrength;
@@ -352,7 +385,7 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
   }
 
   const glowPixelRatio = Math.min(window.devicePixelRatio, 1.5);
-  const glowTargetScale = 0.5;
+  const glowTargetScale = 0.34;
   const glowTargetWidth = Math.max(1, Math.ceil(renderWidth * glowPixelRatio * glowTargetScale));
   const glowTargetHeight = Math.max(1, Math.ceil(renderHeight * glowPixelRatio * glowTargetScale));
   const glowTargetOptions = {
@@ -395,9 +428,10 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
         float silhouette = 1.0 - abs(normalView.z);
         float broadGlow = pow(silhouette, 2.45) * 0.62;
         float softCore = pow(silhouette, 8.0) * 0.9;
+        float backSideMask = 1.0 - smoothstep(-0.08, 0.02, normalView.z);
         float screenX = clamp((gl_FragCoord.x - visibleOffset.x) / max(1.0, visibleSize.x), 0.0, 1.0);
         float screenFade = pow(sin(screenX * PI), 1.15);
-        float alpha = (broadGlow + softCore) * screenFade;
+        float alpha = (broadGlow + softCore) * screenFade * backSideMask;
         if (alpha < 0.002) {
           discard;
         }
@@ -413,7 +447,7 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
   const glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
   glowMesh.position.copy(mesh.position);
   glowMesh.quaternion.copy(baseQuaternion);
-  const glowScale = THREE.MathUtils.lerp(1.012, 1.0045, planetSizeFactor);
+  const glowScale = THREE.MathUtils.lerp(1.006, 1.002, planetSizeFactor);
   glowMesh.scale.setScalar(glowScale);
   glowMesh.renderOrder = 3;
   glowScene.add(glowMesh);
@@ -537,18 +571,13 @@ function createPlanetScreen3DDisk(planet, planetScreenRadius) {
   const baseColor = new THREE.Color(0xbfc0c2).lerp(new THREE.Color(planet.systemStarColor), 0.08);
   const segmentColor = baseColor;
 
-  const cutHalfWidth = getPlanetScreenDiskCutHalfWidth(diskGeometry, planetScreenRadius);
-  const cutRanges = planet.accretionDisk.cutRadii
-    .map((cutRadius) => {
-      const relative = THREE.MathUtils.clamp((cutRadius - sourceInner) / sourceThickness, 0, 1);
-      const radius = THREE.MathUtils.lerp(diskGeometry.innerRadius, diskGeometry.outerRadius, relative);
-      return {
-        start: Math.max(diskGeometry.innerRadius, radius - cutHalfWidth),
-        end: Math.min(diskGeometry.outerRadius, radius + cutHalfWidth),
-      };
-    })
-    .filter((range) => range.end > range.start)
-    .sort((a, b) => a.start - b.start);
+  const cutRanges = createPlanetScreenDiskCutRanges(
+    planet,
+    diskGeometry,
+    planetScreenRadius,
+    sourceInner,
+    sourceThickness,
+  );
   const heterogeneousBands = createPlanetScreenDiskHeterogeneousBands(
     planet,
     diskGeometry,
@@ -635,6 +664,64 @@ function createPlanetScreen3DDisk(planet, planetScreenRadius) {
   };
 }
 
+function createPlanetScreenDiskCutRanges(planet, diskGeometry, planetScreenRadius, sourceInner, sourceThickness) {
+  const sourceCutHalfWidth = getPlanetScreenDiskCutHalfWidth(diskGeometry, planetScreenRadius);
+  const sourceCutRanges = planet.accretionDisk.cutRadii.map((cutRadius) => {
+    const relative = THREE.MathUtils.clamp((cutRadius - sourceInner) / sourceThickness, 0, 1);
+    const radius = THREE.MathUtils.lerp(diskGeometry.innerRadius, diskGeometry.outerRadius, relative);
+    return {
+      start: Math.max(diskGeometry.innerRadius, radius - sourceCutHalfWidth),
+      end: Math.min(diskGeometry.outerRadius, radius + sourceCutHalfWidth),
+    };
+  });
+  const extraCutRanges = createPlanetScreenDiskExtraCutRanges(planet, diskGeometry, planetScreenRadius);
+
+  return mergePlanetScreenDiskRanges([...sourceCutRanges, ...extraCutRanges]);
+}
+
+function createPlanetScreenDiskExtraCutRanges(planet, diskGeometry, planetScreenRadius) {
+  const random = createRandom(`${SEED}:planet-screen-extra-disk-cuts:${planet.systemId}:${planet.name}`);
+  const thickness = diskGeometry.thickness;
+  const count = THREE.MathUtils.clamp(
+    Math.round(thickness / Math.max(planetScreenRadius * 0.72, 1)) + Math.floor(random() * 2),
+    PLANET_SCREEN_DISK_EXTRA_CUT_MIN_COUNT,
+    PLANET_SCREEN_DISK_EXTRA_CUT_MAX_COUNT,
+  );
+  const ranges = [];
+  const cutHalfWidthMin = Math.max(3, planetScreenRadius * 0.003);
+  const cutHalfWidthMax = Math.max(cutHalfWidthMin, Math.min(planetScreenRadius * 0.018, thickness * 0.014));
+
+  for (let index = 0; index < count; index += 1) {
+    const step = (index + 0.5 + (random() - 0.5) * 0.54) / count;
+    const radius = THREE.MathUtils.lerp(diskGeometry.innerRadius, diskGeometry.outerRadius, THREE.MathUtils.clamp(step, 0.04, 0.96));
+    const cutHalfWidth = THREE.MathUtils.lerp(cutHalfWidthMin, cutHalfWidthMax, random());
+    ranges.push({
+      start: Math.max(diskGeometry.innerRadius, radius - cutHalfWidth),
+      end: Math.min(diskGeometry.outerRadius, radius + cutHalfWidth),
+    });
+  }
+
+  return ranges;
+}
+
+function mergePlanetScreenDiskRanges(ranges) {
+  const sortedRanges = ranges
+    .filter((range) => range.end > range.start)
+    .sort((a, b) => a.start - b.start);
+  const mergedRanges = [];
+
+  for (const range of sortedRanges) {
+    const previous = mergedRanges.at(-1);
+    if (previous && range.start <= previous.end) {
+      previous.end = Math.max(previous.end, range.end);
+    } else {
+      mergedRanges.push({ ...range });
+    }
+  }
+
+  return mergedRanges;
+}
+
 function createPlanetScreenDiskHeterogeneousBands(planet, diskGeometry, planetScreenRadius, baseColor, cutRanges) {
   const random = createRandom(`${SEED}:planet-screen-disk-bands:${planet.systemId}:${planet.name}`);
   const bands = [];
@@ -654,7 +741,7 @@ function createPlanetScreenDiskHeterogeneousBands(planet, diskGeometry, planetSc
     const innerRadius = clampedRadius - clampedWidth * 0.5;
     const outerRadius = clampedRadius + clampedWidth * 0.5;
     const crossesDisk = outerRadius > diskGeometry.innerRadius && innerRadius < diskGeometry.outerRadius;
-    const fillsCut = cutRanges.some((range) => clampedRadius >= range.start && clampedRadius <= range.end);
+    const fillsCut = cutRanges.some((range) => outerRadius > range.start && innerRadius < range.end);
     if (!crossesDisk || fillsCut) {
       return;
     }
@@ -679,16 +766,23 @@ function createPlanetScreenDiskHeterogeneousBands(planet, diskGeometry, planetSc
   for (let index = 0; index < dynamicCount; index += 1) {
     const step = (index + 0.5 + (random() - 0.5) * 0.42) / dynamicCount;
     const radius = THREE.MathUtils.lerp(diskGeometry.innerRadius, diskGeometry.outerRadius, step);
-    const wideBand = random() > 0.78;
-    const width = thickness * THREE.MathUtils.lerp(
-      wideBand ? 0.026 : 0.008,
-      wideBand ? 0.085 : 0.032,
-      random(),
-    );
+    const width = thickness * THREE.MathUtils.lerp(0.006, 0.028, random());
     const color = baseColor.clone().lerp(
       new THREE.Color(0xffffff),
-      THREE.MathUtils.lerp(0.06, wideBand ? 0.24 : 0.18, random()),
+      THREE.MathUtils.lerp(0.05, 0.16, random()),
     );
+    addBand(radius, width, color);
+  }
+
+  const brightBandCount = THREE.MathUtils.clamp(
+    Math.round(thickness / Math.max(planetScreenRadius * 0.85, 1)) + Math.floor(random() * 2),
+    PLANET_SCREEN_DISK_BRIGHT_BAND_MIN_COUNT,
+    PLANET_SCREEN_DISK_BRIGHT_BAND_MAX_COUNT,
+  );
+  for (let index = 0; index < brightBandCount; index += 1) {
+    const radius = THREE.MathUtils.lerp(diskGeometry.innerRadius, diskGeometry.outerRadius, 0.12 + random() * 0.76);
+    const width = thickness * THREE.MathUtils.lerp(0.055, 0.14, random());
+    const color = baseColor.clone().lerp(new THREE.Color(0xffffff), THREE.MathUtils.lerp(0.28, 0.52, random()));
     addBand(radius, width, color);
   }
 
@@ -748,8 +842,8 @@ function getPlanetScreenDiskFarEdgeDirection(group) {
 function getPlanetScreenDiskGeometry(planet, planetScreenRadius) {
   const diskScale = planetScreenRadius / planet.radius;
   const originalThickness = Math.max(1, (planet.accretionDisk.outerRadius - planet.accretionDisk.innerRadius) * diskScale);
-  const innerRadius = planetScreenRadius * 1.5;
-  const thickness = originalThickness * PLANET_SCREEN_DISK_THICKNESS_SCALE;
+  const innerRadius = planetScreenRadius * PLANET_SCREEN_DISK_INNER_RADIUS_SCALE;
+  const thickness = originalThickness * PLANET_SCREEN_DISK_THICKNESS_SCALE * PLANET_SCREEN_DISK_OUTER_RADIUS_SCALE;
 
   return {
     innerRadius,
