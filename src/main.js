@@ -20,6 +20,7 @@ import {
 } from "./graph/generate.js";
 import { createPlanetNameService } from "./planet/names.js";
 import { GAS_GIANT_WINDOW_TEXTURE_HEIGHT, createGasGiantTexture } from "./planet/gasGiantTexture.js";
+import { createPlanetRotationState, getPlanetRotationPhase } from "./planet/rotation.js";
 import { createPlanetScreenController } from "./screens/planetScreen.js";
 import { createSystemScreenController } from "./screens/systemScreen.js";
 import { openColorPicker } from "./ui/colorPicker.js";
@@ -168,8 +169,8 @@ let isMaskToolEnabled = false;
 let isPlanetEntryTransitioning = false;
 let planetEntryTransitionToken = 0;
 const gasGiantTextureLayers = new Set();
-let gasGiantTextureOffset = 0;
-const GAS_GIANT_TEXTURE_SPEED = 26;
+const planetSurfaceRotationLayers = new Set();
+const SYSTEM_PLANET_ROTATION_DISPLAY_SCALE = 3.14;
 const PLANET_ENTRY_MIN_OVERLAY_MS = 1500;
 const PLANET_ENTRY_ZOOM_MS = 520;
 const PLANET_ENTRY_FADE_MS = 420;
@@ -238,8 +239,8 @@ const planetScreenController = createPlanetScreenController({
     planetScreenRenderer?.dispose3D();
   },
   drawStarSurface: drawSystemStarSurface,
-  update3D: (surface, deltaSeconds) => {
-    planetScreenRenderer?.update3D(surface, deltaSeconds);
+  update3D: (surface, deltaSeconds, now) => {
+    planetScreenRenderer?.update3D(surface, deltaSeconds, now);
   },
   setOpenPlanetData: (planet) => {
     openPlanetData = planet;
@@ -1896,6 +1897,7 @@ function closeStarWindow() {
   activeSystemStar = null;
   activeSystemStarSurface = null;
   gasGiantTextureLayers.clear();
+  planetSurfaceRotationLayers.clear();
   clearSystemHover();
   systemStars.replaceChildren();
   systemStarLayer.replaceChildren();
@@ -2084,6 +2086,7 @@ function renderStarSystem(node) {
   starSystem.replaceChildren();
   systemStarLayer.replaceChildren();
   gasGiantTextureLayers.clear();
+  planetSurfaceRotationLayers.clear();
   clearSystemHover();
   planetScreenController.close();
   closePlanetWindow();
@@ -2204,6 +2207,13 @@ function renderStarSystem(node) {
     const toStarLength = Math.hypot(starX - planetX, centerY - planetY) || 1;
     const starDirX = (starX - planetX) / toStarLength;
     const starDirY = (centerY - planetY) / toStarLength;
+    const planetName = planetNameAssignments.get(node.id)?.[index] ?? planetNameService.createDefaultPlanetName(node.name, index);
+    const planetRotation = createPlanetRotationState({
+      seed: SEED,
+      systemId: node.id,
+      planetName,
+      tidallyLocked: Boolean(isTidallyLocked),
+    });
 
     const planet = document.createElement("div");
     planet.className = "system-planet";
@@ -2220,13 +2230,15 @@ function renderStarSystem(node) {
       starDirY,
       false,
       Boolean(isTidallyLocked),
+      {
+        rotation: planetRotation,
+      },
     ));
     starSystem.append(planet);
 
     renderMoons({ ...moonSystem, starDirX, starDirY });
 
     const constructionRadius = getPlanetConstructionRadius(planetRadius, accretionDisk, moonSystem);
-    const planetName = planetNameAssignments.get(node.id)?.[index] ?? planetNameService.createDefaultPlanetName(node.name, index);
     const moonNames = planetNameService.getMoonNames(node.id, index, planetName, moonSystem.moonCount);
     const label = document.createElement("div");
     label.className = "system-planet-label";
@@ -2566,6 +2578,12 @@ function renderPlanetStage(planet) {
   const displayGasGiantTexture = planet.gasGiantTextureSeed
     ? createGasGiantTexture(planet.gasGiantTextureSeed, GAS_GIANT_WINDOW_TEXTURE_HEIGHT)
     : planet.gasGiantTexture;
+  const displayPlanetRotation = createPlanetRotationState({
+    seed: SEED,
+    systemId: planet.systemId,
+    planetName: planet.name,
+    tidallyLocked: planet.tidallyLocked,
+  });
   planetElement.append(createPlanetSurface(
     planet.background,
     displayGasGiantTexture,
@@ -2574,6 +2592,9 @@ function renderPlanetStage(planet) {
     planet.starDirY,
     true,
     false,
+    {
+      rotation: displayPlanetRotation,
+    },
   ));
   planetWindowStage.append(planetElement);
 
@@ -3162,12 +3183,12 @@ function setSystemTransitionOverlay(opacity) {
   systemTransitionOverlay.style.opacity = String(THREE.MathUtils.clamp(opacity, 0, 1));
 }
 
-function updateGasGiantTextureLayers(deltaSeconds) {
-  if (!systemScreenController.isOpen() || gasGiantTextureLayers.size === 0) {
+function updateSystemPlanetRotationLayers(deltaSeconds, now) {
+  if (!systemScreenController.isOpen() ||
+    (gasGiantTextureLayers.size === 0 && planetSurfaceRotationLayers.size === 0)) {
     return;
   }
 
-  gasGiantTextureOffset += deltaSeconds * GAS_GIANT_TEXTURE_SPEED;
   for (const layer of Array.from(gasGiantTextureLayers)) {
     if (!layer.isConnected || layer.dataset.staticTexture === "true") {
       gasGiantTextureLayers.delete(layer);
@@ -3175,10 +3196,32 @@ function updateGasGiantTextureLayers(deltaSeconds) {
     }
 
     const tileWidth = layer.gasGiantTileWidth || 1;
-    const shift = -(gasGiantTextureOffset % tileWidth);
+    const phase = getSystemPlanetRotationDisplayPhase(layer.planetRotation, now * 0.001);
     const angle = layer.gasGiantAngle || 0;
-    layer.style.transform = `translate3d(-50%, -50%, 0) rotate(${angle}rad) translate3d(${shift.toFixed(2)}px, 0, 0)`;
+    layer.style.backgroundPosition = `${(-phase * tileWidth).toFixed(2)}px center`;
+    layer.style.transform = `translate3d(-50%, -50%, 0) rotate(${angle}rad)`;
   }
+
+  for (const layer of Array.from(planetSurfaceRotationLayers)) {
+    if (!layer.isConnected) {
+      planetSurfaceRotationLayers.delete(layer);
+      continue;
+    }
+
+    const angle = getSystemPlanetRotationDisplayPhase(layer.planetRotation, now * 0.001) * Math.PI * 2;
+    layer.style.transform = `rotate(${angle.toFixed(5)}rad)`;
+  }
+}
+
+function getSystemPlanetRotationDisplayPhase(rotation, elapsedSeconds) {
+  if (!rotation || rotation.turnsPerSecond === 0) {
+    return rotation?.initialOffset ?? 0;
+  }
+
+  return getPlanetRotationPhase({
+    ...rotation,
+    turnsPerSecond: rotation.turnsPerSecond * SYSTEM_PLANET_ROTATION_DISPLAY_SCALE,
+  }, elapsedSeconds);
 }
 
 function getSystemPlanetRadius(sizeIndex) {
@@ -3433,7 +3476,7 @@ function createPlanetKind(random, sizeIndex) {
   };
 }
 
-function applyGasGiantTexture(element, texture, displayRadius, isStatic = false, starDirX = -1, starDirY = 0) {
+function applyGasGiantTexture(element, texture, displayRadius, isStatic = false, starDirX = -1, starDirY = 0, rotation = null) {
   element.style.background = "transparent";
   const isWindowSurface = element.classList.contains("planet-window__planet") ||
     element.classList.contains("planet-window__surface");
@@ -3458,9 +3501,12 @@ function applyGasGiantTexture(element, texture, displayRadius, isStatic = false,
   driftLayer.dataset.staticTexture = isStatic ? "true" : "false";
   driftLayer.gasGiantTileWidth = tileWidth;
   driftLayer.gasGiantAngle = angle;
-  if (isStatic) {
+  driftLayer.planetRotation = rotation;
+  const phase = getSystemPlanetRotationDisplayPhase(rotation, performance.now() * 0.001);
+  driftLayer.style.backgroundPosition = `${(-phase * tileWidth).toFixed(2)}px center`;
+  if (isStatic || rotation?.turnsPerSecond === 0) {
     driftLayer.classList.add("gas-giant-texture__drift--static");
-    driftLayer.style.transform = `translate3d(-50%, -50%, 0) rotate(${angle}rad) translate3d(0, 0, 0)`;
+    driftLayer.style.transform = `translate3d(-50%, -50%, 0) rotate(${angle}rad)`;
   } else {
     gasGiantTextureLayers.add(driftLayer);
   }
@@ -3484,15 +3530,31 @@ function createPlanetSurface(
 ) {
   const surface = document.createElement("div");
   surface.className = isWindow ? "planet-window__surface" : "system-planet__surface";
-  surface.style.background = background;
   if (gasGiantTexture) {
-    applyGasGiantTexture(surface, gasGiantTexture, radius, isTextureStatic, starDirX, starDirY);
+    applyGasGiantTexture(surface, gasGiantTexture, radius, isTextureStatic, starDirX, starDirY, options.rotation);
+  } else {
+    surface.append(createPlanetSurfaceFill(background, options.rotation));
   }
   if (options.innerLightColor) {
     surface.append(createPlanetInnerLight(radius, starDirX, starDirY, options.innerLightColor));
   }
   surface.append(createPlanetShadow(radius, starDirX, starDirY, options));
   return surface;
+}
+
+function createPlanetSurfaceFill(background, rotation = null) {
+  const fill = document.createElement("span");
+  fill.className = "system-planet__surface-fill";
+  fill.style.background = background;
+  fill.planetRotation = rotation;
+  const angle = getSystemPlanetRotationDisplayPhase(rotation, performance.now() * 0.001) * Math.PI * 2;
+  fill.style.transform = `rotate(${angle.toFixed(5)}rad)`;
+  if (rotation?.turnsPerSecond !== 0) {
+    planetSurfaceRotationLayers.add(fill);
+  } else {
+    fill.classList.add("system-planet__surface-fill--static");
+  }
+  return fill;
 }
 
 // Light circle offset toward the star; shadow width on axis equals this offset,
@@ -3580,15 +3642,19 @@ function createPlanetGlow(radius, starDirX, starDirY) {
   glow.style.height = `${(radius + glowExtent) * 2}px`;
   glow.style.left = `${-glowExtent}px`;
   glow.style.top = `${-glowExtent}px`;
+  const innerFeather = Math.max(3.6, radius * 0.26);
+  const innerMid = Math.max(1.8, radius * 0.13);
   glow.style.background =
     `radial-gradient(circle, ` +
-    `rgba(255, 255, 255, 0) ${(radius - 1).toFixed(2)}px, ` +
-    `rgba(255, 255, 255, 0.28) ${radius.toFixed(2)}px, ` +
+    `rgba(255, 255, 255, 0) ${(radius - innerFeather).toFixed(2)}px, ` +
+    `rgba(255, 255, 255, 0.07) ${(radius - innerMid).toFixed(2)}px, ` +
+    `rgba(255, 255, 255, 0.18) ${(radius - 1.1).toFixed(2)}px, ` +
+    `rgba(255, 255, 255, 0.3) ${(radius + 0.15).toFixed(2)}px, ` +
     `rgba(255, 255, 255, 0.09) ${(radius + glowExtent * 0.48).toFixed(2)}px, ` +
     `rgba(255, 255, 255, 0) ${(radius + glowExtent).toFixed(2)}px)`;
 
-  // Mask circle: same terminator as the shadow, with a soft falloff so the
-  // reflected rim light fades naturally before the occluded crescent.
+  // Mask circle: same terminator as the shadow, with a soft falloff. This keeps
+  // the raised glow as a concave crescent instead of a full halo over the planet.
   const maskRadius = radius + glowExtent;
   const maskOffset = radius * PLANET_SHADOW_OFFSET + glowExtent;
   const maskCx = maskRadius + starDirX * maskOffset;
@@ -4362,7 +4428,7 @@ function animate() {
   planetScreenController.tick(now, deltaSeconds);
 
   if (!planetScreenController.isOpen()) {
-    updateGasGiantTextureLayers(deltaSeconds);
+    updateSystemPlanetRotationLayers(deltaSeconds, now);
   }
 
   if (isPlanetWindowOpen) {

@@ -711,6 +711,21 @@ body.system-open .music-player {
   contain: paint;
 }
 
+.system-planet__surface-fill {
+  position: absolute;
+  inset: -8%;
+  z-index: 0;
+  display: block;
+  border-radius: 50%;
+  pointer-events: none;
+  transform-origin: center;
+  will-change: transform;
+}
+
+.system-planet__surface-fill--static {
+  will-change: auto;
+}
+
 .gas-giant-texture,
 .gas-giant-highlight {
   position: absolute;
@@ -756,7 +771,8 @@ body.system-open .music-player {
 .system-planet-glow {
   position: absolute;
   pointer-events: none;
-  z-index: 1;
+  filter: blur(0.55px);
+  z-index: 4;
 }
 
 .planet-screen__planet-glow {

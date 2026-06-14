@@ -98,7 +98,7 @@ export function createPlanetScreenController({
     }
     if (state.active3D) {
       try {
-        update3D(state.active3D, deltaSeconds);
+        update3D(state.active3D, deltaSeconds, now);
       } catch (error) {
         console.error("Planet screen 3D update failed", error);
         dispose3D();

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GAS_GIANT_OCTAVES, GAS_GIANT_WINDOW_TEXTURE_HEIGHT, createGasGiantTexture } from "../planet/gasGiantTexture.js";
+import { createPlanetRotationState, getPlanetRotationPhase } from "../planet/rotation.js";
 import { createRandom } from "../utils/random.js";
 
 const PLANET_SCREEN_DISK_INNER_RADIUS_SCALE = 1.62;
@@ -18,7 +19,7 @@ const PLANET_SCREEN_DISK_EXTRA_CUT_MIN_COUNT = 2;
 const PLANET_SCREEN_DISK_EXTRA_CUT_MAX_COUNT = 7;
 const PLANET_SCREEN_DISK_BRIGHT_BAND_MIN_COUNT = 1;
 const PLANET_SCREEN_DISK_BRIGHT_BAND_MAX_COUNT = 4;
-const PLANET_SCREEN_BUMP_STRENGTH = 1;
+const PLANET_SCREEN_BUMP_STRENGTH = 0.65;
 
 export function createPlanetScreenRenderer({
   root,
@@ -280,6 +281,14 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
   map.wrapT = THREE.ClampToEdgeWrapping;
   map.anisotropy = Math.min(8, renderer3D.capabilities.getMaxAnisotropy());
   map.needsUpdate = true;
+  const rotation = createPlanetRotationState({
+    seed: SEED,
+    systemId: planet.systemId,
+    planetName: planet.name,
+    tidallyLocked: planet.tidallyLocked,
+  });
+  const rotationPhase = getPlanetRotationPhase(rotation, performance.now() * 0.001);
+  map.offset.x = rotationPhase;
 
   const geometry3D = new THREE.SphereGeometry(geometry.radius, 128, 64);
   const planetSizeFactor = THREE.MathUtils.clamp(planet.sizeIndex / 9, 0, 1);
@@ -288,7 +297,7 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
   const material = new THREE.ShaderMaterial({
     uniforms: {
       planetMap: { value: map },
-      textureOffset: { value: new THREE.Vector2(0, 0) },
+      textureOffset: { value: new THREE.Vector2(rotationPhase, 0) },
       bumpStrength: { value: texture?.canvas ? PLANET_SCREEN_BUMP_STRENGTH : 0 },
       bumpTexelSize: { value: new THREE.Vector2(1 / sourceCanvas.width, 1 / sourceCanvas.height) },
       reflectedLightColor: { value: new THREE.Color(planet.systemStarColor) },
@@ -539,6 +548,7 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
     camera: camera3D,
     mesh,
     texture: map,
+    textureRotation: rotation,
     geometry: geometry3D,
     material,
     disk3D,
@@ -553,7 +563,6 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
     compositeScene: postScene,
     compositeCamera: postCamera,
     compositeMaterial,
-    rotationSpeed: 0.00012,
   };
 }
 
@@ -916,8 +925,12 @@ function renderPlanetScreen3D(surface) {
   renderer3D.autoClear = true;
 }
 
-function updatePlanetScreen3D(surface, deltaSeconds) {
-  surface.texture.offset.x = (surface.texture.offset.x + deltaSeconds * 0.035) % 1;
+function updatePlanetScreen3D(surface, deltaSeconds, now) {
+  if (surface.textureRotation?.turnsPerSecond === 0) {
+    return;
+  }
+
+  surface.texture.offset.x = getPlanetRotationPhase(surface.textureRotation, now * 0.001);
   surface.material.uniforms.textureOffset.value.x = surface.texture.offset.x;
   renderPlanetScreen3D(surface);
 }
