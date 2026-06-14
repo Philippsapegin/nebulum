@@ -1,9 +1,11 @@
 import "./styles.css";
 import * as THREE from "three";
 import {
+  GRAVITY_BASE_VALUES,
   MAX_SELECTION_FADING_SEGMENTS,
   MAX_SELECTION_POINTS,
   MAX_SELECTION_SEGMENTS,
+  MOON_SIZE_NAMES,
   MUSIC_TRACKS,
   PLANET_SIZE_NAMES,
   PLANET_STAGE_CONTENT_RADIUS,
@@ -1657,6 +1659,10 @@ function scheduleSystemTooltipTypewriter(body, immediate = false) {
     if (body.dataset.tidallyLocked === "true") {
       lines.push("TIDALLY LOCKED");
     }
+
+    if (body.dataset.gravity) {
+      lines.push(`g: ${body.dataset.gravity}`);
+    }
   }
 
   const typewriterDelay = immediate ? 340 : 1580;
@@ -2208,6 +2214,11 @@ function renderStarSystem(node) {
     const starDirX = (starX - planetX) / toStarLength;
     const starDirY = (centerY - planetY) / toStarLength;
     const planetName = planetNameAssignments.get(node.id)?.[index] ?? planetNameService.createDefaultPlanetName(node.name, index);
+    const planetGravity = createGravityValue({
+      kind: planetKind.label,
+      sizeIndex: planetSizeIndex,
+      seed: `${SEED}:gravity:${node.id}:${planetName}`,
+    });
     const planetRotation = createPlanetRotationState({
       seed: SEED,
       systemId: node.id,
@@ -2260,6 +2271,7 @@ function renderStarSystem(node) {
     hitTarget.dataset.moons = String(moonSystem.moonCount);
     hitTarget.dataset.radius = String(planetRadius);
     hitTarget.dataset.tidallyLocked = isTidallyLocked ? "true" : "false";
+    hitTarget.dataset.gravity = formatGravityValue(planetGravity);
     const planetInfo = {
       name: planetName,
       kind: planetKind.label,
@@ -2277,6 +2289,7 @@ function renderStarSystem(node) {
       systemStarCoreColor: node.coreColor,
       systemStarBlackCore: Boolean(node.blackCore),
       systemId: node.id,
+      gravity: planetGravity,
       // Window scale excludes the accretion disk so a planet with a large disk
       // is not shrunk; the disk is allowed to overflow the stage instead.
       extentRadius: accretionDisk
@@ -2292,6 +2305,13 @@ function renderStarSystem(node) {
         dx: moon.x - planetX,
         dy: moon.y - planetY,
         radius: moon.radius,
+        sizeIndex: moon.sizeIndex,
+        sizeName: getMoonSizeLabel(moon),
+        gravity: createGravityValue({
+          kind: "MOON",
+          sizeIndex: moon.sizeIndex,
+          seed: `${SEED}:gravity:${node.id}:${planetName}:moon:${moonIndex}`,
+        }),
         name: moonNames[moonIndex] ?? planetNameService.createDefaultPlanetName(planetName, moonIndex),
       })),
       hasDisk: Boolean(accretionDisk),
@@ -2412,6 +2432,40 @@ function getPlanetSizeLabel(planet) {
   const names = PLANET_SIZE_NAMES[planet.kind] ?? [];
   const sizeName = names[planet.sizeIndex] ?? "";
   return `${sizeName} ${planet.kind}`.trim().toUpperCase();
+}
+
+function getMoonSizeLabel(moon) {
+  return (MOON_SIZE_NAMES[moon.sizeIndex] ?? "moon").toUpperCase();
+}
+
+function createGravityValue({ kind, sizeIndex, seed }) {
+  const baseValues = GRAVITY_BASE_VALUES[kind] ?? [];
+  const baseGravity = baseValues[sizeIndex] ?? 1;
+  const maxShift = getGravityMaxShift(kind, sizeIndex);
+  const random = createRandom(seed);
+  const gravity = baseGravity + (random() * 2 - 1) * maxShift;
+
+  return Math.max(0.01, Number(gravity.toFixed(2)));
+}
+
+function getGravityMaxShift(kind, sizeIndex) {
+  if (kind === "GAS GIANT") {
+    return sizeIndex < 5 ? 0.2 : 0.4;
+  }
+
+  if (kind === "PLANET") {
+    return sizeIndex < 2 ? 0.2 : 1;
+  }
+
+  if (kind === "MOON") {
+    return 0.2;
+  }
+
+  return 0;
+}
+
+function formatGravityValue(gravity) {
+  return gravity.toFixed(2).replace(/\.?0+$/, "");
 }
 
 async function startPlanetEntryTransition(planet, clientX, clientY) {
@@ -3819,7 +3873,8 @@ function createMoonSystem({
 
   for (let index = 0; index < moonCount; index += 1) {
     const sector = (Math.PI * 2) / moonCount;
-    const moonRadius = moonSizes[Math.floor(random() * moonSizes.length)];
+    const moonSizeIndex = Math.floor(random() * moonSizes.length);
+    const moonRadius = moonSizes[moonSizeIndex];
     const angle = pickSafeMoonAngle({
       random,
       baseAngle: startAngle + sector * index,
@@ -3836,7 +3891,7 @@ function createMoonSystem({
     const moonX = planetX + Math.cos(angle) * orbitRadius;
     const moonY = planetY + Math.sin(angle) * orbitRadius;
     placedMoons.push({ x: moonX, y: moonY, radius: moonRadius });
-    moons.push({ x: moonX, y: moonY, radius: moonRadius });
+    moons.push({ x: moonX, y: moonY, radius: moonRadius, sizeIndex: moonSizeIndex });
   }
 
   return { moonCount, orbitRadius, moons, planetX, planetY };

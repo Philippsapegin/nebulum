@@ -115,6 +115,14 @@ export const PLANET_SIZE_NAMES = {
   "GAS GIANT": ["anomalous", "anomalous", "anomalous", "tiny", "small", "", "", "", "", ""],
 };
 
+export const MOON_SIZE_NAMES = ["small moon", "moon", "big moon"];
+
+export const GRAVITY_BASE_VALUES = {
+  "GAS GIANT": [0.1, 0.2, 0.5, 0.8, 1, 2, 3, 4, 5, 6],
+  "PLANET": [0.6, 0.8, 1, 1.5, 2, 3, 5, 8, 10, 12],
+  "MOON": [0.1, 0.4, 0.8],
+};
+
 // Planet detail window stage geometry (must match styles.css .planet-window layout).
 export const PLANET_STAGE_WIDTH = 292;
 export const PLANET_STAGE_HEIGHT = 380;
