@@ -11,6 +11,7 @@ import {
   PLANET_STAGE_CONTENT_RADIUS,
   PLANET_STAGE_HEIGHT,
   PLANET_STAGE_WIDTH,
+  STAR_TEMPERATURE_RANGES,
   ZONE_DATA,
 } from "./constants.js";
 import {
@@ -1663,6 +1664,10 @@ function scheduleSystemTooltipTypewriter(body, immediate = false) {
     if (body.dataset.gravity) {
       lines.push(`g: ${body.dataset.gravity}`);
     }
+
+    if (body.dataset.temperature) {
+      lines.push(`t: ${body.dataset.temperature}\u00b0C`);
+    }
   }
 
   const typewriterDelay = immediate ? 340 : 1580;
@@ -2219,6 +2224,11 @@ function renderStarSystem(node) {
       sizeIndex: planetSizeIndex,
       seed: `${SEED}:gravity:${node.id}:${planetName}`,
     });
+    const planetTemperature = createBaseTemperatureValue({
+      starType: node.starType,
+      orbitFraction,
+      seed: `${SEED}:temperature:${node.id}`,
+    });
     const planetRotation = createPlanetRotationState({
       seed: SEED,
       systemId: node.id,
@@ -2272,6 +2282,7 @@ function renderStarSystem(node) {
     hitTarget.dataset.radius = String(planetRadius);
     hitTarget.dataset.tidallyLocked = isTidallyLocked ? "true" : "false";
     hitTarget.dataset.gravity = formatGravityValue(planetGravity);
+    hitTarget.dataset.temperature = formatTemperatureValue(planetTemperature);
     const planetInfo = {
       name: planetName,
       kind: planetKind.label,
@@ -2290,6 +2301,7 @@ function renderStarSystem(node) {
       systemStarBlackCore: Boolean(node.blackCore),
       systemId: node.id,
       gravity: planetGravity,
+      temperature: planetTemperature,
       // Window scale excludes the accretion disk so a planet with a large disk
       // is not shrunk; the disk is allowed to overflow the stage instead.
       extentRadius: accretionDisk
@@ -2466,6 +2478,43 @@ function getGravityMaxShift(kind, sizeIndex) {
 
 function formatGravityValue(gravity) {
   return gravity.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function createBaseTemperatureValue({ starType, orbitFraction, seed }) {
+  const zoneInfo = ZONE_DATA[starType];
+  if (!zoneInfo || zoneInfo.hzInner === null || zoneInfo.hzOuter === null) {
+    return -272;
+  }
+
+  const habitableSpan = zoneInfo.hzOuter - zoneInfo.hzInner;
+  if (habitableSpan <= 0) {
+    return -272;
+  }
+
+  if (orbitFraction >= zoneInfo.hzInner) {
+    const temperature = 100 - ((orbitFraction - zoneInfo.hzInner) / habitableSpan) * 100;
+    return Math.max(-272, Math.round(temperature));
+  }
+
+  const starEdgeTemperature = createStarEdgeTemperature(starType, seed);
+  const innerRatio = THREE.MathUtils.clamp(orbitFraction / zoneInfo.hzInner, 0, 1);
+  const temperature = THREE.MathUtils.lerp(starEdgeTemperature, 100, innerRatio);
+
+  return Math.round(temperature);
+}
+
+function createStarEdgeTemperature(starType, seed) {
+  const range = STAR_TEMPERATURE_RANGES[starType];
+  if (!range) {
+    return 100;
+  }
+
+  const random = createRandom(seed);
+  return range[0] + random() * (range[1] - range[0]);
+}
+
+function formatTemperatureValue(temperature) {
+  return String(Math.round(temperature));
 }
 
 async function startPlanetEntryTransition(planet, clientX, clientY) {

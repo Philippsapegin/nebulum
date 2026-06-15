@@ -110,6 +110,22 @@ export const ZONE_DATA = {
   "Black Hole":         { tidalLock: 95, hzInner: null, hzOuter: null },
 };
 
+export const STAR_TEMPERATURE_RANGES = {
+  "Blue Supergiant": [25000, 30000],
+  "Blue Star": [8000, 25000],
+  "Blue Giant": [8000, 25000],
+  "White Star": [7000, 8000],
+  "Yellow-White Star": [6000, 7000],
+  "Yellow Star": [5000, 6000],
+  "Orange Star": [3800, 5000],
+  "Orange Dwarf": [3800, 5000],
+  "Red Dwarf": [2500, 3800],
+  "Red Giant": [2500, 3800],
+  "Red Supergiant": [2500, 3800],
+  "Neutron Star": [7000, 8000],
+  "Strange Star": [8000, 25000],
+};
+
 export const PLANET_SIZE_NAMES = {
   "PLANET": ["tiny", "small", "", "large", "mega", "super", "super type 2", "super type 3", "super type 4", "super type 5"],
   "GAS GIANT": ["anomalous", "anomalous", "anomalous", "tiny", "small", "", "", "", "", ""],
