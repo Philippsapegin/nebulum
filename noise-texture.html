@@ -25,6 +25,10 @@
         font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
       }
 
+      body.planet-mode {
+        align-items: flex-start;
+      }
+
       h1 {
         margin: 0 0 6px;
         font-size: 15px;
@@ -45,6 +49,36 @@
         border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 8px;
         background: #131317;
+      }
+
+      .tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 6px;
+        margin: 0 0 16px;
+      }
+
+      .tab {
+        height: auto;
+        min-height: 34px;
+        padding: 6px 8px;
+        font-size: 10px;
+        line-height: 1.2;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .tab.active {
+        border-color: rgba(111, 155, 255, 0.62);
+        background: rgba(111, 155, 255, 0.16);
+      }
+
+      .is-hidden {
+        display: none !important;
+      }
+
+      [hidden] {
+        display: none !important;
       }
 
       .field {
@@ -132,6 +166,34 @@
         font-size: 11px;
       }
 
+      .planet-only {
+        display: none;
+      }
+
+      body.planet-mode .planet-only {
+        display: block;
+      }
+
+      .gradient-mode-tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 6px;
+        margin-bottom: 10px;
+      }
+
+      .gradient-mode-tabs button {
+        height: 26px;
+        padding: 0 8px;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .gradient-mode-tabs button.active {
+        border-color: rgba(111, 155, 255, 0.62);
+        background: rgba(111, 155, 255, 0.16);
+      }
+
       .grad-preview {
         height: 22px;
         border-radius: 5px;
@@ -152,9 +214,38 @@
         gap: 8px;
       }
 
+      .grad-stop.has-tag {
+        grid-template-columns: 34px 1fr 54px 26px;
+        align-items: start;
+      }
+
+      .grad-stop__tag {
+        color: rgba(126, 187, 255, 0.76);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        line-height: 26px;
+      }
+
+      .percent-number {
+        width: 54px;
+        height: 24px;
+        padding: 0 5px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.04);
+        color: inherit;
+        font: inherit;
+        font-size: 11px;
+      }
+
       .grad-stop__controls {
         display: grid;
         gap: 5px;
+      }
+
+      .grad-stop__controls--planet {
+        grid-column: 1 / -1;
       }
 
       .grad-stop__row {
@@ -239,7 +330,16 @@
         display: grid;
         grid-template-columns: repeat(2, 384px);
         align-items: start;
-        gap: 8px 20px;
+        gap: 20px;
+      }
+
+      body.planet-mode .view {
+        grid-template-columns: 384px 768px;
+      }
+
+      .output-group {
+        display: grid;
+        gap: 8px;
       }
 
       .view__label {
@@ -271,6 +371,51 @@
         height: 384px;
       }
 
+      #stretchedCanvas {
+        grid-column: 1 / span 2;
+      }
+
+      body.planet-mode .sticky-cell {
+        position: sticky;
+        top: 26px;
+        z-index: 3;
+      }
+
+      body.planet-mode #planetPreviewGroup {
+        position: fixed;
+        top: 26px;
+        left: 352px;
+        z-index: 4;
+        grid-column: 1;
+        grid-row: 1;
+      }
+
+      body.planet-mode #tileGroup {
+        position: fixed;
+        top: 26px;
+        left: 756px;
+        z-index: 4;
+        grid-column: 2;
+        grid-row: 1;
+      }
+
+      body.planet-mode #mapsGroup {
+        position: fixed;
+        top: 455px;
+        left: 756px;
+        z-index: 4;
+        grid-column: 2;
+        grid-row: 2;
+        max-height: calc(100vh - 444px);
+        overflow-y: auto;
+        padding-right: 6px;
+        scrollbar-width: thin;
+      }
+
+      body.planet-mode #mapsGroup.sticky-cell {
+        top: 455px;
+      }
+
       .gas-preview-cell {
         display: grid;
         place-items: center;
@@ -283,6 +428,7 @@
 
       .gas-planet {
         --gas-texture: none;
+        --cloud-texture: none;
         --gas-offset: 0px;
         position: relative;
         flex: none;
@@ -290,18 +436,35 @@
         height: 256px;
         border-radius: 50%;
         overflow: hidden;
-        background:
-          radial-gradient(circle at 38% 34%, rgba(255, 255, 255, 0.28), transparent 0 34%, rgba(255, 255, 255, 0.08) 52%, transparent 72%),
-          var(--gas-texture);
-        background-size: auto, 512px 256px;
-        background-position: center, var(--gas-offset) center;
+        background: var(--gas-texture);
+        background-size: 512px 256px;
+        background-position: var(--gas-offset) center;
         box-shadow:
           0 0 13px rgba(255, 255, 255, 0.46),
           0 0 32px rgba(255, 255, 255, 0.18);
         animation: gasDrift 18s linear infinite;
+        isolation: isolate;
       }
 
       .gas-planet::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        background-image: var(--cloud-texture);
+        background-size: 512px 256px;
+        background-position: 0 center;
+        opacity: 0;
+        animation: cloudDrift 12s linear infinite;
+        pointer-events: none;
+        z-index: 1;
+      }
+
+      body.planet-mode .gas-planet::before {
+        opacity: 1;
+      }
+
+      .gas-planet::after {
         content: "";
         position: absolute;
         inset: -34px;
@@ -314,23 +477,35 @@
             rgba(255, 255, 255, 0) 184px);
         mask-image: radial-gradient(circle at 92px 128px, #000 118px, rgba(0, 0, 0, 0) 178px);
         pointer-events: none;
+        z-index: 3;
       }
 
-      .gas-planet::after {
-        content: "";
+      .gas-planet .planet-shade {
         position: absolute;
         inset: -1px;
         border-radius: 50%;
-        background: radial-gradient(circle at 102px 128px, transparent 78px, rgba(0, 0, 0, 0.95) 126px);
+        background:
+          radial-gradient(circle at 38% 34%, rgba(255, 255, 255, 0.28), transparent 0 34%, rgba(255, 255, 255, 0.08) 52%, transparent 72%),
+          radial-gradient(circle at 102px 128px, transparent 78px, rgba(0, 0, 0, 0.95) 126px);
         pointer-events: none;
+        z-index: 2;
       }
 
       @keyframes gasDrift {
         from {
-          background-position: center, 0 center;
+          background-position: 0 center;
         }
         to {
-          background-position: center, -512px center;
+          background-position: -512px center;
+        }
+      }
+
+      @keyframes cloudDrift {
+        from {
+          background-position: 0 center;
+        }
+        to {
+          background-position: -512px center;
         }
       }
     </style>
@@ -340,12 +515,22 @@
       <h1>Tileable Noise Texture</h1>
       <p class="sub">Seamless procedural noise generated from a seed.</p>
 
+      <div class="tabs" role="tablist" aria-label="Generator mode">
+        <button id="gasTab" class="tab active" type="button" role="tab" aria-selected="true">Gas Giants Noise-Gen</button>
+        <button id="planetTab" class="tab" type="button" role="tab" aria-selected="false">Planet Noise Gen</button>
+      </div>
+
       <div class="field">
         <div class="field__label"><span>Seed</span></div>
         <div class="seed-row">
           <input id="seed" type="text" autocomplete="off" value="nebulum" />
           <button id="randomize" type="button" title="Random seed">&#10227;</button>
         </div>
+      </div>
+
+      <div id="planetNameField" class="field planet-only">
+        <div class="field__label"><span>Planet name</span></div>
+        <input id="planetName" type="text" autocomplete="off" value="preview-planet" />
       </div>
 
       <div class="field">
@@ -360,7 +545,7 @@
 
       <button id="aspect" class="btn-block" type="button">Stretch to 2&times;1</button>
 
-      <div class="field">
+      <div id="stretchField" class="field">
         <div class="field__label"><span>Horizontal stretch</span><output id="stretchVal"></output></div>
         <input id="stretch" type="range" min="3" max="12" step="0.25" value="6" />
       </div>
@@ -385,6 +570,17 @@
 
       <div class="divider"></div>
 
+      <div id="iceCapsField" class="field planet-only">
+        <div class="field__label"><span>Ice caps</span><output id="iceCapsVal"></output></div>
+        <input id="iceCaps" type="range" min="0" max="50" step="1" value="18" />
+      </div>
+
+      <div id="gradientModeTabs" class="gradient-mode-tabs planet-only" role="tablist" aria-label="Planet gradient">
+        <button id="surfaceGradientTab" class="active" type="button">Surface</button>
+        <button id="iceGradientTab" type="button">Ice</button>
+        <button id="cloudGradientTab" type="button">Clouds</button>
+      </div>
+
       <div class="grad-head">
         <span class="field__label" style="margin: 0">Gradient</span>
         <button id="addColor" type="button">+ Color</button>
@@ -398,34 +594,97 @@
     </aside>
 
     <main class="view">
-      <div class="view__label"><span id="resLabel"></span> &mdash; the tile</div>
-      <div class="view__label">Tiled preview</div>
-      <canvas id="canvas"></canvas>
-      <div id="preview" class="preview"></div>
-      <div class="view__label">Gas giant preview</div>
-      <div class="view__label"></div>
-      <div class="gas-preview-cell">
-        <div id="gasPlanetPreview" class="gas-planet"></div>
-      </div>
-      <canvas id="stretchedCanvas" class="wide-canvas" hidden></canvas>
+      <section id="tileGroup" class="output-group sticky-cell">
+        <div id="tileLabel" class="view__label"><span id="resLabel"></span> &mdash; the tile</div>
+        <canvas id="canvas"></canvas>
+      </section>
+      <section id="tiledPreviewGroup" class="output-group">
+        <div id="tiledPreviewLabel" class="view__label">Tiled preview</div>
+        <div id="preview" class="preview"></div>
+      </section>
+      <section id="planetPreviewGroup" class="output-group sticky-cell">
+        <div id="planetPreviewLabel" class="view__label">Gas giant preview</div>
+        <div id="gasPreviewCell" class="gas-preview-cell">
+          <div id="gasPlanetPreview" class="gas-planet">
+            <div class="planet-shade"></div>
+          </div>
+        </div>
+      </section>
+      <section id="mapsGroup" class="output-group sticky-cell is-hidden">
+        <div id="specularLabel" class="view__label">Specular map</div>
+        <canvas id="specularCanvas" class="wide-canvas"></canvas>
+        <div id="bumpLabel" class="view__label">Grayscale bump map</div>
+        <canvas id="bumpCanvas" class="wide-canvas"></canvas>
+        <div id="cloudLabel" class="view__label">Clouds map</div>
+        <canvas id="cloudCanvas" class="wide-canvas"></canvas>
+      </section>
+      <canvas id="stretchedCanvas" class="wide-canvas"></canvas>
     </main>
 
     <script type="module">
       import { GAS_GIANT_PALETTES } from "./src/gasGiantPalettes.js";
+      import { PLANET_PALETTES } from "./src/planetPalettes.js";
 
       const HEIGHT = 512;
       const STRETCHED_ASPECT = 2;
       const PERSISTENCE = 0.5;
-      const MAX_STOPS = 5;
+      const PLANET_STOP_LABELS = [
+        "deep water",
+        "water",
+        "shore",
+        "landmass",
+        "flora",
+        "mountains",
+        "highlands",
+        "peaks",
+      ];
+      const CLOUD_STOP_LABELS = ["alpha", "cloud low", "cloud mid", "cloud high"];
+      const MODES = {
+        gas: {
+          label: "Gas giant preview",
+          palettes: GAS_GIANT_PALETTES,
+          saveUrl: "/api/gas-giant-palettes",
+          saveTarget: "src/gasGiantPalettes.js",
+          maxStops: 5,
+          fixedStops: false,
+          defaultAspect: 1,
+          scale: { min: 10, max: 24, step: 1, value: 16 },
+          octaves: { min: 4, max: 4, step: 1, value: 4 },
+        },
+        planet: {
+          label: "Planet preview",
+          palettes: PLANET_PALETTES,
+          saveUrl: "/api/planet-palettes",
+          saveTarget: "src/planetPalettes.js",
+          maxStops: 8,
+          fixedStops: true,
+          defaultAspect: 2,
+          scale: { min: 1, max: 96, step: 1, value: 7 },
+          octaves: { min: 1, max: 10, step: 1, value: 9 },
+        },
+      };
 
       const canvas = document.getElementById("canvas");
       const ctx = canvas.getContext("2d");
       const preview = document.getElementById("preview");
       const stretchedCanvas = document.getElementById("stretchedCanvas");
       const stretchedCtx = stretchedCanvas.getContext("2d");
+      const specularCanvas = document.getElementById("specularCanvas");
+      const specularCtx = specularCanvas.getContext("2d");
+      const bumpCanvas = document.getElementById("bumpCanvas");
+      const bumpCtx = bumpCanvas.getContext("2d");
+      const cloudCanvas = document.getElementById("cloudCanvas");
+      const cloudCtx = cloudCanvas.getContext("2d");
       const gasPlanetPreview = document.getElementById("gasPlanetPreview");
+      const gasTab = document.getElementById("gasTab");
+      const planetTab = document.getElementById("planetTab");
+      const stretchField = document.getElementById("stretchField");
+      const tiledPreviewGroup = document.getElementById("tiledPreviewGroup");
+      const planetPreviewLabel = document.getElementById("planetPreviewLabel");
+      const mapsGroup = document.getElementById("mapsGroup");
 
       const seedInput = document.getElementById("seed");
+      const planetNameInput = document.getElementById("planetName");
       const scaleInput = document.getElementById("scale");
       const octavesInput = document.getElementById("octaves");
       const stretchInput = document.getElementById("stretch");
@@ -441,15 +700,30 @@
       const gradPreview = document.getElementById("gradPreview");
       const gradStops = document.getElementById("gradStops");
       const addColorButton = document.getElementById("addColor");
+      const iceCapsInput = document.getElementById("iceCaps");
+      const iceCapsVal = document.getElementById("iceCapsVal");
+      const surfaceGradientTab = document.getElementById("surfaceGradientTab");
+      const iceGradientTab = document.getElementById("iceGradientTab");
+      const cloudGradientTab = document.getElementById("cloudGradientTab");
       const resLabel = document.getElementById("resLabel");
 
-      let aspect = 1; // 1 => 1x1, 2 => 2x1
-      let palettes = clonePalettes(GAS_GIANT_PALETTES);
-      let activePaletteId = palettes[0]?.id ?? "custom";
-      let gradientStops = cloneStops(palettes[0]?.stops ?? [
-        { pos: 0, color: "#05060d", hueShift: [-4, 4], brightnessShift: [-5, 5] },
-        { pos: 1, color: "#eef1ff", hueShift: [-4, 4], brightnessShift: [-5, 5] },
-      ]);
+      let activeMode = "gas";
+      let aspect = MODES[activeMode].defaultAspect; // 1 => 1x1, 2 => 2x1
+      const modeState = Object.fromEntries(Object.entries(MODES).map(([mode, config]) => {
+        const palettes = clonePalettes(config.palettes);
+        return [mode, {
+          palettes,
+          activePaletteId: palettes[0]?.id ?? "custom",
+          gradientStops: cloneModeStops(mode, palettes[0]?.stops ?? createDefaultStops(config.maxStops), config.maxStops),
+          iceStops: cloneModeStops(mode, palettes[0]?.iceStops ?? createDefaultIceStops(config.maxStops), config.maxStops),
+          cloudStops: cloneCloudStops(palettes[0]?.cloudStops ?? createDefaultCloudStops()),
+          activeGradient: "surface",
+          iceCaps: Number.isFinite(palettes[0]?.iceCaps) ? palettes[0].iceCaps : 18,
+          scale: config.scale.value,
+          octaves: config.octaves.value,
+          stretch: 6,
+        }];
+      }));
 
       let noiseField = null;
       let noiseW = 0;
@@ -458,11 +732,14 @@
       let stretchedNoiseW = 0;
       let stretchedNoiseH = 0;
       const gradientLUT = new Uint8ClampedArray(256 * 3);
+      const iceGradientLUT = new Uint8ClampedArray(256 * 3);
 
       function clonePalettes(source) {
         return source.map((palette) => ({
           ...palette,
           stops: cloneStops(palette.stops),
+          iceStops: palette.iceStops ? cloneStops(palette.iceStops) : undefined,
+          cloudStops: palette.cloudStops ? cloneStops(palette.cloudStops) : undefined,
         }));
       }
 
@@ -470,10 +747,72 @@
         return stops.map((stop) => normalizeStop(stop));
       }
 
+      function cloneModeStops(mode, stops, maxStops) {
+        const cloned = cloneStops(stops);
+        if (mode !== "planet") {
+          return cloned;
+        }
+
+        return normalizePlanetStops(cloned.length === maxStops ? cloned : createDefaultStops(maxStops));
+      }
+
+      function cloneCloudStops(stops) {
+        const cloned = cloneStops(stops);
+        return normalizeCloudStops(cloned.length === CLOUD_STOP_LABELS.length ? cloned : createDefaultCloudStops());
+      }
+
+      function createDefaultStops(count) {
+        return Array.from({ length: count }, (_, index) => ({
+          pos: count === 1 ? 0 : index / (count - 1),
+          color: index < 2 ? ["#08254b", "#1f81bd"][index] : "#7d7d8a",
+          label: PLANET_STOP_LABELS[index] ?? "",
+          hueShift: [-5, 5],
+          brightnessShift: [-5, 5],
+        }));
+      }
+
+      function createDefaultIceStops(count) {
+        const colors = ["#dff7ff", "#f0fbff", "#f5f7f3", "#d9edf5", "#c8e6ef", "#b7d0de", "#e5edf2", "#ffffff"];
+        return Array.from({ length: count }, (_, index) => ({
+          pos: count === 1 ? 0 : index / (count - 1),
+          color: colors[index] ?? "#ffffff",
+          label: PLANET_STOP_LABELS[index] ?? "",
+          hueShift: [-2, 2],
+          brightnessShift: [-3, 3],
+        }));
+      }
+
+      function createDefaultCloudStops() {
+        return [
+          { pos: 0.48, color: "#000000", label: "alpha", hueShift: [0, 0], brightnessShift: [0, 0] },
+          { pos: 0.52, color: "#bac8cf", label: "cloud low", hueShift: [-2, 2], brightnessShift: [-5, 5] },
+          { pos: 0.74, color: "#e3edf1", label: "cloud mid", hueShift: [-2, 2], brightnessShift: [-4, 4] },
+          { pos: 1, color: "#ffffff", label: "cloud high", hueShift: [-1, 1], brightnessShift: [-3, 3] },
+        ];
+      }
+
+      function currentConfig() {
+        return MODES[activeMode];
+      }
+
+      function currentState() {
+        return modeState[activeMode];
+      }
+
+      function currentEditableStops() {
+        const state = currentState();
+        return activeMode === "planet" && state.activeGradient === "ice"
+          ? state.iceStops
+          : activeMode === "planet" && state.activeGradient === "clouds"
+            ? state.cloudStops
+          : state.gradientStops;
+      }
+
       function normalizeStop(stop) {
         return {
           pos: Number.isFinite(stop.pos) ? stop.pos : 0,
           color: stop.color || "#ffffff",
+          label: stop.label || "",
           hueShift: [
             Number.isFinite(stop.hueShift?.[0]) ? stop.hueShift[0] : 0,
             Number.isFinite(stop.hueShift?.[1]) ? stop.hueShift[1] : 0,
@@ -485,6 +824,44 @@
         };
       }
 
+      function normalizePlanetStops(stops) {
+        const normalized = stops.slice(0, PLANET_STOP_LABELS.length).map((stop, index) => ({
+          ...stop,
+          label: PLANET_STOP_LABELS[index],
+        }));
+        while (normalized.length < PLANET_STOP_LABELS.length) {
+          normalized.push(normalizeStop(createDefaultStops(PLANET_STOP_LABELS.length)[normalized.length]));
+        }
+        const waterPos = clamp01(normalized[1]?.pos ?? 0.52);
+        normalized[1].pos = waterPos;
+        normalized[0].pos = waterPos * 0.75;
+        for (let index = 2; index < normalized.length; index += 1) {
+          normalized[index].pos = Math.max(waterPos, clamp01(normalized[index].pos));
+        }
+        normalized[normalized.length - 1].pos = 1;
+        return normalized;
+      }
+
+      function normalizeCloudStops(stops) {
+        const normalized = stops.slice(0, CLOUD_STOP_LABELS.length).map((stop, index) => ({
+          ...stop,
+          label: CLOUD_STOP_LABELS[index],
+        }));
+        while (normalized.length < CLOUD_STOP_LABELS.length) {
+          normalized.push(normalizeStop(createDefaultCloudStops()[normalized.length]));
+        }
+        normalized[0].pos = clamp01(normalized[0].pos);
+        for (let index = 1; index < normalized.length; index += 1) {
+          normalized[index].pos = Math.max(normalized[0].pos, clamp01(normalized[index].pos));
+        }
+        normalized[normalized.length - 1].pos = 1;
+        return normalized;
+      }
+
+      function clamp01(value) {
+        return Math.max(0, Math.min(1, value));
+      }
+
       // --- Seeded hashing -------------------------------------------------
       function strToSeed(str) {
         let h = 2166136261 >>> 0;
@@ -493,6 +870,22 @@
           h = Math.imul(h, 16777619);
         }
         return h >>> 0;
+      }
+
+      function createPlanetIceSeed() {
+        const mainSeed = seedInput.value || " ";
+        const planetName = planetNameInput.value.trim() || "planet";
+        return strToSeed(mainSeed + ":" + planetName + ":ice-mask");
+      }
+
+      function createPlanetIceSettings(seed) {
+        const random = seededRandom(seed ^ 0x3c6ef372);
+        return {
+          macroFreq: 7 + Math.floor(random() * 7),
+          macroAmp: 5 + random() * 7,
+          detailFreq: 50,
+          detailAmp: 3,
+        };
       }
 
       function cornerHash(octaveSeed, x, y) {
@@ -675,12 +1068,23 @@
       }
 
       function sortedStops() {
-        return gradientStops.slice().sort((a, b) => a.pos - b.pos);
+        return currentEditableStops().slice().sort((a, b) => a.pos - b.pos);
+      }
+
+      function sortedRenderStops(stops) {
+        return stops.slice().sort((a, b) => a.pos - b.pos);
       }
 
       function buildLUT() {
-        const paletteRandom = seededRandom(strToSeed((seedInput.value || " ") + ":palette:" + activePaletteId));
-        const stops = sortedStops().map((stop) => ({
+        buildGradientLUT(currentState().gradientStops, gradientLUT, "surface");
+        if (activeMode === "planet") {
+          buildGradientLUT(currentState().iceStops, iceGradientLUT, "ice");
+        }
+      }
+
+      function buildGradientLUT(sourceStops, targetLUT, salt) {
+        const paletteRandom = seededRandom(strToSeed((seedInput.value || " ") + ":palette:" + currentState().activePaletteId + ":" + salt));
+        const stops = sortedRenderStops(sourceStops).map((stop) => ({
           ...stop,
           color: shiftedColor(stop, paletteRandom),
         }));
@@ -710,9 +1114,9 @@
             g = ca[1] + (cc[1] - ca[1]) * k;
             b = ca[2] + (cc[2] - ca[2]) * k;
           }
-          gradientLUT[i * 3] = r;
-          gradientLUT[i * 3 + 1] = g;
-          gradientLUT[i * 3 + 2] = b;
+          targetLUT[i * 3] = r;
+          targetLUT[i * 3 + 1] = g;
+          targetLUT[i * 3 + 2] = b;
         }
       }
 
@@ -733,20 +1137,39 @@
         canvas.height = noiseH;
         const image = ctx.createImageData(noiseW, noiseH);
         const data = image.data;
+        const iceMask = activeMode === "planet"
+          ? createIceMaskConfig()
+          : null;
         for (let p = 0; p < noiseField.length; p += 1) {
           let n = noiseField[p];
           if (n < 0) n = 0;
           else if (n > 1) n = 1;
           const idx = (n * 255) | 0;
           const offset = p * 4;
-          data[offset] = gradientLUT[idx * 3];
-          data[offset + 1] = gradientLUT[idx * 3 + 1];
-          data[offset + 2] = gradientLUT[idx * 3 + 2];
+          let r = gradientLUT[idx * 3];
+          let g = gradientLUT[idx * 3 + 1];
+          let b = gradientLUT[idx * 3 + 2];
+          if (iceMask) {
+            const iceAlpha = getIceMaskAlpha(p, iceMask, n);
+            if (iceAlpha > 0) {
+              r += (iceGradientLUT[idx * 3] - r) * iceAlpha;
+              g += (iceGradientLUT[idx * 3 + 1] - g) * iceAlpha;
+              b += (iceGradientLUT[idx * 3 + 2] - b) * iceAlpha;
+            }
+          }
+          data[offset] = r;
+          data[offset + 1] = g;
+          data[offset + 2] = b;
           data[offset + 3] = 255;
         }
         ctx.putImageData(image, 0, 0);
         updatePreview();
-        renderStretchedCanvas();
+        if (activeMode === "gas") {
+          renderStretchedCanvas();
+        } else {
+          updatePlanetPreview();
+          renderPlanetMaps();
+        }
         resLabel.textContent = noiseW + " × " + noiseH;
       }
 
@@ -778,10 +1201,225 @@
       }
 
       function updateStretchedPreview() {
-        const tileHeight = 384;
-        const tileWidth = tileHeight * STRETCHED_ASPECT;
         const textureUrl = "url(" + stretchedCanvas.toDataURL() + ")";
         gasPlanetPreview.style.setProperty("--gas-texture", textureUrl);
+      }
+
+      function updatePlanetPreview() {
+        const textureUrl = "url(" + canvas.toDataURL() + ")";
+        gasPlanetPreview.style.setProperty("--gas-texture", textureUrl);
+      }
+
+      function createIceMaskConfig() {
+        const seed = createPlanetIceSeed();
+        return {
+          capWidth: (currentState().iceCaps ?? 0) / 100,
+          seed,
+          waterLimit: currentState().gradientStops[1]?.pos ?? 0,
+          ...createPlanetIceSettings(seed),
+        };
+      }
+
+      function getIceMaskAlpha(pixelIndex, iceMask, surfaceNoise) {
+        const capWidth = iceMask.capWidth;
+        if (capWidth <= 0) {
+          return 0;
+        }
+
+        const x = pixelIndex % noiseW;
+        const y = Math.floor(pixelIndex / noiseW);
+        const u = x / noiseW;
+        const v = y / noiseH;
+        const isWater = surfaceNoise <= iceMask.waterLimit;
+        const surfaceBonus = isWater ? 0 : 0.05;
+        const localCapWidth = Math.min(0.5, capWidth + surfaceBonus);
+        const northEdge = createPoleIceEdge(u, v, iceMask.seed, iceMask, localCapWidth, isWater);
+        const southEdge = createPoleIceEdge(u, 1 - v, iceMask.seed ^ 0x517cc1b7, iceMask, localCapWidth, isWater);
+
+        if (isWater) {
+          return Math.max(northEdge, southEdge) >= 0 ? 1 : 0;
+        }
+
+        const softBand = Math.max(0.036, localCapWidth * 0.66);
+        return Math.max(0, Math.min(1, (Math.max(northEdge, southEdge) + softBand) / softBand));
+      }
+
+      function createPoleIceEdge(u, distanceFromPole, seed, iceMask, localCapWidth, isWater) {
+        const normalizedPoleDistance = distanceFromPole / 0.5;
+        const edgeOffset = layeredIceEdgeOffset(u, normalizedPoleDistance, seed, iceMask, isWater);
+        const edge = Math.max(0, localCapWidth * 1.35 + edgeOffset);
+        return edge - distanceFromPole;
+      }
+
+      function layeredIceEdgeOffset(u, normalizedPoleDistance, seed, iceMask, isWater) {
+        const macroFreq = Math.max(1, Math.round(iceMask.macroFreq ?? 2));
+        const detailFreq = Math.max(1, Math.round(iceMask.detailFreq ?? 7));
+        const macroAmp = Math.max(0, (iceMask.macroAmp ?? 9) / 100);
+        const detailAmp = isWater ? Math.max(0, (iceMask.detailAmp ?? 4) / 100) : 0;
+        const macro =
+          octaveNoise2D(u, 0.13, macroFreq, 1, seed) * 0.58 +
+          octaveNoise2D(u, 0.49, macroFreq + 1, 1, seed ^ 0x9e3779b9) * 0.42;
+        const macroWave = (macro - 0.5) * 2;
+        let detailWave = 0;
+        if (detailAmp > 0) {
+          const irregularity =
+            octaveNoise2D(u, 0.31, detailFreq, 1, seed ^ 0x85ebca6b) * 0.38 +
+            octaveNoise2D(u, 0.67, detailFreq * 2 - 1, 1, seed ^ 0xc2b2ae35) * 0.31 +
+            octaveNoise2D(
+              u,
+              normalizedPoleDistance + 0.17,
+              detailFreq * 3 + 2,
+              5,
+              seed ^ 0x27d4eb2f,
+            ) * 0.2 +
+            octaveNoise2D(u, 0.83, detailFreq * 5 + 2, 1, seed ^ 0x165667b1) * 0.11;
+          detailWave = (irregularity - 0.5) * 2;
+        }
+        return macroWave * macroAmp + detailWave * detailAmp;
+      }
+
+      function renderPlanetMaps() {
+        renderSpecularMap();
+        renderBumpMap();
+        renderCloudMap();
+      }
+
+      function renderSpecularMap() {
+        specularCanvas.width = noiseW;
+        specularCanvas.height = noiseH;
+        const image = specularCtx.createImageData(noiseW, noiseH);
+        const data = image.data;
+        const waterLimit = currentState().gradientStops[1]?.pos ?? 0;
+
+        for (let p = 0; p < noiseField.length; p += 1) {
+          const value = noiseField[p] <= waterLimit ? 255 : 0;
+          const offset = p * 4;
+          data[offset] = value;
+          data[offset + 1] = value;
+          data[offset + 2] = value;
+          data[offset + 3] = 255;
+        }
+
+        specularCtx.putImageData(image, 0, 0);
+      }
+
+      function renderBumpMap() {
+        bumpCanvas.width = noiseW;
+        bumpCanvas.height = noiseH;
+        const image = bumpCtx.createImageData(noiseW, noiseH);
+        const data = image.data;
+        const waterLimit = currentState().gradientStops[1]?.pos ?? 0;
+        const landSpan = Math.max(0.0001, 1 - waterLimit);
+        const waterValue = 42;
+
+        for (let p = 0; p < noiseField.length; p += 1) {
+          const noise = noiseField[p];
+          const value = noise <= waterLimit
+            ? waterValue
+            : Math.round(waterValue + ((noise - waterLimit) / landSpan) * (255 - waterValue));
+          const offset = p * 4;
+          data[offset] = value;
+          data[offset + 1] = value;
+          data[offset + 2] = value;
+          data[offset + 3] = 255;
+        }
+
+        bumpCtx.putImageData(image, 0, 0);
+      }
+
+      function renderCloudMap() {
+        cloudCanvas.width = noiseW;
+        cloudCanvas.height = noiseH;
+        const image = cloudCtx.createImageData(noiseW, noiseH);
+        const data = image.data;
+        const seed = strToSeed((seedInput.value || " ") + ":" + (planetNameInput.value.trim() || "planet") + ":clouds");
+        const colorStops = currentState().cloudStops;
+        const alphaCutoff = colorStops[0]?.pos ?? 0.48;
+        const settings = {
+          scale: createSeededCloudScale(seed),
+          octaves: 7,
+        };
+
+        for (let y = 0; y < noiseH; y += 1) {
+          const v = y / noiseH;
+          for (let x = 0; x < noiseW; x += 1) {
+            const u = x / noiseW;
+            const cloud = createCloudNoise(u, v, seed, settings);
+            const alpha = smoothstep(alphaCutoff, Math.min(1, alphaCutoff + 0.28), cloud);
+            const color = sampleCloudColor(cloud, colorStops);
+            const offset = (y * noiseW + x) * 4;
+            data[offset] = color[0];
+            data[offset + 1] = color[1];
+            data[offset + 2] = color[2];
+            data[offset + 3] = Math.round(alpha * 255);
+          }
+        }
+
+        cloudCtx.putImageData(image, 0, 0);
+        updateCloudPreview();
+      }
+
+      function updateCloudPreview() {
+        gasPlanetPreview.style.setProperty("--cloud-texture", "url(" + cloudCanvas.toDataURL() + ")");
+      }
+
+      function createSeededCloudScale(seed) {
+        return 14 + Math.floor(seededRandom(seed ^ 0x5bf03635)() * 9);
+      }
+
+      function createCloudNoise(u, v, seed, settings) {
+        const baseFreq = Math.max(1, Math.round(settings.scale));
+        const octaves = Math.max(1, Math.round(settings.octaves));
+        const macroFreqX = Math.max(1, Math.round(baseFreq * 0.45));
+        const macroFreqY = Math.max(1, Math.round(baseFreq * 0.24));
+        const warpA = octaveNoise2D(u, v, macroFreqX, macroFreqY, seed ^ 0x9e3779b9) - 0.5;
+        const warpB = octaveNoise2D(u + 0.31, v + 0.17, macroFreqX + 2, macroFreqY + 1, seed ^ 0x85ebca6b) - 0.5;
+        const latitudeWind = Math.sin(v * Math.PI * 2) * 0.035;
+        const warpedU = u + latitudeWind + warpA * 0.12;
+        const warpedV = v + warpB * 0.16 + Math.sin(u * Math.PI * 4 + warpA * 4) * 0.025;
+
+        let sum = 0;
+        let amp = 1;
+        let ampSum = 0;
+        for (let octave = 0; octave < octaves; octave += 1) {
+          const freqX = Math.max(1, Math.round(baseFreq * Math.pow(2, octave)));
+          const freqY = Math.max(1, Math.round(baseFreq * 0.5 * Math.pow(2, octave)));
+          const octaveSeed = (seed + Math.imul(octave + 1, 0x27d4eb2f)) >>> 0;
+          sum += octaveNoise2D(warpedU + warpB * 0.08, warpedV + warpA * 0.08, freqX, freqY, octaveSeed) * amp;
+          ampSum += amp;
+          amp *= 0.55;
+        }
+
+        const bands = Math.sin((warpedV + warpA * 0.05) * Math.PI * 10) * 0.035;
+        return Math.max(0, Math.min(1, sum / ampSum + bands));
+      }
+
+      function sampleCloudColor(value, stops) {
+        const colorStops = stops.slice(1).sort((a, b) => a.pos - b.pos);
+        if (value <= colorStops[0].pos) {
+          return hexToRgb(colorStops[0].color);
+        }
+        for (let index = 0; index < colorStops.length - 1; index += 1) {
+          const current = colorStops[index];
+          const next = colorStops[index + 1];
+          if (value <= next.pos) {
+            const span = next.pos - current.pos || 1;
+            const amount = (value - current.pos) / span;
+            const from = hexToRgb(current.color);
+            const to = hexToRgb(next.color);
+            return [
+              from[0] + (to[0] - from[0]) * amount,
+              from[1] + (to[1] - from[1]) * amount,
+              from[2] + (to[2] - from[2]) * amount,
+            ];
+          }
+        }
+        return hexToRgb(colorStops[colorStops.length - 1].color);
+      }
+
+      function smoothstep(edge0, edge1, value) {
+        const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0 || 1)));
+        return t * t * (3 - 2 * t);
       }
 
       function updateGradientPreview() {
@@ -792,21 +1430,141 @@
         gradPreview.style.background = "linear-gradient(to right, " + parts.join(", ") + ")";
       }
 
+      function syncPlanetPercentControls() {
+        if (activeMode !== "planet") {
+          return;
+        }
+
+        const stops = currentEditableStops();
+        gradStops.querySelectorAll(".grad-stop").forEach((row, index) => {
+          const value = String(Math.round(getRelativeStopPercent(stops, index)));
+          const range = row.querySelector("input[type='range']");
+          const percent = row.querySelector(".percent-number");
+          if (range && document.activeElement !== range) {
+            range.value = value;
+          }
+          if (percent && document.activeElement !== percent) {
+            percent.value = value;
+          }
+        });
+      }
+
+      function getRelativeStopPercent(stops, index) {
+        return currentState().activeGradient === "clouds"
+          ? getCloudStopPercent(stops, index)
+          : getPlanetStopPercent(stops, index);
+      }
+
+      function getPlanetStopPercent(stops, index) {
+        const waterPos = clamp01(stops[1]?.pos ?? 0);
+        if (index === 0) {
+          return waterPos * 75;
+        }
+        if (index === 1) {
+          return waterPos * 100;
+        }
+
+        const landSpan = Math.max(0.0001, 1 - waterPos);
+        return ((stops[index].pos - waterPos) / landSpan) * 100;
+      }
+
+      function getCloudStopPercent(stops, index) {
+        const alphaPos = clamp01(stops[0]?.pos ?? 0);
+        if (index === 0) {
+          return alphaPos * 100;
+        }
+
+        const visibleSpan = Math.max(0.0001, 1 - alphaPos);
+        return ((stops[index].pos - alphaPos) / visibleSpan) * 100;
+      }
+
+      function setRelativeStopPercent(stops, index, percent) {
+        if (currentState().activeGradient === "clouds") {
+          setCloudStopPercent(stops, index, percent);
+          return;
+        }
+        setPlanetStopPercent(stops, index, percent);
+      }
+
+      function setPlanetStopPercent(stops, index, percent) {
+        const clamped = Math.max(0, Math.min(100, percent)) / 100;
+        if (index === 0) {
+          return;
+        }
+        if (index === 1) {
+          setPlanetWaterPosition(stops, clamped);
+          return;
+        }
+
+        const waterPos = clamp01(stops[1]?.pos ?? 0);
+        stops[index].pos = waterPos + clamped * (1 - waterPos);
+      }
+
+      function setCloudStopPercent(stops, index, percent) {
+        const clamped = Math.max(0, Math.min(100, percent)) / 100;
+        if (index === 0) {
+          setCloudAlphaPosition(stops, clamped);
+          return;
+        }
+
+        const alphaPos = clamp01(stops[0]?.pos ?? 0);
+        stops[index].pos = alphaPos + clamped * (1 - alphaPos);
+      }
+
+      function setPlanetWaterPosition(stops, waterPos) {
+        const previousWaterPos = clamp01(stops[1]?.pos ?? 0);
+        const relativeLandPositions = stops.map((stop, index) => {
+          if (index < 2) {
+            return 0;
+          }
+          const previousLandSpan = Math.max(0.0001, 1 - previousWaterPos);
+          return clamp01((stop.pos - previousWaterPos) / previousLandSpan);
+        });
+
+        const nextWaterPos = Math.max(0.01, Math.min(0.99, waterPos));
+        stops[1].pos = nextWaterPos;
+        stops[0].pos = nextWaterPos * 0.75;
+        for (let index = 2; index < stops.length; index += 1) {
+          stops[index].pos = nextWaterPos + relativeLandPositions[index] * (1 - nextWaterPos);
+        }
+        stops[stops.length - 1].pos = 1;
+      }
+
+      function setCloudAlphaPosition(stops, alphaPos) {
+        const previousAlphaPos = clamp01(stops[0]?.pos ?? 0);
+        const relativeCloudPositions = stops.map((stop, index) => {
+          if (index === 0) {
+            return 0;
+          }
+          const previousCloudSpan = Math.max(0.0001, 1 - previousAlphaPos);
+          return clamp01((stop.pos - previousAlphaPos) / previousCloudSpan);
+        });
+
+        const nextAlphaPos = Math.max(0.01, Math.min(0.99, alphaPos));
+        stops[0].pos = nextAlphaPos;
+        for (let index = 1; index < stops.length; index += 1) {
+          stops[index].pos = nextAlphaPos + relativeCloudPositions[index] * (1 - nextAlphaPos);
+        }
+        stops[stops.length - 1].pos = 1;
+      }
+
       // --- Gradient editor UI --------------------------------------------
       function renderPaletteSelect() {
-        paletteSelect.replaceChildren(...palettes.map((palette) => {
+        const state = currentState();
+        paletteSelect.replaceChildren(...state.palettes.map((palette) => {
           const option = document.createElement("option");
           option.value = palette.id;
           option.textContent = palette.name;
           return option;
         }));
-        paletteSelect.value = activePaletteId;
+        paletteSelect.value = state.activePaletteId;
         const active = getActivePalette();
         paletteNameInput.value = active?.name ?? "";
       }
 
       function getActivePalette() {
-        return palettes.find((palette) => palette.id === activePaletteId) ?? palettes[0] ?? null;
+        const state = currentState();
+        return state.palettes.find((palette) => palette.id === state.activePaletteId) ?? state.palettes[0] ?? null;
       }
 
       function applyActivePalette() {
@@ -814,8 +1572,11 @@
         if (!active) {
           return;
         }
-        activePaletteId = active.id;
-        gradientStops = cloneStops(active.stops);
+        currentState().activePaletteId = active.id;
+        currentState().gradientStops = cloneModeStops(activeMode, active.stops, currentConfig().maxStops);
+        currentState().iceStops = cloneModeStops(activeMode, active.iceStops ?? createDefaultIceStops(currentConfig().maxStops), currentConfig().maxStops);
+        currentState().cloudStops = cloneCloudStops(active.cloudStops ?? createDefaultCloudStops());
+        currentState().iceCaps = Number.isFinite(active.iceCaps) ? active.iceCaps : currentState().iceCaps;
         renderPaletteSelect();
         refreshGradient();
       }
@@ -826,10 +1587,11 @@
       }
 
       function uniquePaletteId(name) {
+        const state = currentState();
         const base = slugifyName(name);
         let id = base;
         let index = 2;
-        while (palettes.some((palette) => palette.id === id)) {
+        while (state.palettes.some((palette) => palette.id === id)) {
           id = `${base}-${index}`;
           index += 1;
         }
@@ -842,7 +1604,12 @@
           return;
         }
         active.name = paletteNameInput.value.trim() || active.name;
-        active.stops = cloneStops(gradientStops);
+        active.stops = cloneModeStops(activeMode, currentState().gradientStops, currentConfig().maxStops);
+        if (activeMode === "planet") {
+          active.iceStops = cloneModeStops(activeMode, currentState().iceStops, currentConfig().maxStops);
+          active.cloudStops = cloneCloudStops(currentState().cloudStops);
+          active.iceCaps = currentState().iceCaps;
+        }
         renderPaletteSelect();
       }
 
@@ -850,16 +1617,16 @@
         syncActivePaletteFromEditor();
         saveStatus.textContent = "Saving...";
         try {
-          const response = await fetch("/api/gas-giant-palettes", {
+          const response = await fetch(currentConfig().saveUrl, {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify(palettes),
+            body: JSON.stringify(currentState().palettes),
           });
           const result = await response.json();
           if (!response.ok || !result.ok) {
             throw new Error(result.error || "Save failed");
           }
-          saveStatus.textContent = "Saved to src/gasGiantPalettes.js";
+          saveStatus.textContent = "Saved to " + currentConfig().saveTarget;
         } catch (error) {
           saveStatus.textContent = "Save failed: " + error.message;
         }
@@ -867,9 +1634,16 @@
 
       function renderGradientStops() {
         gradStops.replaceChildren();
-        gradientStops.forEach((stop, index) => {
+        const config = currentConfig();
+        const stops = currentEditableStops();
+        const usesRelativeStopScale = activeMode === "planet";
+        const locksFirstStop = usesRelativeStopScale && currentState().activeGradient !== "clouds";
+        stops.forEach((stop, index) => {
           const row = document.createElement("div");
           row.className = "grad-stop";
+          if (stop.label) {
+            row.classList.add("has-tag");
+          }
 
           const color = document.createElement("input");
           color.type = "color";
@@ -880,19 +1654,55 @@
             scheduleRender(false);
           });
 
+          const tag = document.createElement("span");
+          tag.className = "grad-stop__tag";
+          tag.textContent = stop.label || "";
+
           const controls = document.createElement("div");
           controls.className = "grad-stop__controls";
+          if (activeMode === "planet") {
+            controls.classList.add("grad-stop__controls--planet");
+          }
 
           const position = document.createElement("input");
           position.type = "range";
           position.min = "0";
           position.max = "100";
           position.step = "1";
-          position.value = String(Math.round(stop.pos * 100));
-          position.addEventListener("input", () => {
-            stop.pos = Number(position.value) / 100;
+          position.value = String(Math.round(usesRelativeStopScale
+            ? getRelativeStopPercent(stops, index)
+            : stop.pos * 100));
+
+          const percent = document.createElement("input");
+          percent.className = "percent-number";
+          percent.type = "number";
+          percent.min = "0";
+          percent.max = "100";
+          percent.step = "1";
+          percent.value = position.value;
+          percent.disabled = locksFirstStop && index === 0;
+          position.disabled = locksFirstStop && index === 0;
+
+          const updatePosition = (value) => {
+            if (usesRelativeStopScale) {
+              setRelativeStopPercent(stops, index, Number(value));
+              syncPlanetPercentControls();
+              updateGradientPreview();
+              syncActivePaletteFromEditor();
+              scheduleRender(false);
+              return;
+            }
+            stop.pos = Number(value) / 100;
             updateGradientPreview();
             scheduleRender(false);
+          };
+          position.addEventListener("input", () => {
+            percent.value = position.value;
+            updatePosition(position.value);
+          });
+          percent.addEventListener("input", () => {
+            position.value = percent.value;
+            updatePosition(percent.value);
           });
 
           const shiftRow = document.createElement("div");
@@ -919,17 +1729,21 @@
           remove.type = "button";
           remove.className = "remove";
           remove.textContent = "×";
-          remove.disabled = gradientStops.length <= 2;
+          remove.disabled = config.fixedStops || stops.length <= 2;
           remove.title = "Remove color";
           remove.addEventListener("click", () => {
-            gradientStops.splice(index, 1);
+            stops.splice(index, 1);
             refreshGradient();
           });
 
-          row.append(color, controls, remove);
+          if (stop.label) {
+            row.append(color, tag, percent, remove, controls);
+          } else {
+            row.append(color, controls, remove);
+          }
           gradStops.append(row);
         });
-        addColorButton.disabled = gradientStops.length >= MAX_STOPS;
+        addColorButton.disabled = config.fixedStops || stops.length >= config.maxStops;
       }
 
       function createShiftInput(stop, key, shiftIndex) {
@@ -954,15 +1768,17 @@
       }
 
       addColorButton.addEventListener("click", () => {
-        if (gradientStops.length >= MAX_STOPS) {
+        const config = currentConfig();
+        const stops = currentEditableStops();
+        if (config.fixedStops || stops.length >= config.maxStops) {
           return;
         }
-        gradientStops.push({ pos: 0.5, color: "#7d7d8a", hueShift: [-5, 5], brightnessShift: [-5, 5] });
+        stops.push({ pos: 0.5, color: "#7d7d8a", hueShift: [-5, 5], brightnessShift: [-5, 5] });
         refreshGradient();
       });
 
       paletteSelect.addEventListener("change", () => {
-        activePaletteId = paletteSelect.value;
+        currentState().activePaletteId = paletteSelect.value;
         applyActivePalette();
       });
 
@@ -980,12 +1796,17 @@
         const palette = {
           id: uniquePaletteId(name),
           name,
-          stops: cloneStops(gradientStops),
+          stops: cloneStops(currentState().gradientStops),
         };
-        palettes.push(palette);
-        activePaletteId = palette.id;
+        if (activeMode === "planet") {
+          palette.iceStops = cloneStops(currentState().iceStops);
+          palette.cloudStops = cloneCloudStops(currentState().cloudStops);
+          palette.iceCaps = currentState().iceCaps;
+        }
+        currentState().palettes.push(palette);
+        currentState().activePaletteId = palette.id;
         renderPaletteSelect();
-        saveStatus.textContent = "Palette added. Press Save to write it to src/gasGiantPalettes.js";
+        saveStatus.textContent = "Palette added. Press Save to write it to " + currentConfig().saveTarget;
         paletteNameInput.select();
       });
 
@@ -1006,7 +1827,9 @@
           rafId = 0;
           if (pendingNoise) {
             computeNoise();
-            computeStretchedNoise();
+            if (activeMode === "gas") {
+              computeStretchedNoise();
+            }
             pendingNoise = false;
           }
           buildLUT();
@@ -1015,26 +1838,92 @@
       }
 
       // --- Controls -------------------------------------------------------
+      function saveControlState() {
+        const state = currentState();
+        state.scale = Number(scaleInput.value);
+        state.octaves = Number(octavesInput.value);
+        state.stretch = Number(stretchInput.value);
+      }
+
+      function applyMode(mode) {
+        saveControlState();
+        activeMode = mode;
+        const config = currentConfig();
+        const state = currentState();
+        aspect = config.defaultAspect;
+
+        scaleInput.min = String(config.scale.min);
+        scaleInput.max = String(config.scale.max);
+        scaleInput.step = String(config.scale.step);
+        scaleInput.value = String(state.scale);
+        octavesInput.min = String(config.octaves.min);
+        octavesInput.max = String(config.octaves.max);
+        octavesInput.step = String(config.octaves.step);
+        octavesInput.value = String(state.octaves);
+        stretchInput.value = String(state.stretch);
+        iceCapsInput.value = String(state.iceCaps);
+
+        const isPlanet = activeMode === "planet";
+        document.body.classList.toggle("planet-mode", isPlanet);
+        gasTab.classList.toggle("active", !isPlanet);
+        planetTab.classList.toggle("active", isPlanet);
+        gasTab.setAttribute("aria-selected", isPlanet ? "false" : "true");
+        planetTab.setAttribute("aria-selected", isPlanet ? "true" : "false");
+        aspectButton.classList.toggle("is-hidden", isPlanet);
+        aspectButton.innerHTML = aspect === 1 ? "Stretch to 2&times;1" : "Back to 1&times;1";
+        stretchField.classList.toggle("is-hidden", isPlanet);
+        tiledPreviewGroup.classList.toggle("is-hidden", isPlanet);
+        mapsGroup.classList.toggle("is-hidden", !isPlanet);
+        stretchedCanvas.classList.toggle("is-hidden", isPlanet);
+        planetPreviewLabel.textContent = config.label;
+        addColorButton.classList.toggle("is-hidden", config.fixedStops);
+        syncGradientModeTabs();
+        saveStatus.textContent = "";
+
+        syncLabels();
+        renderPaletteSelect();
+        renderGradientStops();
+        updateGradientPreview();
+        scheduleRender(true);
+      }
+
       function syncLabels() {
         scaleVal.textContent = scaleInput.value;
         octavesVal.textContent = octavesInput.value;
         stretchVal.textContent = stretchInput.value + "x";
+        iceCapsVal.textContent = iceCapsInput.value + "%";
+      }
+
+      function syncGradientModeTabs() {
+        const gradient = currentState().activeGradient;
+        surfaceGradientTab.classList.toggle("active", gradient === "surface");
+        iceGradientTab.classList.toggle("active", gradient === "ice");
+        cloudGradientTab.classList.toggle("active", gradient === "clouds");
       }
 
       seedInput.addEventListener("input", () => scheduleRender(true));
+      planetNameInput.addEventListener("input", () => scheduleRender(false));
       scaleInput.addEventListener("input", () => {
+        currentState().scale = Number(scaleInput.value);
         syncLabels();
         scheduleRender(true);
       });
       octavesInput.addEventListener("input", () => {
+        currentState().octaves = Number(octavesInput.value);
         syncLabels();
         scheduleRender(true);
       });
       stretchInput.addEventListener("input", () => {
+        currentState().stretch = Number(stretchInput.value);
         syncLabels();
         scheduleRender(true);
       });
-
+      iceCapsInput.addEventListener("input", () => {
+        currentState().iceCaps = Number(iceCapsInput.value);
+        syncLabels();
+        syncActivePaletteFromEditor();
+        scheduleRender(false);
+      });
       document.getElementById("randomize").addEventListener("click", () => {
         seedInput.value = Math.random().toString(36).slice(2, 10);
         scheduleRender(true);
@@ -1046,6 +1935,25 @@
         scheduleRender(true);
       });
 
+      gasTab.addEventListener("click", () => applyMode("gas"));
+      planetTab.addEventListener("click", () => applyMode("planet"));
+      surfaceGradientTab.addEventListener("click", () => {
+        currentState().activeGradient = "surface";
+        syncGradientModeTabs();
+        refreshGradient();
+      });
+      iceGradientTab.addEventListener("click", () => {
+        currentState().activeGradient = "ice";
+        syncGradientModeTabs();
+        refreshGradient();
+      });
+      cloudGradientTab.addEventListener("click", () => {
+        currentState().activeGradient = "clouds";
+        syncGradientModeTabs();
+        syncLabels();
+        refreshGradient();
+      });
+
       document.getElementById("download").addEventListener("click", () => {
         const link = document.createElement("a");
         link.download = "noise-" + (seedInput.value || "seed") + "-" + noiseW + "x" + noiseH + ".png";
@@ -1054,14 +1962,7 @@
       });
 
       // --- Init -----------------------------------------------------------
-      syncLabels();
-      renderPaletteSelect();
-      renderGradientStops();
-      updateGradientPreview();
-      computeNoise();
-      computeStretchedNoise();
-      buildLUT();
-      renderCanvas();
+      applyMode("gas");
     </script>
   </body>
 </html>

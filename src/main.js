@@ -23,6 +23,7 @@ import {
 } from "./graph/generate.js";
 import { createPlanetNameService } from "./planet/names.js";
 import { GAS_GIANT_WINDOW_TEXTURE_HEIGHT, createGasGiantTexture } from "./planet/gasGiantTexture.js";
+import { createPlanetTexture } from "./planet/planetTexture.js";
 import { createPlanetRotationState, getPlanetRotationPhase } from "./planet/rotation.js";
 import { createPlanetScreenController } from "./screens/planetScreen.js";
 import { createSystemScreenController } from "./screens/systemScreen.js";
@@ -2219,6 +2220,10 @@ function renderStarSystem(node) {
     const starDirX = (starX - planetX) / toStarLength;
     const starDirY = (centerY - planetY) / toStarLength;
     const planetName = planetNameAssignments.get(node.id)?.[index] ?? planetNameService.createDefaultPlanetName(node.name, index);
+    const planetTextureSeed = `${SEED}:planet-texture:${node.id}:${planetName}`;
+    const planetTexture = planetKind.label === "PLANET"
+      ? createPlanetTexture(planetTextureSeed)
+      : null;
     const planetGravity = createGravityValue({
       kind: planetKind.label,
       sizeIndex: planetSizeIndex,
@@ -2246,6 +2251,7 @@ function renderStarSystem(node) {
     planet.append(createPlanetSurface(
       planetKind.background,
       gasGiantTexture,
+      planetTexture,
       planetRadius,
       starDirX,
       starDirY,
@@ -2289,6 +2295,8 @@ function renderStarSystem(node) {
       background: planetKind.background,
       gasGiantTexture,
       gasGiantTextureSeed,
+      planetTexture,
+      planetTextureSeed,
       sizeIndex: planetSizeIndex,
       element: planet,
       radius: planetRadius,
@@ -2690,6 +2698,7 @@ function renderPlanetStage(planet) {
   planetElement.append(createPlanetSurface(
     planet.background,
     displayGasGiantTexture,
+    null,
     displayPlanetRadius,
     planet.starDirX,
     planet.starDirY,
@@ -3299,7 +3308,11 @@ function updateSystemPlanetRotationLayers(deltaSeconds, now) {
     }
 
     const tileWidth = layer.gasGiantTileWidth || 1;
-    const phase = getSystemPlanetRotationDisplayPhase(layer.planetRotation, now * 0.001);
+    const phase = getSystemTextureDriftPhase(
+      layer.planetRotation,
+      now * 0.001,
+      layer.textureSpeedMultiplier || 1,
+    );
     const angle = layer.gasGiantAngle || 0;
     layer.style.backgroundPosition = `${(-phase * tileWidth).toFixed(2)}px center`;
     layer.style.transform = `translate3d(-50%, -50%, 0) rotate(${angle}rad)`;
@@ -3324,6 +3337,17 @@ function getSystemPlanetRotationDisplayPhase(rotation, elapsedSeconds) {
   return getPlanetRotationPhase({
     ...rotation,
     turnsPerSecond: rotation.turnsPerSecond * SYSTEM_PLANET_ROTATION_DISPLAY_SCALE,
+  }, elapsedSeconds);
+}
+
+function getSystemTextureDriftPhase(rotation, elapsedSeconds, speedMultiplier = 1) {
+  if (!rotation || rotation.turnsPerSecond === 0) {
+    return rotation?.initialOffset ?? 0;
+  }
+
+  return getPlanetRotationPhase({
+    ...rotation,
+    turnsPerSecond: rotation.turnsPerSecond * SYSTEM_PLANET_ROTATION_DISPLAY_SCALE * speedMultiplier,
   }, elapsedSeconds);
 }
 
@@ -3621,9 +3645,82 @@ function applyGasGiantTexture(element, texture, displayRadius, isStatic = false,
   element.append(highlight);
 }
 
+const PLANET_CLOUD_SYSTEM_SPEED_MULTIPLIER = 1.15;
+
+function applyPlanetTexture(element, texture, displayRadius, isStatic = false, starDirX = -1, starDirY = 0, rotation = null) {
+  element.style.background = "transparent";
+  const angle = Math.atan2(starDirY, starDirX);
+  const tileWidth = displayRadius * 4;
+  const tileHeight = displayRadius * 2;
+
+  element.append(createPlanetTextureLayer({
+    className: "planet-texture",
+    textureUrl: texture.url,
+    tileWidth,
+    tileHeight,
+    angle,
+    isStatic,
+    rotation,
+    speedMultiplier: 1,
+  }));
+
+  if (texture.cloudUrl) {
+    element.append(createPlanetTextureLayer({
+      className: "planet-texture planet-texture--cloud",
+      textureUrl: texture.cloudUrl,
+      tileWidth,
+      tileHeight,
+      angle,
+      isStatic,
+      rotation,
+      speedMultiplier: PLANET_CLOUD_SYSTEM_SPEED_MULTIPLIER,
+    }));
+  }
+
+  const highlight = document.createElement("span");
+  highlight.className = "planet-texture-highlight";
+  element.append(highlight);
+}
+
+function createPlanetTextureLayer({
+  className,
+  textureUrl,
+  tileWidth,
+  tileHeight,
+  angle,
+  isStatic,
+  rotation,
+  speedMultiplier,
+}) {
+  const textureLayer = document.createElement("span");
+  textureLayer.className = className;
+  const driftLayer = document.createElement("span");
+  driftLayer.className = "planet-texture__drift";
+  driftLayer.style.setProperty("--gas-giant-texture", textureUrl);
+  driftLayer.style.setProperty("--gas-giant-tile-width", `${tileWidth}px`);
+  driftLayer.style.setProperty("--gas-giant-tile-height", `${tileHeight}px`);
+  driftLayer.style.setProperty("--gas-giant-angle", `${angle}rad`);
+  driftLayer.dataset.staticTexture = isStatic ? "true" : "false";
+  driftLayer.gasGiantTileWidth = tileWidth;
+  driftLayer.gasGiantAngle = angle;
+  driftLayer.planetRotation = rotation;
+  driftLayer.textureSpeedMultiplier = speedMultiplier;
+  const phase = getSystemTextureDriftPhase(rotation, performance.now() * 0.001, speedMultiplier);
+  driftLayer.style.backgroundPosition = `${(-phase * tileWidth).toFixed(2)}px center`;
+  if (isStatic || rotation?.turnsPerSecond === 0) {
+    driftLayer.classList.add("planet-texture__drift--static");
+    driftLayer.style.transform = `translate3d(-50%, -50%, 0) rotate(${angle}rad)`;
+  } else {
+    gasGiantTextureLayers.add(driftLayer);
+  }
+  textureLayer.append(driftLayer);
+  return textureLayer;
+}
+
 function createPlanetSurface(
   background,
   gasGiantTexture,
+  planetTexture,
   radius,
   starDirX,
   starDirY,
@@ -3635,6 +3732,8 @@ function createPlanetSurface(
   surface.className = isWindow ? "planet-window__surface" : "system-planet__surface";
   if (gasGiantTexture) {
     applyGasGiantTexture(surface, gasGiantTexture, radius, isTextureStatic, starDirX, starDirY, options.rotation);
+  } else if (planetTexture) {
+    applyPlanetTexture(surface, planetTexture, radius, isTextureStatic, starDirX, starDirY, options.rotation);
   } else {
     surface.append(createPlanetSurfaceFill(background, options.rotation));
   }

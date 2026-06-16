@@ -727,20 +727,24 @@ body.system-open .music-player {
 }
 
 .gas-giant-texture,
-.gas-giant-highlight {
+.gas-giant-highlight,
+.planet-texture,
+.planet-texture-highlight {
   position: absolute;
   display: block;
   pointer-events: none;
 }
 
-.gas-giant-texture {
+.gas-giant-texture,
+.planet-texture {
   inset: 0;
   z-index: 0;
   border-radius: 50%;
   overflow: hidden;
 }
 
-.gas-giant-texture__drift {
+.gas-giant-texture__drift,
+.planet-texture__drift {
   position: absolute;
   left: 50%;
   top: 50%;
@@ -756,13 +760,19 @@ body.system-open .music-player {
   will-change: transform;
 }
 
-.gas-giant-texture__drift--static {
+.planet-texture--cloud {
+  z-index: 1;
+}
+
+.gas-giant-texture__drift--static,
+.planet-texture__drift--static {
   will-change: auto;
 }
 
-.gas-giant-highlight {
+.gas-giant-highlight,
+.planet-texture-highlight {
   inset: 0;
-  z-index: 1;
+  z-index: 2;
   border-radius: 0;
   background-image:
     radial-gradient(circle at 38% 34%, rgba(255, 255, 255, 0.28), transparent 0 34%, rgba(255, 255, 255, 0.08) 52%, transparent 72%);

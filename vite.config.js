@@ -6,12 +6,24 @@ import { defineConfig } from "vite";
 
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const gasPalettesPath = path.join(rootDir, "src", "gasGiantPalettes.js");
+const planetPalettesPath = path.join(rootDir, "src", "planetPalettes.js");
 
-function gasGiantPaletteWriter() {
+function paletteWriter() {
+  const routes = new Map([
+    ["/api/gas-giant-palettes", { path: gasPalettesPath, exportName: "GAS_GIANT_PALETTES" }],
+    ["/api/planet-palettes", { path: planetPalettesPath, exportName: "PLANET_PALETTES" }],
+  ]);
+
   return {
-    name: "gas-giant-palette-writer",
+    name: "palette-writer",
     configureServer(server) {
-      server.middlewares.use("/api/gas-giant-palettes", async (request, response, next) => {
+      server.middlewares.use(async (request, response, next) => {
+        const route = routes.get(request.url);
+        if (!route) {
+          next();
+          return;
+        }
+
         if (request.method !== "POST") {
           next();
           return;
@@ -32,9 +44,8 @@ function gasGiantPaletteWriter() {
             throw new Error("Palette payload must be an array.");
           }
 
-          const file =
-            `export const GAS_GIANT_PALETTES = ${JSON.stringify(palettes, null, 2)};\n`;
-          await fs.writeFile(gasPalettesPath, file, "utf8");
+          const file = `export const ${route.exportName} = ${JSON.stringify(palettes, null, 2)};\n`;
+          await fs.writeFile(route.path, file, "utf8");
           response.setHeader("content-type", "application/json");
           response.end(JSON.stringify({ ok: true }));
         } catch (error) {
@@ -66,7 +77,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     plugins: [
-      gasGiantPaletteWriter(),
+      paletteWriter(),
       shouldAnalyze &&
         visualizer({
           filename: "dist/bundle-analysis.html",
