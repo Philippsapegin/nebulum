@@ -35,6 +35,8 @@ import { createRandom } from "./utils/random.js";
 
 const params = new URLSearchParams(window.location.search);
 const SEED = params.get("seed") || "nebulum";
+const PLANET_WATER_TAG_CHANCE = 0.5;
+const ATMOSPHERE_TAGS = ["THIN ATMOSPHERE", "ATMOSPHERE", "DENSE ATMOSPHERE"];
 const glowTexture = createNodeGlowTexture();
 const linkPulseTexture = createLinkPulseTexture();
 const blackHoleDiskTexture = createBlackHoleDiskTexture();
@@ -1649,18 +1651,10 @@ function scheduleSystemTooltipTypewriter(body, immediate = false) {
       lines.push(`${planets} ${planets === 1 ? "PLANET" : "PLANETS"}`);
     }
   } else {
-    if (body.dataset.hasDisk === "true") {
-      lines.push("ACCRETION DISK");
-    }
-
-    const moonCount = Number(body.dataset.moons);
-    if (moonCount > 0) {
-      lines.push(`${moonCount} ${moonCount === 1 ? "MOON" : "MOONS"}`);
-    }
-
-    if (body.dataset.tidallyLocked === "true") {
-      lines.push("TIDALLY LOCKED");
-    }
+    const tags = body.dataset.tags
+      ? body.dataset.tags.split("|").filter(Boolean)
+      : [];
+    lines.push(...tags);
 
     if (body.dataset.gravity) {
       lines.push(`g: ${body.dataset.gravity}`);
@@ -1668,6 +1662,10 @@ function scheduleSystemTooltipTypewriter(body, immediate = false) {
 
     if (body.dataset.temperature) {
       lines.push(`t: ${body.dataset.temperature}\u00b0C`);
+    }
+
+    if (body.dataset.dayCycle) {
+      lines.push(`D: ${body.dataset.dayCycle}h`);
     }
   }
 
@@ -2220,10 +2218,6 @@ function renderStarSystem(node) {
     const starDirX = (starX - planetX) / toStarLength;
     const starDirY = (centerY - planetY) / toStarLength;
     const planetName = planetNameAssignments.get(node.id)?.[index] ?? planetNameService.createDefaultPlanetName(node.name, index);
-    const planetTextureSeed = `${SEED}:planet-texture:${node.id}:${planetName}`;
-    const planetTexture = planetKind.label === "PLANET"
-      ? createPlanetTexture(planetTextureSeed)
-      : null;
     const planetGravity = createGravityValue({
       kind: planetKind.label,
       sizeIndex: planetSizeIndex,
@@ -2234,11 +2228,35 @@ function renderStarSystem(node) {
       orbitFraction,
       seed: `${SEED}:temperature:${node.id}`,
     });
+    const planetSurfaceTags = planetKind.label === "PLANET"
+      ? createPlanetSurfaceTags({
+        seed: `${SEED}:planet-tags:${node.id}:${planetName}`,
+        temperature: planetTemperature,
+      })
+      : { tags: [], hasWater: false, atmosphere: null };
+    const planetTextureParams = planetKind.label === "PLANET"
+      ? createPlanetTextureParams({
+        seed: `${SEED}:planet-texture-params:${node.id}:${planetName}`,
+        temperature: planetTemperature,
+        hasWater: planetSurfaceTags.hasWater,
+        atmosphere: planetSurfaceTags.atmosphere,
+      })
+      : null;
+    const planetTextureSeed = `${SEED}:planet-texture:${node.id}:${planetName}`;
+    const planetTexture = planetKind.label === "PLANET"
+      ? createPlanetTexture(planetTextureSeed, undefined, planetTextureParams)
+      : null;
     const planetRotation = createPlanetRotationState({
       seed: SEED,
       systemId: node.id,
       planetName,
       tidallyLocked: Boolean(isTidallyLocked),
+    });
+    const planetUnlockedRotation = createPlanetRotationState({
+      seed: SEED,
+      systemId: node.id,
+      planetName,
+      tidallyLocked: false,
     });
 
     const planet = document.createElement("div");
@@ -2259,6 +2277,7 @@ function renderStarSystem(node) {
       Boolean(isTidallyLocked),
       {
         rotation: planetRotation,
+        cloudRotation: planetUnlockedRotation,
       },
     ));
     starSystem.append(planet);
@@ -2289,12 +2308,14 @@ function renderStarSystem(node) {
     hitTarget.dataset.tidallyLocked = isTidallyLocked ? "true" : "false";
     hitTarget.dataset.gravity = formatGravityValue(planetGravity);
     hitTarget.dataset.temperature = formatTemperatureValue(planetTemperature);
+    hitTarget.dataset.dayCycle = formatDayCycleValue(planetRotation.period);
+    hitTarget.dataset.tags = planetSurfaceTags.tags.join("|");
     const planetInfo = {
       name: planetName,
       kind: planetKind.label,
       background: planetKind.background,
       gasGiantTexture,
-      gasGiantTextureSeed,
+      gasGiantTextureSeed: gasGiantTexture ? gasGiantTextureSeed : null,
       planetTexture,
       planetTextureSeed,
       sizeIndex: planetSizeIndex,
@@ -2310,6 +2331,8 @@ function renderStarSystem(node) {
       systemId: node.id,
       gravity: planetGravity,
       temperature: planetTemperature,
+      tags: planetSurfaceTags.tags,
+      surfaceTextureParams: planetTextureParams,
       // Window scale excludes the accretion disk so a planet with a large disk
       // is not shrunk; the disk is allowed to overflow the stage instead.
       extentRadius: accretionDisk
@@ -2486,6 +2509,77 @@ function getGravityMaxShift(kind, sizeIndex) {
 
 function formatGravityValue(gravity) {
   return gravity.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function formatDayCycleValue(period) {
+  if (!Number.isFinite(period)) {
+    return "\u221e";
+  }
+
+  return period.toFixed(1).replace(/\.0$/, "");
+}
+
+function createPlanetSurfaceTags({ seed, temperature }) {
+  const random = createRandom(seed);
+  const atmosphereRoll = random();
+  const atmosphere = atmosphereRoll < 0.4
+    ? null
+    : ATMOSPHERE_TAGS[Math.min(ATMOSPHERE_TAGS.length - 1, Math.floor((atmosphereRoll - 0.4) / 0.2))];
+  const hasWater = temperature <= 100 && random() < PLANET_WATER_TAG_CHANCE;
+  const tags = [];
+  if (hasWater) {
+    tags.push("WATER");
+  }
+  if (atmosphere) {
+    tags.push(atmosphere);
+  }
+
+  return { tags, hasWater, atmosphere };
+}
+
+function createPlanetTextureParams({ seed, temperature, hasWater, atmosphere }) {
+  const waterRandom = createRandom(`${seed}:water`);
+  const atmosphereRandom = createRandom(`${seed}:atmosphere`);
+  const hotAndDry = temperature > 100;
+  const waterPosition = hasWater && !hotAndDry
+    ? 0.3 + waterRandom() * 0.4
+    : 0;
+  const iceCaps = hasWater && !hotAndDry
+    ? createTemperatureIceCaps(temperature)
+    : 0;
+  const cloudAlpha = createAtmosphereCloudAlpha(atmosphere, atmosphereRandom);
+
+  return {
+    waterPosition,
+    iceCaps,
+    cloudAlpha,
+  };
+}
+
+function createTemperatureIceCaps(temperature) {
+  if (temperature > 100) {
+    return 0;
+  }
+
+  if (temperature >= 0) {
+    return THREE.MathUtils.lerp(5, 1, temperature / 100);
+  }
+
+  return THREE.MathUtils.lerp(5, 55, THREE.MathUtils.clamp(-temperature / 100, 0, 1));
+}
+
+function createAtmosphereCloudAlpha(atmosphere, random) {
+  if (atmosphere === "THIN ATMOSPHERE") {
+    return 0.5 + random() * 0.05;
+  }
+  if (atmosphere === "ATMOSPHERE") {
+    return 0.4 + random() * 0.1;
+  }
+  if (atmosphere === "DENSE ATMOSPHERE") {
+    return 0.25 + random() * 0.15;
+  }
+
+  return null;
 }
 
 function createBaseTemperatureValue({ starType, orbitFraction, seed }) {
@@ -3647,7 +3741,16 @@ function applyGasGiantTexture(element, texture, displayRadius, isStatic = false,
 
 const PLANET_CLOUD_SYSTEM_SPEED_MULTIPLIER = 1.15;
 
-function applyPlanetTexture(element, texture, displayRadius, isStatic = false, starDirX = -1, starDirY = 0, rotation = null) {
+function applyPlanetTexture(
+  element,
+  texture,
+  displayRadius,
+  isStatic = false,
+  starDirX = -1,
+  starDirY = 0,
+  rotation = null,
+  cloudRotation = rotation,
+) {
   element.style.background = "transparent";
   const angle = Math.atan2(starDirY, starDirX);
   const tileWidth = displayRadius * 4;
@@ -3658,10 +3761,10 @@ function applyPlanetTexture(element, texture, displayRadius, isStatic = false, s
     textureUrl: texture.url,
     tileWidth,
     tileHeight,
-    angle,
-    isStatic,
-    rotation,
-    speedMultiplier: 1,
+      angle,
+      isStatic,
+      rotation,
+      speedMultiplier: 1,
   }));
 
   if (texture.cloudUrl) {
@@ -3671,8 +3774,8 @@ function applyPlanetTexture(element, texture, displayRadius, isStatic = false, s
       tileWidth,
       tileHeight,
       angle,
-      isStatic,
-      rotation,
+      isStatic: false,
+      rotation: cloudRotation,
       speedMultiplier: PLANET_CLOUD_SYSTEM_SPEED_MULTIPLIER,
     }));
   }
@@ -3733,7 +3836,7 @@ function createPlanetSurface(
   if (gasGiantTexture) {
     applyGasGiantTexture(surface, gasGiantTexture, radius, isTextureStatic, starDirX, starDirY, options.rotation);
   } else if (planetTexture) {
-    applyPlanetTexture(surface, planetTexture, radius, isTextureStatic, starDirX, starDirY, options.rotation);
+    applyPlanetTexture(surface, planetTexture, radius, isTextureStatic, starDirX, starDirY, options.rotation, options.cloudRotation);
   } else {
     surface.append(createPlanetSurfaceFill(background, options.rotation));
   }

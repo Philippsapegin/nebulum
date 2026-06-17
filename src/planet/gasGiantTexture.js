@@ -40,9 +40,15 @@ export function createGasGiantTexture(seed, textureHeight = GAS_GIANT_SYSTEM_TEX
   }
   context.putImageData(image, 0, 0);
 
+  const cloudCanvas = document.createElement("canvas");
+  cloudCanvas.width = width;
+  cloudCanvas.height = height;
+  renderGasGiantCloudCanvas(cloudCanvas, field, colors);
+
   const texture = {
     url: `url(${canvas.toDataURL("image/png")})`,
     canvas,
+    cloudCanvas,
     width,
     height,
     edgeColor: rgbToHex(samplePaletteStops(
@@ -52,6 +58,46 @@ export function createGasGiantTexture(seed, textureHeight = GAS_GIANT_SYSTEM_TEX
   };
   gasGiantTextureCache.set(cacheKey, texture);
   return texture;
+}
+
+function renderGasGiantCloudCanvas(canvas, field, colors) {
+  const context = canvas.getContext("2d");
+  const image = context.createImageData(canvas.width, canvas.height);
+  const alphaRange = getGasGiantCloudAlphaRange(colors);
+
+  for (let index = 0; index < field.length; index += 1) {
+    const value = field[index];
+    const color = samplePaletteStops(colors, value);
+    const alpha = getGasGiantCloudAlpha(value, alphaRange);
+    const offset = index * 4;
+    image.data[offset] = color[0];
+    image.data[offset + 1] = color[1];
+    image.data[offset + 2] = color[2];
+    image.data[offset + 3] = Math.round(alpha * 255);
+  }
+
+  context.putImageData(image, 0, 0);
+}
+
+function getGasGiantCloudAlphaRange(colors) {
+  if (colors.length < 4) {
+    return { start: 0.25, end: 0.75, feather: 0.08 };
+  }
+
+  const firstBoundary = (colors[0].pos + colors[1].pos) * 0.5;
+  const lastOpaqueIndex = Math.max(1, colors.length - 3);
+  const lastBoundary = (colors[lastOpaqueIndex].pos + colors[lastOpaqueIndex + 1].pos) * 0.5;
+  return {
+    start: firstBoundary,
+    end: Math.max(firstBoundary, lastBoundary),
+    feather: Math.max(0.025, (lastBoundary - firstBoundary) * 0.18),
+  };
+}
+
+function getGasGiantCloudAlpha(value, { start, end, feather }) {
+  const fadeIn = smoothstep(start - feather, start + feather, value);
+  const fadeOut = 1 - smoothstep(end - feather, end + feather, value);
+  return THREE.MathUtils.clamp(fadeIn * fadeOut * 0.72, 0, 1);
 }
 
 function createGasGiantNoiseField({ width, height, scale, stretch, random, octaves = GAS_GIANT_OCTAVES }) {
@@ -105,6 +151,11 @@ function sampleTileableValueNoise(u, v, freqX, freqY, seed) {
 
 function smoothNoiseStep(value) {
   return value * value * (3 - 2 * value);
+}
+
+function smoothstep(edge0, edge1, value) {
+  const t = THREE.MathUtils.clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
 }
 
 function gasGiantCornerHash(seed, x, y) {

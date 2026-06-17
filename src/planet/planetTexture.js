@@ -4,28 +4,35 @@ import { hexToRgb, hslToRgb, rgbToHex, rgbToHsl } from "../utils/color.js";
 import { createRandom } from "../utils/random.js";
 
 export const PLANET_SYSTEM_TEXTURE_HEIGHT = 32;
+export const PLANET_WINDOW_TEXTURE_HEIGHT = 1024;
 const PLANET_TEXTURE_ASPECT = 2;
 const PLANET_SURFACE_OCTAVES = 9;
 const PLANET_CLOUD_OCTAVES = 7;
 const PLANET_PERSISTENCE = 0.5;
-const PLANET_DEFAULT_ICE_CAPS = 1;
 const PLANET_CLOUD_ALPHA_SPAN = 0.28;
 const planetTextureCache = new Map();
 
-export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_HEIGHT) {
-  const cacheKey = `${seed}:${textureHeight}`;
+export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_HEIGHT, options = {}) {
+  const waterPosition = THREE.MathUtils.clamp(options.waterPosition ?? 0, 0, 1);
+  const iceCaps = THREE.MathUtils.clamp(options.iceCaps ?? 0, 0, 55);
+  const cloudAlpha = Number.isFinite(options.cloudAlpha)
+    ? THREE.MathUtils.clamp(options.cloudAlpha, 0, 1)
+    : null;
+  const createUrls = options.createUrls ?? true;
+  const cacheKey = `${seed}:${textureHeight}:${waterPosition.toFixed(4)}:${iceCaps.toFixed(2)}:${cloudAlpha ?? "no-clouds"}:${createUrls ? "urls" : "canvas"}`;
   if (planetTextureCache.has(cacheKey)) {
     return planetTextureCache.get(cacheKey);
   }
 
   const random = createRandom(seed);
-  const palette = PLANET_PALETTES[Math.floor(random() * PLANET_PALETTES.length)] ?? PLANET_PALETTES[0];
+  const palette = selectPlanetPalette(random, waterPosition > 0);
   const width = textureHeight * PLANET_TEXTURE_ASPECT;
   const height = textureHeight;
-  const waterPosition = 0.3 + random() * 0.3;
   const surfaceStops = createShiftedStops(normalizePlanetWaterStops(palette.stops, waterPosition), random);
   const iceStops = createShiftedStops(normalizePlanetWaterStops(palette.iceStops ?? palette.stops, waterPosition), random);
-  const cloudStops = createShiftedStops(normalizeCloudStops(palette.cloudStops ?? createDefaultCloudStops()), random);
+  const cloudStops = cloudAlpha === null
+    ? null
+    : createShiftedStops(normalizeCloudStops(palette.cloudStops ?? createDefaultCloudStops(), cloudAlpha), random);
   const field = createSurfaceNoiseField({
     width,
     height,
@@ -38,22 +45,36 @@ export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_
   surfaceCanvas.height = height;
   renderSurfaceCanvas(surfaceCanvas, field, surfaceStops, iceStops, {
     seed: `${seed}:ice`,
-    iceCaps: PLANET_DEFAULT_ICE_CAPS,
+    iceCaps,
   });
 
-  const cloudCanvas = document.createElement("canvas");
-  cloudCanvas.width = width;
-  cloudCanvas.height = height;
-  renderCloudCanvas(cloudCanvas, {
-    seed: `${seed}:clouds`,
-    stops: cloudStops,
-  });
+  const cloudCanvas = cloudStops ? document.createElement("canvas") : null;
+  if (cloudCanvas) {
+    cloudCanvas.width = width;
+    cloudCanvas.height = height;
+    renderCloudCanvas(cloudCanvas, {
+      seed: `${seed}:clouds`,
+      stops: cloudStops,
+    });
+  }
+
+  const specularCanvas = document.createElement("canvas");
+  specularCanvas.width = width;
+  specularCanvas.height = height;
+  renderSpecularCanvas(specularCanvas, field, waterPosition);
+
+  const bumpCanvas = document.createElement("canvas");
+  bumpCanvas.width = width;
+  bumpCanvas.height = height;
+  renderBumpCanvas(bumpCanvas, field, waterPosition);
 
   const texture = {
-    url: `url(${surfaceCanvas.toDataURL("image/png")})`,
-    cloudUrl: `url(${cloudCanvas.toDataURL("image/png")})`,
+    url: createUrls ? `url(${surfaceCanvas.toDataURL("image/png")})` : null,
+    cloudUrl: createUrls && cloudCanvas ? `url(${cloudCanvas.toDataURL("image/png")})` : null,
     canvas: surfaceCanvas,
     cloudCanvas,
+    specularCanvas,
+    bumpCanvas,
     width,
     height,
     edgeColor: rgbToHex(samplePaletteStops(
@@ -63,6 +84,81 @@ export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_
   };
   planetTextureCache.set(cacheKey, texture);
   return texture;
+}
+
+function selectPlanetPalette(random, hasWater) {
+  const matchingPalettes = PLANET_PALETTES.filter((palette) => {
+    const isBarrenPalette = palette.name?.startsWith("B.");
+    return hasWater ? !isBarrenPalette : isBarrenPalette;
+  });
+  const palettes = matchingPalettes.length ? matchingPalettes : PLANET_PALETTES;
+  return palettes[Math.floor(random() * palettes.length)] ?? PLANET_PALETTES[0];
+}
+
+function renderSpecularCanvas(canvas, field, waterPosition) {
+  const context = canvas.getContext("2d");
+  const sourceCanvas = document.createElement("canvas");
+  sourceCanvas.width = canvas.width;
+  sourceCanvas.height = canvas.height;
+  const sourceContext = sourceCanvas.getContext("2d");
+  const image = sourceContext.createImageData(canvas.width, canvas.height);
+  const specularWaterPosition = THREE.MathUtils.clamp(waterPosition + 0.01, 0, 1);
+  for (let index = 0; index < field.length; index += 1) {
+    const value = field[index] <= specularWaterPosition && waterPosition > 0 ? 255 : 0;
+    const offset = index * 4;
+    image.data[offset] = value;
+    image.data[offset + 1] = value;
+    image.data[offset + 2] = value;
+    image.data[offset + 3] = 255;
+  }
+  sourceContext.putImageData(image, 0, 0);
+
+  const blurCanvas = document.createElement("canvas");
+  blurCanvas.width = canvas.width * 3;
+  blurCanvas.height = canvas.height;
+  const blurContext = blurCanvas.getContext("2d");
+  blurContext.drawImage(sourceCanvas, 0, 0);
+  blurContext.drawImage(sourceCanvas, canvas.width, 0);
+  blurContext.drawImage(sourceCanvas, canvas.width * 2, 0);
+  const filteredCanvas = document.createElement("canvas");
+  filteredCanvas.width = blurCanvas.width;
+  filteredCanvas.height = blurCanvas.height;
+  const filteredContext = filteredCanvas.getContext("2d");
+  filteredContext.filter = "blur(2px)";
+  filteredContext.drawImage(blurCanvas, 0, 0);
+  filteredContext.filter = "none";
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(
+    filteredCanvas,
+    canvas.width,
+    0,
+    canvas.width,
+    canvas.height,
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  );
+  context.filter = "none";
+}
+
+function renderBumpCanvas(canvas, field, waterPosition) {
+  const context = canvas.getContext("2d");
+  const image = context.createImageData(canvas.width, canvas.height);
+  const landSpan = Math.max(0.0001, 1 - waterPosition);
+  const waterValue = 42;
+  for (let index = 0; index < field.length; index += 1) {
+    const noise = field[index];
+    const value = noise <= waterPosition
+      ? waterValue
+      : Math.round(waterValue + ((noise - waterPosition) / landSpan) * (255 - waterValue));
+    const offset = index * 4;
+    image.data[offset] = value;
+    image.data[offset + 1] = value;
+    image.data[offset + 2] = value;
+    image.data[offset + 3] = 255;
+  }
+  context.putImageData(image, 0, 0);
 }
 
 function createSurfaceNoiseField({ width, height, scale, octaves, seed }) {
@@ -115,7 +211,7 @@ function renderSurfaceCanvas(canvas, field, surfaceStops, iceStops, iceConfig) {
   context.putImageData(image, 0, 0);
 }
 
-function renderCloudCanvas(canvas, { seed, stops }) {
+function renderCloudCanvas(canvas, { seed, stops, octaves = PLANET_CLOUD_OCTAVES }) {
   const width = canvas.width;
   const height = canvas.height;
   const context = canvas.getContext("2d");
@@ -127,7 +223,7 @@ function renderCloudCanvas(canvas, { seed, stops }) {
     const v = y / height;
     for (let x = 0; x < width; x += 1) {
       const u = x / width;
-      const cloud = createCloudNoise(u, v, seed, scale);
+      const cloud = createCloudNoise(u, v, seed, scale, octaves);
       const alpha = smoothstep(alphaCutoff, Math.min(1, alphaCutoff + PLANET_CLOUD_ALPHA_SPAN), cloud);
       const color = samplePaletteStops(stops.slice(1), cloud);
       const offset = (y * width + x) * 4;
@@ -145,7 +241,7 @@ function createSeededCloudScale(seed) {
   return 14 + Math.floor(createRandom(`${seed}:scale`)() * 9);
 }
 
-function createCloudNoise(u, v, seed, baseFreq) {
+function createCloudNoise(u, v, seed, baseFreq, octaveCount = PLANET_CLOUD_OCTAVES) {
   const macroFreqX = Math.max(1, Math.round(baseFreq * 0.45));
   const macroFreqY = Math.max(1, Math.round(baseFreq * 0.24));
   const warpA = sampleTileableValueNoise(u, v, macroFreqX, macroFreqY, hashString(`${seed}:warp-a`)) - 0.5;
@@ -158,7 +254,7 @@ function createCloudNoise(u, v, seed, baseFreq) {
   let sum = 0;
   let amp = 1;
   let ampSum = 0;
-  for (let octave = 0; octave < PLANET_CLOUD_OCTAVES; octave += 1) {
+  for (let octave = 0; octave < octaveCount; octave += 1) {
     const freqX = Math.max(1, Math.round(baseFreq * 2 ** octave));
     const freqY = Math.max(1, Math.round(baseFreq * 0.5 * 2 ** octave));
     sum += sampleTileableValueNoise(
@@ -180,6 +276,7 @@ function createIceMaskConfig(seed, iceCaps) {
   const random = createRandom(seed);
   return {
     width: THREE.MathUtils.clamp(iceCaps / 100, 0, 0.5),
+    isFullCoverage: iceCaps >= 55,
     macroFreq: 7 + Math.floor(random() * 7),
     macroAmp: (5 + random() * 7) / 100,
     detailFreq: 50,
@@ -191,6 +288,9 @@ function createIceMaskConfig(seed, iceCaps) {
 function getIceMaskAlpha(index, width, height, config, noiseValue, waterLimit) {
   if (!config.width) {
     return 0;
+  }
+  if (config.isFullCoverage) {
+    return 1;
   }
 
   const x = index % width;
@@ -224,9 +324,8 @@ function normalizePlanetWaterStops(stops, waterPosition) {
   return normalized;
 }
 
-function normalizeCloudStops(stops) {
+function normalizeCloudStops(stops, alphaPosition) {
   const normalized = stops.map((stop) => ({ ...stop }));
-  const alphaPosition = THREE.MathUtils.clamp(normalized[0]?.pos ?? 0.48, 0.01, 0.99);
   const previousAlpha = THREE.MathUtils.clamp(normalized[0]?.pos ?? 0.48, 0.01, 0.99);
   const cloudRelative = normalized.map((stop, index) => {
     if (index === 0) return 0;

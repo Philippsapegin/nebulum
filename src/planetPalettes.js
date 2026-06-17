@@ -1354,5 +1354,1089 @@ export const PLANET_PALETTES = [
       }
     ],
     "iceCaps": 5
+  },
+  {
+    "id": "new-palette-5",
+    "name": "B.Sandblast",
+    "stops": [
+      {
+        "pos": 0.0075,
+        "color": "#071c36",
+        "label": "deep water",
+        "hueShift": [
+          -4,
+          4
+        ],
+        "brightnessShift": [
+          -2,
+          2
+        ]
+      },
+      {
+        "pos": 0.01,
+        "color": "#175a87",
+        "label": "water",
+        "hueShift": [
+          -5,
+          5
+        ],
+        "brightnessShift": [
+          -2,
+          2
+        ]
+      },
+      {
+        "pos": 0.049599999999999846,
+        "color": "#feeabe",
+        "label": "shore",
+        "hueShift": [
+          -6,
+          6
+        ],
+        "brightnessShift": [
+          -7,
+          7
+        ]
+      },
+      {
+        "pos": 0.17830000000000001,
+        "color": "#d29d41",
+        "label": "landmass",
+        "hueShift": [
+          -8,
+          8
+        ],
+        "brightnessShift": [
+          -8,
+          8
+        ]
+      },
+      {
+        "pos": 0.3763,
+        "color": "#c0a65d",
+        "label": "flora",
+        "hueShift": [
+          -8,
+          8
+        ],
+        "brightnessShift": [
+          -8,
+          8
+        ]
+      },
+      {
+        "pos": 0.5149,
+        "color": "#cfa854",
+        "label": "mountains",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -2,
+          2
+        ]
+      },
+      {
+        "pos": 0.7228,
+        "color": "#7d5217",
+        "label": "highlands",
+        "hueShift": [
+          -5,
+          5
+        ],
+        "brightnessShift": [
+          -6,
+          6
+        ]
+      },
+      {
+        "pos": 1,
+        "color": "#000000",
+        "label": "peaks",
+        "hueShift": [
+          -4,
+          4
+        ],
+        "brightnessShift": [
+          -5,
+          5
+        ]
+      }
+    ],
+    "iceStops": [
+      {
+        "pos": 0.0225,
+        "color": "#dff7ff",
+        "label": "deep water",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.03,
+        "color": "#f0fbff",
+        "label": "water",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.07850000000000013,
+        "color": "#f5f7f3",
+        "label": "shore",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.12700000000000009,
+        "color": "#d9edf5",
+        "label": "landmass",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.22400000000000014,
+        "color": "#c1e5f0",
+        "label": "flora",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.39375000000000027,
+        "color": "#9eb5c2",
+        "label": "mountains",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.5392500000000001,
+        "color": "#e5edf2",
+        "label": "highlands",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 1,
+        "color": "#ffffff",
+        "label": "peaks",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      }
+    ],
+    "cloudStops": [
+      {
+        "pos": 0.41,
+        "color": "#000000",
+        "label": "alpha",
+        "hueShift": [
+          0,
+          0
+        ],
+        "brightnessShift": [
+          0,
+          0
+        ]
+      },
+      {
+        "pos": 0.5357377049180351,
+        "color": "#cfcfba",
+        "label": "cloud low",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -5,
+          5
+        ]
+      },
+      {
+        "pos": 0.7485245901639365,
+        "color": "#fefed2",
+        "label": "cloud mid",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -4,
+          4
+        ]
+      },
+      {
+        "pos": 1,
+        "color": "#ffffff",
+        "label": "cloud high",
+        "hueShift": [
+          -1,
+          1
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      }
+    ],
+    "iceCaps": 0
+  },
+  {
+    "id": "new-palette-6",
+    "name": "B.Greywaste",
+    "stops": [
+      {
+        "pos": 0.0075,
+        "color": "#071c36",
+        "label": "deep water",
+        "hueShift": [
+          -4,
+          4
+        ],
+        "brightnessShift": [
+          -2,
+          2
+        ]
+      },
+      {
+        "pos": 0.01,
+        "color": "#175a87",
+        "label": "water",
+        "hueShift": [
+          -5,
+          5
+        ],
+        "brightnessShift": [
+          -2,
+          2
+        ]
+      },
+      {
+        "pos": 0.049599999999999846,
+        "color": "#a3a3a3",
+        "label": "shore",
+        "hueShift": [
+          -6,
+          6
+        ],
+        "brightnessShift": [
+          -7,
+          7
+        ]
+      },
+      {
+        "pos": 0.17830000000000001,
+        "color": "#5e5e5e",
+        "label": "landmass",
+        "hueShift": [
+          -8,
+          8
+        ],
+        "brightnessShift": [
+          -8,
+          8
+        ]
+      },
+      {
+        "pos": 0.3763,
+        "color": "#5e5e5e",
+        "label": "flora",
+        "hueShift": [
+          -8,
+          8
+        ],
+        "brightnessShift": [
+          -8,
+          8
+        ]
+      },
+      {
+        "pos": 0.5149,
+        "color": "#2e2e2e",
+        "label": "mountains",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -2,
+          2
+        ]
+      },
+      {
+        "pos": 0.7228,
+        "color": "#262626",
+        "label": "highlands",
+        "hueShift": [
+          -5,
+          5
+        ],
+        "brightnessShift": [
+          -6,
+          6
+        ]
+      },
+      {
+        "pos": 1,
+        "color": "#000000",
+        "label": "peaks",
+        "hueShift": [
+          -4,
+          4
+        ],
+        "brightnessShift": [
+          -5,
+          5
+        ]
+      }
+    ],
+    "iceStops": [
+      {
+        "pos": 0.0225,
+        "color": "#dff7ff",
+        "label": "deep water",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.03,
+        "color": "#f0fbff",
+        "label": "water",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.07850000000000013,
+        "color": "#f5f7f3",
+        "label": "shore",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.12700000000000009,
+        "color": "#d9edf5",
+        "label": "landmass",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.22400000000000014,
+        "color": "#c1e5f0",
+        "label": "flora",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.39375000000000027,
+        "color": "#9eb5c2",
+        "label": "mountains",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.5392500000000001,
+        "color": "#e5edf2",
+        "label": "highlands",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 1,
+        "color": "#ffffff",
+        "label": "peaks",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      }
+    ],
+    "cloudStops": [
+      {
+        "pos": 0.54,
+        "color": "#000000",
+        "label": "alpha",
+        "hueShift": [
+          0,
+          0
+        ],
+        "brightnessShift": [
+          0,
+          0
+        ]
+      },
+      {
+        "pos": 0.6380327868852478,
+        "color": "#ffffff",
+        "label": "cloud low",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -5,
+          5
+        ]
+      },
+      {
+        "pos": 0.7010000000000001,
+        "color": "#d1d1d1",
+        "label": "cloud mid",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -4,
+          4
+        ]
+      },
+      {
+        "pos": 1,
+        "color": "#ffffff",
+        "label": "cloud high",
+        "hueShift": [
+          -1,
+          1
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      }
+    ],
+    "iceCaps": 0
+  },
+  {
+    "id": "new-palette-7",
+    "name": "B.Whitehollow",
+    "stops": [
+      {
+        "pos": 0.0075,
+        "color": "#071c36",
+        "label": "deep water",
+        "hueShift": [
+          -4,
+          4
+        ],
+        "brightnessShift": [
+          -2,
+          2
+        ]
+      },
+      {
+        "pos": 0.01,
+        "color": "#175a87",
+        "label": "water",
+        "hueShift": [
+          -5,
+          5
+        ],
+        "brightnessShift": [
+          -2,
+          2
+        ]
+      },
+      {
+        "pos": 0.049599999999999846,
+        "color": "#e3e3e3",
+        "label": "shore",
+        "hueShift": [
+          -6,
+          6
+        ],
+        "brightnessShift": [
+          -7,
+          7
+        ]
+      },
+      {
+        "pos": 0.2179,
+        "color": "#dbdbdb",
+        "label": "landmass",
+        "hueShift": [
+          -8,
+          8
+        ],
+        "brightnessShift": [
+          -8,
+          8
+        ]
+      },
+      {
+        "pos": 0.3763,
+        "color": "#a9a7a7",
+        "label": "flora",
+        "hueShift": [
+          -8,
+          8
+        ],
+        "brightnessShift": [
+          -8,
+          8
+        ]
+      },
+      {
+        "pos": 0.5742999999999999,
+        "color": "#6e6e6e",
+        "label": "mountains",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -2,
+          2
+        ]
+      },
+      {
+        "pos": 0.8119000000000001,
+        "color": "#262626",
+        "label": "highlands",
+        "hueShift": [
+          -5,
+          5
+        ],
+        "brightnessShift": [
+          -6,
+          6
+        ]
+      },
+      {
+        "pos": 1,
+        "color": "#000000",
+        "label": "peaks",
+        "hueShift": [
+          -4,
+          4
+        ],
+        "brightnessShift": [
+          -5,
+          5
+        ]
+      }
+    ],
+    "iceStops": [
+      {
+        "pos": 0.0225,
+        "color": "#dff7ff",
+        "label": "deep water",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.03,
+        "color": "#f0fbff",
+        "label": "water",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.07850000000000013,
+        "color": "#f5f7f3",
+        "label": "shore",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.12700000000000009,
+        "color": "#d9edf5",
+        "label": "landmass",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.22400000000000014,
+        "color": "#c1e5f0",
+        "label": "flora",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.39375000000000027,
+        "color": "#9eb5c2",
+        "label": "mountains",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.5392500000000001,
+        "color": "#e5edf2",
+        "label": "highlands",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 1,
+        "color": "#ffffff",
+        "label": "peaks",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      }
+    ],
+    "cloudStops": [
+      {
+        "pos": 0.49,
+        "color": "#000000",
+        "label": "alpha",
+        "hueShift": [
+          0,
+          0
+        ],
+        "brightnessShift": [
+          0,
+          0
+        ]
+      },
+      {
+        "pos": 0.5986885245901659,
+        "color": "#bababa",
+        "label": "cloud low",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -5,
+          5
+        ]
+      },
+      {
+        "pos": 0.7826229508196738,
+        "color": "#ebebeb",
+        "label": "cloud mid",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -4,
+          4
+        ]
+      },
+      {
+        "pos": 1,
+        "color": "#ffffff",
+        "label": "cloud high",
+        "hueShift": [
+          -1,
+          1
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      }
+    ],
+    "iceCaps": 0
+  },
+  {
+    "id": "new-palette-8",
+    "name": "B.Mesavania",
+    "stops": [
+      {
+        "pos": 0.0075,
+        "color": "#071c36",
+        "label": "deep water",
+        "hueShift": [
+          -4,
+          4
+        ],
+        "brightnessShift": [
+          -2,
+          2
+        ]
+      },
+      {
+        "pos": 0.01,
+        "color": "#175a87",
+        "label": "water",
+        "hueShift": [
+          -5,
+          5
+        ],
+        "brightnessShift": [
+          -2,
+          2
+        ]
+      },
+      {
+        "pos": 0.049599999999999846,
+        "color": "#533c09",
+        "label": "shore",
+        "hueShift": [
+          -6,
+          6
+        ],
+        "brightnessShift": [
+          -7,
+          7
+        ]
+      },
+      {
+        "pos": 0.3763,
+        "color": "#957850",
+        "label": "landmass",
+        "hueShift": [
+          -8,
+          8
+        ],
+        "brightnessShift": [
+          -8,
+          8
+        ]
+      },
+      {
+        "pos": 0.4951,
+        "color": "#b48b31",
+        "label": "flora",
+        "hueShift": [
+          -8,
+          8
+        ],
+        "brightnessShift": [
+          -8,
+          8
+        ]
+      },
+      {
+        "pos": 0.6238,
+        "color": "#986c1f",
+        "label": "mountains",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -2,
+          2
+        ]
+      },
+      {
+        "pos": 0.7426,
+        "color": "#944a19",
+        "label": "highlands",
+        "hueShift": [
+          -5,
+          5
+        ],
+        "brightnessShift": [
+          -6,
+          6
+        ]
+      },
+      {
+        "pos": 1,
+        "color": "#d18a47",
+        "label": "peaks",
+        "hueShift": [
+          -4,
+          4
+        ],
+        "brightnessShift": [
+          -5,
+          5
+        ]
+      }
+    ],
+    "iceStops": [
+      {
+        "pos": 0.0225,
+        "color": "#dff7ff",
+        "label": "deep water",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.03,
+        "color": "#f0fbff",
+        "label": "water",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.07850000000000013,
+        "color": "#f5f7f3",
+        "label": "shore",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.12700000000000009,
+        "color": "#d9edf5",
+        "label": "landmass",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.22400000000000014,
+        "color": "#c1e5f0",
+        "label": "flora",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.39375000000000027,
+        "color": "#9eb5c2",
+        "label": "mountains",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 0.5392500000000001,
+        "color": "#e5edf2",
+        "label": "highlands",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      },
+      {
+        "pos": 1,
+        "color": "#ffffff",
+        "label": "peaks",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      }
+    ],
+    "cloudStops": [
+      {
+        "pos": 0.44,
+        "color": "#000000",
+        "label": "alpha",
+        "hueShift": [
+          0,
+          0
+        ],
+        "brightnessShift": [
+          0,
+          0
+        ]
+      },
+      {
+        "pos": 0.5593442622950842,
+        "color": "#d0af80",
+        "label": "cloud low",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -5,
+          5
+        ]
+      },
+      {
+        "pos": 0.6864,
+        "color": "#f3d1aa",
+        "label": "cloud mid",
+        "hueShift": [
+          -2,
+          2
+        ],
+        "brightnessShift": [
+          -4,
+          4
+        ]
+      },
+      {
+        "pos": 1,
+        "color": "#ffffff",
+        "label": "cloud high",
+        "hueShift": [
+          -1,
+          1
+        ],
+        "brightnessShift": [
+          -3,
+          3
+        ]
+      }
+    ],
+    "iceCaps": 0
   }
 ];
