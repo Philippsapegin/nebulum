@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { MOLTEN_PALETTES } from "../moltenPalettes.js";
 import { PLANET_PALETTES } from "../planetPalettes.js";
 import { hexToRgb, hslToRgb, rgbToHex, rgbToHsl } from "../utils/color.js";
 import { createRandom } from "../utils/random.js";
@@ -10,6 +11,13 @@ const PLANET_SURFACE_OCTAVES = 9;
 const PLANET_CLOUD_OCTAVES = 7;
 const PLANET_PERSISTENCE = 0.5;
 const PLANET_CLOUD_ALPHA_SPAN = 0.28;
+const TIDAL_ICE_SPREAD = 45;
+const TIDAL_MOLTEN_SPREAD = 45;
+const TIDAL_EDGE_MACRO_FREQ = 1;
+const TIDAL_EDGE_MACRO_AMP = 0;
+const TIDAL_EDGE_DETAIL_FREQ = 12;
+const TIDAL_EDGE_DETAIL_AMP = 0.02;
+const TIDAL_EDGE_SOFTNESS = 0.03;
 const planetTextureCache = new Map();
 
 export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_HEIGHT, options = {}) {
@@ -19,20 +27,36 @@ export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_
     ? THREE.MathUtils.clamp(options.cloudAlpha, 0, 1)
     : null;
   const createUrls = options.createUrls ?? true;
-  const cacheKey = `${seed}:${textureHeight}:${waterPosition.toFixed(4)}:${iceCaps.toFixed(2)}:${cloudAlpha ?? "no-clouds"}:${createUrls ? "urls" : "canvas"}`;
+  const textureMode = options.textureMode ?? "default";
+  const cacheKey = `${seed}:${textureHeight}:${waterPosition.toFixed(4)}:${iceCaps.toFixed(2)}:${cloudAlpha ?? "no-clouds"}:${textureMode}:${createUrls ? "urls" : "canvas"}`;
   if (planetTextureCache.has(cacheKey)) {
     return planetTextureCache.get(cacheKey);
   }
 
   const random = createRandom(seed);
-  const palette = selectPlanetPalette(random, waterPosition > 0);
+  const palette = selectPlanetPalette(random, waterPosition > 0, textureMode);
+  const moltenPalette = textureMode === "tidal-combine" || textureMode === "molten"
+    ? selectMoltenPalette(random)
+    : null;
   const width = textureHeight * PLANET_TEXTURE_ASPECT;
   const height = textureHeight;
-  const surfaceStops = createShiftedStops(normalizePlanetWaterStops(palette.stops, waterPosition), random);
-  const iceStops = createShiftedStops(normalizePlanetWaterStops(palette.iceStops ?? palette.stops, waterPosition), random);
+  const surfaceStops = createShiftedStops(
+    textureMode === "molten"
+      ? normalizeMoltenStops(moltenPalette?.stops ?? palette.stops)
+      : normalizePlanetWaterStops(palette.stops, textureMode === "tidal-combine" ? 0 : waterPosition),
+    random,
+  );
+  const iceStops = createShiftedStops(normalizePlanetWaterStops(palette.iceStops ?? palette.stops, 0), random);
+  const moltenStops = moltenPalette
+    ? createShiftedStops(normalizeMoltenStops(moltenPalette.stops), random)
+    : null;
+  const cloudPalette = textureMode === "molten" && moltenPalette ? moltenPalette : palette;
   const cloudStops = cloudAlpha === null
     ? null
-    : createShiftedStops(normalizeCloudStops(palette.cloudStops ?? createDefaultCloudStops(), cloudAlpha), random);
+    : createShiftedStops(normalizeCloudStops(cloudPalette.cloudStops ?? createDefaultCloudStops(), cloudAlpha), random);
+  const moltenCloudStops = cloudAlpha === null || !moltenPalette
+    ? null
+    : createShiftedStops(normalizeCloudStops(moltenPalette.cloudStops ?? createDefaultCloudStops(), cloudAlpha), random);
   const field = createSurfaceNoiseField({
     width,
     height,
@@ -43,10 +67,14 @@ export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_
   const surfaceCanvas = document.createElement("canvas");
   surfaceCanvas.width = width;
   surfaceCanvas.height = height;
-  renderSurfaceCanvas(surfaceCanvas, field, surfaceStops, iceStops, {
-    seed: `${seed}:ice`,
-    iceCaps,
-  });
+  if (textureMode === "tidal-combine") {
+    renderTidalSurfaceCanvas(surfaceCanvas, field, surfaceStops, iceStops, moltenStops, `${seed}:tidal`);
+  } else {
+    renderSurfaceCanvas(surfaceCanvas, field, surfaceStops, iceStops, {
+      seed: `${seed}:ice`,
+      iceCaps: textureMode === "molten" ? 0 : iceCaps,
+    });
+  }
 
   const cloudCanvas = cloudStops ? document.createElement("canvas") : null;
   if (cloudCanvas) {
@@ -68,6 +96,16 @@ export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_
   bumpCanvas.height = height;
   renderBumpCanvas(bumpCanvas, field, waterPosition);
 
+  const emissiveCanvas = moltenStops ? document.createElement("canvas") : null;
+  if (emissiveCanvas) {
+    emissiveCanvas.width = width;
+    emissiveCanvas.height = height;
+    renderEmissiveCanvas(emissiveCanvas, field, moltenStops, {
+      seed: `${seed}:emissive`,
+      textureMode,
+    });
+  }
+
   const texture = {
     url: createUrls ? `url(${surfaceCanvas.toDataURL("image/png")})` : null,
     cloudUrl: createUrls && cloudCanvas ? `url(${cloudCanvas.toDataURL("image/png")})` : null,
@@ -75,6 +113,8 @@ export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_
     cloudCanvas,
     specularCanvas,
     bumpCanvas,
+    emissiveCanvas,
+    textureMode,
     width,
     height,
     edgeColor: rgbToHex(samplePaletteStops(
@@ -86,13 +126,20 @@ export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_
   return texture;
 }
 
-function selectPlanetPalette(random, hasWater) {
+function selectPlanetPalette(random, hasWater, textureMode = "default") {
   const matchingPalettes = PLANET_PALETTES.filter((palette) => {
     const isBarrenPalette = palette.name?.startsWith("B.");
+    if (textureMode === "tidal-combine") {
+      return isBarrenPalette;
+    }
     return hasWater ? !isBarrenPalette : isBarrenPalette;
   });
   const palettes = matchingPalettes.length ? matchingPalettes : PLANET_PALETTES;
   return palettes[Math.floor(random() * palettes.length)] ?? PLANET_PALETTES[0];
+}
+
+function selectMoltenPalette(random) {
+  return MOLTEN_PALETTES[Math.floor(random() * MOLTEN_PALETTES.length)] ?? MOLTEN_PALETTES[0];
 }
 
 function renderSpecularCanvas(canvas, field, waterPosition) {
@@ -161,6 +208,40 @@ function renderBumpCanvas(canvas, field, waterPosition) {
   context.putImageData(image, 0, 0);
 }
 
+function renderEmissiveCanvas(canvas, field, moltenStops, { seed, textureMode }) {
+  const context = canvas.getContext("2d");
+  const image = context.createImageData(canvas.width, canvas.height);
+  for (let index = 0; index < field.length; index += 1) {
+    const value = THREE.MathUtils.clamp(field[index], 0, 1);
+    const x = index % canvas.width;
+    const y = Math.floor(index / canvas.width);
+    const u = x / canvas.width;
+    const v = y / canvas.height;
+    const stopInfo = samplePaletteStopInfo(moltenStops, value);
+    const strength = getMoltenEmissiveStrength(stopInfo.label);
+    const tidalMask = textureMode === "tidal-combine"
+      ? getTidalEdgeMask(u, v, TIDAL_MOLTEN_SPREAD, `${seed}:molten`)
+      : 1;
+    const intensity = strength * tidalMask;
+    const offset = index * 4;
+    image.data[offset] = stopInfo.rgb[0] * intensity;
+    image.data[offset + 1] = stopInfo.rgb[1] * intensity;
+    image.data[offset + 2] = stopInfo.rgb[2] * intensity;
+    image.data[offset + 3] = 255;
+  }
+  context.putImageData(image, 0, 0);
+}
+
+function getMoltenEmissiveStrength(label) {
+  if (label === "deep lava") {
+    return 1;
+  }
+  if (label === "lava") {
+    return 0.74;
+  }
+  return 0;
+}
+
 function createSurfaceNoiseField({ width, height, scale, octaves, seed }) {
   const random = createRandom(seed);
   const octaveSeeds = Array.from({ length: octaves }, () => Math.floor(random() * 0xffffffff));
@@ -211,7 +292,39 @@ function renderSurfaceCanvas(canvas, field, surfaceStops, iceStops, iceConfig) {
   context.putImageData(image, 0, 0);
 }
 
-function renderCloudCanvas(canvas, { seed, stops, octaves = PLANET_CLOUD_OCTAVES }) {
+function renderTidalSurfaceCanvas(canvas, field, surfaceStops, iceStops, moltenStops, seed) {
+  const width = canvas.width;
+  const height = canvas.height;
+  const context = canvas.getContext("2d");
+  const image = context.createImageData(width, height);
+
+  for (let index = 0; index < field.length; index += 1) {
+    const baseNoise = THREE.MathUtils.clamp(field[index], 0, 1);
+    const x = index % width;
+    const y = Math.floor(index / width);
+    const u = x / width;
+    const v = y / height;
+    const baseColor = samplePaletteStops(surfaceStops, baseNoise);
+    const iceColor = samplePaletteStops(iceStops, baseNoise);
+    const moltenColor = samplePaletteStops(moltenStops, baseNoise);
+    const iceAlpha = getTidalCenterMask(u, v, TIDAL_ICE_SPREAD, `${seed}:ice`);
+    const moltenAlpha = getTidalEdgeMask(u, v, TIDAL_MOLTEN_SPREAD, `${seed}:molten`);
+    const offset = index * 4;
+    const iced = [
+      THREE.MathUtils.lerp(baseColor[0], iceColor[0], iceAlpha),
+      THREE.MathUtils.lerp(baseColor[1], iceColor[1], iceAlpha),
+      THREE.MathUtils.lerp(baseColor[2], iceColor[2], iceAlpha),
+    ];
+    image.data[offset] = THREE.MathUtils.lerp(iced[0], moltenColor[0], moltenAlpha);
+    image.data[offset + 1] = THREE.MathUtils.lerp(iced[1], moltenColor[1], moltenAlpha);
+    image.data[offset + 2] = THREE.MathUtils.lerp(iced[2], moltenColor[2], moltenAlpha);
+    image.data[offset + 3] = 255;
+  }
+
+  context.putImageData(image, 0, 0);
+}
+
+function renderCloudCanvas(canvas, { seed, stops, moltenStops = null, octaves = PLANET_CLOUD_OCTAVES }) {
   const width = canvas.width;
   const height = canvas.height;
   const context = canvas.getContext("2d");
@@ -226,10 +339,12 @@ function renderCloudCanvas(canvas, { seed, stops, octaves = PLANET_CLOUD_OCTAVES
       const cloud = createCloudNoise(u, v, seed, scale, octaves);
       const alpha = smoothstep(alphaCutoff, Math.min(1, alphaCutoff + PLANET_CLOUD_ALPHA_SPAN), cloud);
       const color = samplePaletteStops(stops.slice(1), cloud);
+      const moltenColor = moltenStops ? samplePaletteStops(moltenStops.slice(1), cloud) : null;
+      const moltenAlpha = moltenStops ? getTidalEdgeMask(positiveModulo(u + 0.17, 1), v, TIDAL_MOLTEN_SPREAD, `${seed}:molten-cloud`) : 0;
       const offset = (y * width + x) * 4;
-      image.data[offset] = color[0];
-      image.data[offset + 1] = color[1];
-      image.data[offset + 2] = color[2];
+      image.data[offset] = moltenColor ? THREE.MathUtils.lerp(color[0], moltenColor[0], moltenAlpha) : color[0];
+      image.data[offset + 1] = moltenColor ? THREE.MathUtils.lerp(color[1], moltenColor[1], moltenAlpha) : color[1];
+      image.data[offset + 2] = moltenColor ? THREE.MathUtils.lerp(color[2], moltenColor[2], moltenAlpha) : color[2];
       image.data[offset + 3] = Math.round(alpha * 255);
     }
   }
@@ -307,6 +422,41 @@ function getIceMaskAlpha(index, width, height, config, noiseValue, waterLimit) {
   return 1 - smoothstep(edge, edge + softness, poleDistance);
 }
 
+function getTidalCenterMask(u, v, percent, seed) {
+  const width = THREE.MathUtils.clamp(percent / 100, 0, 1) * 0.5;
+  if (width <= 0) {
+    return 0;
+  }
+  if (u < 0.5) {
+    const distanceFromCenter = 0.5 - u;
+    const edge = Math.max(0, width + getTidalEdgeOffset(v, `${seed}:left`));
+    return 1 - smoothstep(edge, edge + TIDAL_EDGE_SOFTNESS, distanceFromCenter);
+  }
+
+  const distanceFromCenter = u - 0.5;
+  const edge = Math.max(0, width + getTidalEdgeOffset(v, `${seed}:right`));
+  return 1 - smoothstep(edge, edge + TIDAL_EDGE_SOFTNESS, distanceFromCenter);
+}
+
+function getTidalEdgeMask(u, v, percent, seed) {
+  const width = THREE.MathUtils.clamp(percent / 100, 0, 1) * 0.5;
+  if (width <= 0) {
+    return 0;
+  }
+  const leftEdge = Math.max(0, width + getTidalEdgeOffset(v, `${seed}:left`));
+  const rightEdge = Math.max(0, width + getTidalEdgeOffset(v, `${seed}:right`));
+  return Math.max(
+    1 - smoothstep(leftEdge, leftEdge + TIDAL_EDGE_SOFTNESS, u),
+    1 - smoothstep(rightEdge, rightEdge + TIDAL_EDGE_SOFTNESS, 1 - u),
+  );
+}
+
+function getTidalEdgeOffset(v, seed) {
+  const macro = sampleTileableValueNoise(v, 0.19, TIDAL_EDGE_MACRO_FREQ, 1, hashString(`${seed}:macro`));
+  const detail = sampleTileableValueNoise(v, 0.31, TIDAL_EDGE_DETAIL_FREQ, 1, hashString(`${seed}:detail`));
+  return (macro - 0.5) * 2 * TIDAL_EDGE_MACRO_AMP + (detail - 0.5) * 2 * TIDAL_EDGE_DETAIL_AMP;
+}
+
 function normalizePlanetWaterStops(stops, waterPosition) {
   const normalized = stops.map((stop) => ({ ...stop }));
   const previousWater = THREE.MathUtils.clamp(normalized[1]?.pos ?? 0.5, 0.01, 0.99);
@@ -322,6 +472,10 @@ function normalizePlanetWaterStops(stops, waterPosition) {
   }
   normalized[normalized.length - 1].pos = 1;
   return normalized;
+}
+
+function normalizeMoltenStops(stops) {
+  return stops.map((stop) => ({ ...stop })).sort((left, right) => left.pos - right.pos);
 }
 
 function normalizeCloudStops(stops, alphaPosition) {
@@ -352,6 +506,7 @@ function createShiftedStops(stops, random) {
   return stops
     .map((stop) => ({
       pos: stop.pos,
+      label: stop.label,
       rgb: hexToRgb(applyColorShift(stop, random)),
     }))
     .sort((a, b) => a.pos - b.pos);
@@ -393,6 +548,34 @@ function samplePaletteStops(stops, value) {
   }
 
   return last.rgb;
+}
+
+function samplePaletteStopInfo(stops, value) {
+  if (value <= stops[0].pos) {
+    return stops[0];
+  }
+  const last = stops[stops.length - 1];
+  if (value >= last.pos) {
+    return last;
+  }
+
+  for (let index = 0; index < stops.length - 1; index += 1) {
+    const left = stops[index];
+    const right = stops[index + 1];
+    if (value <= right.pos) {
+      const t = (value - left.pos) / Math.max(0.0001, right.pos - left.pos);
+      return {
+        label: t < 0.5 ? left.label : right.label,
+        rgb: [
+          THREE.MathUtils.lerp(left.rgb[0], right.rgb[0], t),
+          THREE.MathUtils.lerp(left.rgb[1], right.rgb[1], t),
+          THREE.MathUtils.lerp(left.rgb[2], right.rgb[2], t),
+        ],
+      };
+    }
+  }
+
+  return last;
 }
 
 function sampleTileableValueNoise(u, v, freqX, freqY, seed) {

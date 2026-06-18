@@ -37,6 +37,12 @@ const params = new URLSearchParams(window.location.search);
 const SEED = params.get("seed") || "nebulum";
 const PLANET_WATER_TAG_CHANCE = 0.5;
 const ATMOSPHERE_TAGS = ["THIN ATMOSPHERE", "ATMOSPHERE", "DENSE ATMOSPHERE"];
+const ATMOSPHERE_TEMPERATURE_MULTIPLIERS = {
+  "THIN ATMOSPHERE": [1, 1.2],
+  "ATMOSPHERE": [1.2, 1.8],
+  "DENSE ATMOSPHERE": [1.8, 3],
+};
+const TIDAL_COMBINE_MAX_TEMPERATURE = 4000;
 const glowTexture = createNodeGlowTexture();
 const linkPulseTexture = createLinkPulseTexture();
 const blackHoleDiskTexture = createBlackHoleDiskTexture();
@@ -2223,7 +2229,7 @@ function renderStarSystem(node) {
       sizeIndex: planetSizeIndex,
       seed: `${SEED}:gravity:${node.id}:${planetName}`,
     });
-    const planetTemperature = createBaseTemperatureValue({
+    const basePlanetTemperature = createBaseTemperatureValue({
       starType: node.starType,
       orbitFraction,
       seed: `${SEED}:temperature:${node.id}`,
@@ -2231,15 +2237,17 @@ function renderStarSystem(node) {
     const planetSurfaceTags = planetKind.label === "PLANET"
       ? createPlanetSurfaceTags({
         seed: `${SEED}:planet-tags:${node.id}:${planetName}`,
-        temperature: planetTemperature,
+        temperature: basePlanetTemperature,
       })
-      : { tags: [], hasWater: false, atmosphere: null };
+      : { tags: [], hasWater: false, atmosphere: null, temperature: basePlanetTemperature };
+    const planetTemperature = planetSurfaceTags.temperature;
     const planetTextureParams = planetKind.label === "PLANET"
       ? createPlanetTextureParams({
         seed: `${SEED}:planet-texture-params:${node.id}:${planetName}`,
         temperature: planetTemperature,
         hasWater: planetSurfaceTags.hasWater,
         atmosphere: planetSurfaceTags.atmosphere,
+        tidallyLocked: Boolean(isTidallyLocked),
       })
       : null;
     const planetTextureSeed = `${SEED}:planet-texture:${node.id}:${planetName}`;
@@ -2525,7 +2533,12 @@ function createPlanetSurfaceTags({ seed, temperature }) {
   const atmosphere = atmosphereRoll < 0.4
     ? null
     : ATMOSPHERE_TAGS[Math.min(ATMOSPHERE_TAGS.length - 1, Math.floor((atmosphereRoll - 0.4) / 0.2))];
-  const hasWater = temperature <= 100 && random() < PLANET_WATER_TAG_CHANCE;
+  const adjustedTemperature = applyAtmosphereTemperature({
+    atmosphere,
+    temperature,
+    seed: `${seed}:atmosphere-temperature`,
+  });
+  const hasWater = adjustedTemperature <= 100 && random() < PLANET_WATER_TAG_CHANCE;
   const tags = [];
   if (hasWater) {
     tags.push("WATER");
@@ -2534,17 +2547,38 @@ function createPlanetSurfaceTags({ seed, temperature }) {
     tags.push(atmosphere);
   }
 
-  return { tags, hasWater, atmosphere };
+  return { tags, hasWater, atmosphere, temperature: adjustedTemperature };
 }
 
-function createPlanetTextureParams({ seed, temperature, hasWater, atmosphere }) {
+function applyAtmosphereTemperature({ atmosphere, temperature, seed }) {
+  const multiplierRange = ATMOSPHERE_TEMPERATURE_MULTIPLIERS[atmosphere];
+  if (!multiplierRange) {
+    return temperature;
+  }
+
+  const random = createRandom(seed);
+  const multiplier = THREE.MathUtils.lerp(multiplierRange[0], multiplierRange[1], random());
+  if (temperature < 0) {
+    return temperature / multiplier;
+  }
+
+  return temperature * multiplier;
+}
+
+function createPlanetTextureParams({ seed, temperature, hasWater, atmosphere, tidallyLocked }) {
   const waterRandom = createRandom(`${seed}:water`);
   const atmosphereRandom = createRandom(`${seed}:atmosphere`);
+  const textureMode = tidallyLocked && temperature >= 0
+    ? temperature > TIDAL_COMBINE_MAX_TEMPERATURE
+      ? "molten"
+      : "tidal-combine"
+    : "default";
   const hotAndDry = temperature > 100;
-  const waterPosition = hasWater && !hotAndDry
+  const forceDryTexture = textureMode !== "default";
+  const waterPosition = hasWater && !hotAndDry && !forceDryTexture
     ? 0.3 + waterRandom() * 0.4
     : 0;
-  const iceCaps = hasWater && !hotAndDry
+  const iceCaps = hasWater && !hotAndDry && !forceDryTexture
     ? createTemperatureIceCaps(temperature)
     : 0;
   const cloudAlpha = createAtmosphereCloudAlpha(atmosphere, atmosphereRandom);
@@ -2553,6 +2587,7 @@ function createPlanetTextureParams({ seed, temperature, hasWater, atmosphere }) 
     waterPosition,
     iceCaps,
     cloudAlpha,
+    textureMode,
   };
 }
 
@@ -3755,16 +3790,18 @@ function applyPlanetTexture(
   const angle = Math.atan2(starDirY, starDirX);
   const tileWidth = displayRadius * 4;
   const tileHeight = displayRadius * 2;
+  const isTidalCombineTexture = texture.textureMode === "tidal-combine";
 
   element.append(createPlanetTextureLayer({
     className: "planet-texture",
     textureUrl: texture.url,
     tileWidth,
     tileHeight,
-      angle,
-      isStatic,
-      rotation,
-      speedMultiplier: 1,
+    angle,
+    isStatic: isStatic || isTidalCombineTexture,
+    rotation: isTidalCombineTexture ? null : rotation,
+    speedMultiplier: 1,
+    initialPhase: isTidalCombineTexture ? 0.5 : null,
   }));
 
   if (texture.cloudUrl) {
@@ -3794,6 +3831,7 @@ function createPlanetTextureLayer({
   isStatic,
   rotation,
   speedMultiplier,
+  initialPhase = null,
 }) {
   const textureLayer = document.createElement("span");
   textureLayer.className = className;
@@ -3808,7 +3846,9 @@ function createPlanetTextureLayer({
   driftLayer.gasGiantAngle = angle;
   driftLayer.planetRotation = rotation;
   driftLayer.textureSpeedMultiplier = speedMultiplier;
-  const phase = getSystemTextureDriftPhase(rotation, performance.now() * 0.001, speedMultiplier);
+  const phase = Number.isFinite(initialPhase)
+    ? initialPhase
+    : getSystemTextureDriftPhase(rotation, performance.now() * 0.001, speedMultiplier);
   driftLayer.style.backgroundPosition = `${(-phase * tileWidth).toFixed(2)}px center`;
   if (isStatic || rotation?.turnsPerSecond === 0) {
     driftLayer.classList.add("planet-texture__drift--static");

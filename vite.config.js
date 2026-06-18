@@ -7,11 +7,13 @@ import { defineConfig } from "vite";
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const gasPalettesPath = path.join(rootDir, "src", "gasGiantPalettes.js");
 const planetPalettesPath = path.join(rootDir, "src", "planetPalettes.js");
+const moltenPalettesPath = path.join(rootDir, "src", "moltenPalettes.js");
 
 function paletteWriter() {
   const routes = new Map([
     ["/api/gas-giant-palettes", { path: gasPalettesPath, exportName: "GAS_GIANT_PALETTES" }],
     ["/api/planet-palettes", { path: planetPalettesPath, exportName: "PLANET_PALETTES" }],
+    ["/api/molten-palettes", { path: moltenPalettesPath, exportName: "MOLTEN_PALETTES" }],
   ]);
 
   return {

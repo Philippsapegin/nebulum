@@ -22,7 +22,16 @@ const PLANET_SCREEN_DISK_BRIGHT_BAND_MIN_COUNT = 1;
 const PLANET_SCREEN_DISK_BRIGHT_BAND_MAX_COUNT = 4;
 const PLANET_SCREEN_BUMP_STRENGTH = 1;
 const PLANET_SCREEN_SPECULAR_STRENGTH = 0.08;
+const PLANET_SCREEN_EMISSIVE_STRENGTH = 0.59;
+const PLANET_SCREEN_EMISSIVE_BLOOM_STRENGTH = 2;
 const PLANET_SCREEN_CLOUD_SPEED_MULTIPLIER = 1.15;
+const PLANET_SCREEN_TIDAL_LOCKED_TEXTURE_OFFSET = 0.006;
+const PLANET_SCREEN_EMISSIVE_NOISE_SCALE_MULTIPLIER = 20;
+const PLANET_SCREEN_EMISSIVE_NOISE_SCALE = 1;
+const PLANET_SCREEN_EMISSIVE_NOISE_SPEED = 0.030;
+const PLANET_SCREEN_EMISSIVE_NOISE_BLACK_STOP = 0.16;
+const PLANET_SCREEN_EMISSIVE_NOISE_WHITE_STOP = 1;
+const PLANET_SCREEN_EMISSIVE_NOISE_OCTAVES = 3;
 
 export function createPlanetScreenRenderer({
   root,
@@ -211,6 +220,20 @@ function renderPlanetScreenPlanet(layer, planet, geometry, starDir) {
   renderPlanetScreen3D(sphere3D);
 }
 
+function getPlanetScreenEmissiveNoiseFrequency() {
+  return PLANET_SCREEN_EMISSIVE_NOISE_SCALE * PLANET_SCREEN_EMISSIVE_NOISE_SCALE_MULTIPLIER;
+}
+
+function getPlanetScreenEmissiveNoiseUniforms() {
+  return {
+    emissiveNoiseScale: { value: getPlanetScreenEmissiveNoiseFrequency() },
+    emissiveNoiseSpeed: { value: PLANET_SCREEN_EMISSIVE_NOISE_SPEED },
+    emissiveNoiseBlackStop: { value: PLANET_SCREEN_EMISSIVE_NOISE_BLACK_STOP },
+    emissiveNoiseWhiteStop: { value: PLANET_SCREEN_EMISSIVE_NOISE_WHITE_STOP },
+    emissiveNoiseOctaves: { value: PLANET_SCREEN_EMISSIVE_NOISE_OCTAVES },
+  };
+}
+
 function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, starDir) {
   const moonSizes = [height * 0.03, height * 0.05, height * 0.07];
   const positions = [
@@ -297,6 +320,9 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
   const specularMap = texture?.specularCanvas && isPlanetTexture
     ? createPlanetScreenCanvasTexture(texture.specularCanvas, renderer3D, false)
     : null;
+  const emissiveMap = texture?.emissiveCanvas && isPlanetTexture
+    ? createPlanetScreenCanvasTexture(texture.emissiveCanvas, renderer3D, true)
+    : null;
   const cloudMap = texture?.cloudCanvas && isPlanetTexture
     ? createPlanetScreenCanvasTexture(texture.cloudCanvas, renderer3D, true)
     : texture?.cloudCanvas && isGasGiantTexture
@@ -320,11 +346,12 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
   }
   const cloudSpeedMultiplier = planet.tidallyLocked ? 1 : PLANET_SCREEN_CLOUD_SPEED_MULTIPLIER;
   const rotationPhase = getPlanetRotationPhase(rotation, performance.now() * 0.001);
+  const manualTextureOffset = planet.tidallyLocked ? PLANET_SCREEN_TIDAL_LOCKED_TEXTURE_OFFSET : 0;
   const cloudRotationPhase = getPlanetRotationPhase({
     ...cloudRotation,
     turnsPerSecond: cloudRotation.turnsPerSecond * cloudSpeedMultiplier,
   }, performance.now() * 0.001);
-  map.offset.x = rotationPhase;
+  map.offset.x = rotationPhase + manualTextureOffset;
 
   const geometry3D = new THREE.SphereGeometry(geometry.radius, 128, 64);
   const planetSizeFactor = THREE.MathUtils.clamp(planet.sizeIndex / 9, 0, 1);
@@ -339,10 +366,14 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
       planetMap: { value: map },
       bumpMap: { value: bumpMap ?? map },
       specularMap: { value: specularMap ?? map },
-      textureOffset: { value: new THREE.Vector2(rotationPhase, 0) },
+      emissiveMap: { value: emissiveMap ?? map },
+      textureOffset: { value: new THREE.Vector2(rotationPhase + manualTextureOffset, 0) },
       bumpStrength: { value: bumpMap ? PLANET_SCREEN_BUMP_STRENGTH : 0 },
       bumpTexelSize: { value: new THREE.Vector2(1 / sourceCanvas.width, 1 / sourceCanvas.height) },
       specularStrength: { value: specularMap ? PLANET_SCREEN_SPECULAR_STRENGTH : 0 },
+      emissiveStrength: { value: emissiveMap ? PLANET_SCREEN_EMISSIVE_STRENGTH : 0 },
+      ...getPlanetScreenEmissiveNoiseUniforms(),
+      emissiveTime: { value: performance.now() * 0.001 },
       reflectedLightColor: { value: new THREE.Color(planet.systemStarColor) },
       diskShadowNormal: { value: new THREE.Vector3(0, 0, 1) },
       diskShadowStrength: { value: 0 },
@@ -369,10 +400,18 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
       uniform sampler2D planetMap;
       uniform sampler2D bumpMap;
       uniform sampler2D specularMap;
+      uniform sampler2D emissiveMap;
       uniform vec2 textureOffset;
       uniform float bumpStrength;
       uniform vec2 bumpTexelSize;
       uniform float specularStrength;
+      uniform float emissiveStrength;
+      uniform float emissiveNoiseScale;
+      uniform float emissiveNoiseSpeed;
+      uniform float emissiveNoiseBlackStop;
+      uniform float emissiveNoiseWhiteStop;
+      uniform float emissiveNoiseOctaves;
+      uniform float emissiveTime;
       uniform vec3 reflectedLightColor;
       uniform vec3 diskShadowNormal;
       uniform float diskShadowStrength;
@@ -383,6 +422,46 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
       const float PI = 3.141592653589793;
       float getPlanetBumpHeight(vec3 color) {
         return dot(color, vec3(0.299, 0.587, 0.114));
+      }
+      float emissiveHash(vec2 point) {
+        return fract(sin(dot(point, vec2(41.31, 289.17))) * 19341.1415);
+      }
+      float emissiveNoise(vec2 uvPoint, vec2 frequency) {
+        if (frequency.x <= 0.0 || frequency.y <= 0.0) {
+          return 0.5;
+        }
+        vec2 point = uvPoint * frequency;
+        vec2 cell = floor(point);
+        vec2 local = smoothstep(vec2(0.0), vec2(1.0), fract(point));
+        vec2 cell00 = mod(cell, frequency);
+        vec2 cell10 = mod(cell + vec2(1.0, 0.0), frequency);
+        vec2 cell01 = mod(cell + vec2(0.0, 1.0), frequency);
+        vec2 cell11 = mod(cell + vec2(1.0, 1.0), frequency);
+        float a = emissiveHash(cell00);
+        float b = emissiveHash(cell10);
+        float c = emissiveHash(cell01);
+        float d = emissiveHash(cell11);
+        return mix(mix(a, b, local.x), mix(c, d, local.x), local.y);
+      }
+      float emissiveOctaveNoise(vec2 uvPoint) {
+        float total = 0.0;
+        float amplitude = 1.0;
+        float amplitudeTotal = 0.0;
+        for (int octave = 0; octave < 8; octave += 1) {
+          if (float(octave) >= emissiveNoiseOctaves) {
+            break;
+          }
+          float octaveScale = pow(2.0, float(octave));
+          total += emissiveNoise(uvPoint, vec2(emissiveNoiseScale * octaveScale, emissiveNoiseScale * octaveScale * 0.5)) * amplitude;
+          amplitudeTotal += amplitude;
+          amplitude *= 0.5;
+        }
+        return total / max(amplitudeTotal, 0.0001);
+      }
+      float emissiveNoiseMask(vec2 uvPoint) {
+        float blackStop = clamp(emissiveNoiseBlackStop, 0.0, 1.0);
+        float whiteStop = max(blackStop + 0.001, clamp(emissiveNoiseWhiteStop, 0.0, 1.0));
+        return smoothstep(blackStop, whiteStop, emissiveOctaveNoise(uvPoint));
       }
       void main() {
         vec3 localNormal = normalize(vLocalPosition);
@@ -405,6 +484,10 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
         float specularMask = texture2D(specularMap, uv).r;
         float specular = pow(max(dot(reflect(-lightView, normalView), vec3(0.0, 0.0, 1.0)), 0.0), 24.0) * specularMask * specularStrength * lit;
         color += vec3(specular);
+        vec3 emissive = texture2D(emissiveMap, uv).rgb;
+        vec2 emissiveUv = vec2(fract(uv.x + emissiveTime * emissiveNoiseSpeed), uv.y);
+        float emissiveMask = emissiveNoiseMask(emissiveUv);
+        color += emissive * emissiveStrength * emissiveMask;
         float reflectedLight = pow(lit, 0.72) * 0.055;
         float rim = pow(1.0 - abs(normalView.z), 1.55);
         float litRim = rim * (0.045 + lit * 0.045);
@@ -506,6 +589,23 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
   glowMesh.scale.setScalar(glowScale);
   glowMesh.renderOrder = 3;
   glowScene.add(glowMesh);
+
+  let bloomGeometry = null;
+  let bloomMaterial = null;
+  let bloomMesh = null;
+  if (emissiveMap) {
+    bloomGeometry = new THREE.SphereGeometry(geometry.radius, 160, 80);
+    bloomMaterial = createPlanetScreenEmissiveBloomMaterial({
+      emissiveMap,
+      offset: rotationPhase + manualTextureOffset,
+    });
+    bloomMesh = new THREE.Mesh(bloomGeometry, bloomMaterial);
+    bloomMesh.position.copy(mesh.position);
+    bloomMesh.quaternion.copy(baseQuaternion);
+    bloomMesh.scale.setScalar(1.001);
+    bloomMesh.renderOrder = 2;
+    glowScene.add(bloomMesh);
+  }
 
   let cloudMesh = null;
   let cloudGeometry = null;
@@ -623,8 +723,11 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
     mesh,
     texture: map,
     textureRotation: rotation,
+    manualTextureOffset,
+    isTidallyLocked: planet.tidallyLocked,
     bumpTexture: bumpMap,
     specularTexture: specularMap,
+    emissiveTexture: emissiveMap,
     cloudTexture: cloudMap,
     cloudTextureRotation: cloudRotation,
     cloudSpeedMultiplier,
@@ -640,6 +743,9 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
     glowTargetB,
     glowGeometry,
     glowMaterial,
+    bloomGeometry,
+    bloomMaterial,
+    bloomMesh,
     blurScene,
     blurMaterial,
     compositeScene: postScene,
@@ -656,6 +762,99 @@ function createPlanetScreenCanvasTexture(canvas, renderer3D, srgb = true) {
   texture.anisotropy = Math.min(8, renderer3D.capabilities.getMaxAnisotropy());
   texture.needsUpdate = true;
   return texture;
+}
+
+function createPlanetScreenEmissiveBloomMaterial({ emissiveMap, offset }) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      emissiveMap: { value: emissiveMap },
+      textureOffset: { value: new THREE.Vector2(offset, 0) },
+      emissiveTime: { value: performance.now() * 0.001 },
+      ...getPlanetScreenEmissiveNoiseUniforms(),
+      emissiveBloomStrength: { value: PLANET_SCREEN_EMISSIVE_BLOOM_STRENGTH },
+    },
+    vertexShader: `
+      varying vec3 vLocalPosition;
+      void main() {
+        vLocalPosition = position;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D emissiveMap;
+      uniform vec2 textureOffset;
+      uniform float emissiveTime;
+      uniform float emissiveNoiseScale;
+      uniform float emissiveNoiseSpeed;
+      uniform float emissiveNoiseBlackStop;
+      uniform float emissiveNoiseWhiteStop;
+      uniform float emissiveNoiseOctaves;
+      uniform float emissiveBloomStrength;
+      varying vec3 vLocalPosition;
+      const float PI = 3.141592653589793;
+      float emissiveHash(vec2 point) {
+        return fract(sin(dot(point, vec2(41.31, 289.17))) * 19341.1415);
+      }
+      float emissiveNoise(vec2 uvPoint, vec2 frequency) {
+        if (frequency.x <= 0.0 || frequency.y <= 0.0) {
+          return 0.5;
+        }
+        vec2 point = uvPoint * frequency;
+        vec2 cell = floor(point);
+        vec2 local = smoothstep(vec2(0.0), vec2(1.0), fract(point));
+        vec2 cell00 = mod(cell, frequency);
+        vec2 cell10 = mod(cell + vec2(1.0, 0.0), frequency);
+        vec2 cell01 = mod(cell + vec2(0.0, 1.0), frequency);
+        vec2 cell11 = mod(cell + vec2(1.0, 1.0), frequency);
+        float a = emissiveHash(cell00);
+        float b = emissiveHash(cell10);
+        float c = emissiveHash(cell01);
+        float d = emissiveHash(cell11);
+        return mix(mix(a, b, local.x), mix(c, d, local.x), local.y);
+      }
+      float emissiveOctaveNoise(vec2 uvPoint) {
+        float total = 0.0;
+        float amplitude = 1.0;
+        float amplitudeTotal = 0.0;
+        for (int octave = 0; octave < 8; octave += 1) {
+          if (float(octave) >= emissiveNoiseOctaves) {
+            break;
+          }
+          float octaveScale = pow(2.0, float(octave));
+          total += emissiveNoise(uvPoint, vec2(emissiveNoiseScale * octaveScale, emissiveNoiseScale * octaveScale * 0.5)) * amplitude;
+          amplitudeTotal += amplitude;
+          amplitude *= 0.5;
+        }
+        return total / max(amplitudeTotal, 0.0001);
+      }
+      float emissiveNoiseMask(vec2 uvPoint) {
+        float blackStop = clamp(emissiveNoiseBlackStop, 0.0, 1.0);
+        float whiteStop = max(blackStop + 0.001, clamp(emissiveNoiseWhiteStop, 0.0, 1.0));
+        return smoothstep(blackStop, whiteStop, emissiveOctaveNoise(uvPoint));
+      }
+      void main() {
+        vec3 localNormal = normalize(vLocalPosition);
+        float cylindricalU = atan(localNormal.x, localNormal.z) / (2.0 * PI) + 0.5;
+        float cylindricalV = clamp(localNormal.y * 0.5 + 0.5, 0.0, 1.0);
+        vec2 uv = vec2(cylindricalU + textureOffset.x, cylindricalV);
+        vec3 emissive = texture2D(emissiveMap, uv).rgb;
+        vec2 emissiveUv = vec2(fract(uv.x + emissiveTime * emissiveNoiseSpeed), uv.y);
+        float emissiveMask = emissiveNoiseMask(emissiveUv);
+        float mask = max(max(emissive.r, emissive.g), emissive.b);
+        float alpha = clamp(mask * emissiveBloomStrength * emissiveMask, 0.0, 1.0);
+        if (alpha <= 0.001) {
+          discard;
+        }
+        gl_FragColor = vec4(emissive * emissiveBloomStrength * emissiveMask, alpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    side: THREE.FrontSide,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  });
 }
 
 function createPlanetScreenCloudMaterial({
@@ -1131,9 +1330,27 @@ function renderPlanetScreen3D(surface) {
 
 function updatePlanetScreen3D(surface, deltaSeconds, now) {
   let needsRender = false;
+  const manualTextureOffset = surface.isTidallyLocked ? PLANET_SCREEN_TIDAL_LOCKED_TEXTURE_OFFSET : 0;
   if (surface.textureRotation?.turnsPerSecond !== 0) {
-    surface.texture.offset.x = getPlanetRotationPhase(surface.textureRotation, now * 0.001);
+    surface.texture.offset.x = getPlanetRotationPhase(surface.textureRotation, now * 0.001) + manualTextureOffset;
     surface.material.uniforms.textureOffset.value.x = surface.texture.offset.x;
+    if (surface.bloomMaterial) {
+      surface.bloomMaterial.uniforms.textureOffset.value.x = surface.texture.offset.x;
+    }
+    needsRender = true;
+  } else if (surface.material.uniforms.textureOffset.value.x !== manualTextureOffset) {
+    surface.texture.offset.x = manualTextureOffset;
+    surface.material.uniforms.textureOffset.value.x = manualTextureOffset;
+    if (surface.bloomMaterial) {
+      surface.bloomMaterial.uniforms.textureOffset.value.x = manualTextureOffset;
+    }
+    needsRender = true;
+  }
+  if (surface.emissiveTexture) {
+    surface.material.uniforms.emissiveTime.value = now * 0.001;
+    if (surface.bloomMaterial) {
+      surface.bloomMaterial.uniforms.emissiveTime.value = now * 0.001;
+    }
     needsRender = true;
   }
 
@@ -1161,6 +1378,7 @@ function disposePlanetScreen3D() {
   activePlanetScreen3D.texture.dispose();
   activePlanetScreen3D.bumpTexture?.dispose();
   activePlanetScreen3D.specularTexture?.dispose();
+  activePlanetScreen3D.emissiveTexture?.dispose();
   activePlanetScreen3D.cloudTexture?.dispose();
   activePlanetScreen3D.geometry.dispose();
   activePlanetScreen3D.material.dispose();
@@ -1172,6 +1390,8 @@ function disposePlanetScreen3D() {
   activePlanetScreen3D.glowTargetB?.dispose();
   activePlanetScreen3D.glowGeometry?.dispose();
   activePlanetScreen3D.glowMaterial?.dispose();
+  activePlanetScreen3D.bloomGeometry?.dispose();
+  activePlanetScreen3D.bloomMaterial?.dispose();
   activePlanetScreen3D.blurMaterial?.dispose();
   activePlanetScreen3D.compositeMaterial?.dispose();
   activePlanetScreen3D.renderer.dispose();
