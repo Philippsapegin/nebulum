@@ -28,7 +28,8 @@ export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_
     : null;
   const createUrls = options.createUrls ?? true;
   const textureMode = options.textureMode ?? "default";
-  const cacheKey = `${seed}:${textureHeight}:${waterPosition.toFixed(4)}:${iceCaps.toFixed(2)}:${cloudAlpha ?? "no-clouds"}:${textureMode}:${createUrls ? "urls" : "canvas"}`;
+  const surfaceScale = options.surfaceScale ?? 7;
+  const cacheKey = `${seed}:${textureHeight}:${waterPosition.toFixed(4)}:${iceCaps.toFixed(2)}:${cloudAlpha ?? "no-clouds"}:${textureMode}:${surfaceScale.toFixed(3)}:${createUrls ? "urls" : "canvas"}`;
   if (planetTextureCache.has(cacheKey)) {
     return planetTextureCache.get(cacheKey);
   }
@@ -60,7 +61,7 @@ export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_
   const field = createSurfaceNoiseField({
     width,
     height,
-    scale: 7,
+    scale: surfaceScale,
     octaves: PLANET_SURFACE_OCTAVES,
     seed: `${seed}:surface`,
   });

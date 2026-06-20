@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GAS_GIANT_OCTAVES, GAS_GIANT_WINDOW_TEXTURE_HEIGHT, createGasGiantTexture } from "../planet/gasGiantTexture.js";
+import { createMoonTexture } from "../planet/moonTexture.js";
 import { PLANET_WINDOW_TEXTURE_HEIGHT, createPlanetTexture } from "../planet/planetTexture.js";
 import { createPlanetRotationState, getPlanetRotationPhase } from "../planet/rotation.js";
 import { createRandom } from "../utils/random.js";
@@ -58,6 +59,7 @@ function renderPlanetScreenFallback(planet) {
 
 function renderPlanetScreen(planet) {
   planetScreenController.state.activeStarSurface = null;
+  planetScreenController.state.activeMoons = [];
   disposePlanetScreen3D();
   planetScreenController.clearRendered();
 
@@ -139,13 +141,14 @@ function renderPlanetScreenParentStar(layer, planet, geometry, depth) {
   hoverGlow.style.left = `${geometry.x}px`;
   hoverGlow.style.top = `${geometry.y}px`;
   hoverGlow.style.color = planet.systemStarColor;
-  layer.append(hoverGlow);
+  planetScreen.append(hoverGlow);
   planetScreenController.state.activeStar = {
     element: hoverGlow,
     x: geometry.x,
     y: geometry.y,
     radius: geometry.radius,
     depth,
+    isBlackHole: Boolean(planet.systemStarBlackCore),
   };
 
   const star = document.createElement("div");
@@ -236,6 +239,10 @@ function getPlanetScreenEmissiveNoiseUniforms() {
 
 function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, starDir) {
   const moonSizes = [height * 0.03, height * 0.05, height * 0.07];
+  const moonPaletteMode = planet.kind === "PLANET"
+    && (planet.surfaceTextureParams?.textureMode === "molten" || planet.surfaceTextureParams?.textureMode === "tidal-combine")
+    ? "molten"
+    : "moon";
   const positions = [
     { x: width * 0.58, y: height * 0.46 },
     { x: width * 0.83, y: height * 0.68 },
@@ -243,6 +250,7 @@ function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, st
   ];
   for (const [index, moon] of planet.moonList.slice(0, 3).entries()) {
     const layer = layers[index];
+    const depth = Number(layer.style.getPropertyValue("--planet-screen-depth")) || 0;
     const radius = moonSizes[Math.max(0, Math.min(2, Math.round((moon.radius - 1.2) / 0.4)))];
     const position = positions[index];
     const starSafeDistance = starGeometry.radius + radius + 36;
@@ -257,13 +265,37 @@ function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, st
     moonElement.style.height = `${radius * 2}px`;
     moonElement.style.left = `${x - radius}px`;
     moonElement.style.top = `${y - radius}px`;
+    const moonTexture = createMoonTexture(`${SEED}:moon-texture:${planet.systemId}:${planet.name}:${moon.name}`, undefined, {
+      paletteMode: moonPaletteMode,
+    });
+    const moonTextureElement = document.createElement("span");
+    moonTextureElement.className = "planet-screen__moon-texture";
+    moonTextureElement.style.backgroundImage = moonTexture.url;
+    const moonShade = document.createElement("span");
+    moonShade.className = "planet-screen__moon-shade";
+    const moonRimInner = document.createElement("span");
+    moonRimInner.className = "planet-screen__moon-rim planet-screen__moon-rim--inner";
+    const moonRimNear = document.createElement("span");
+    moonRimNear.className = "planet-screen__moon-rim planet-screen__moon-rim--near";
+    const moonRimFar = document.createElement("span");
+    moonRimFar.className = "planet-screen__moon-rim planet-screen__moon-rim--far";
+    moonElement.style.setProperty("--moon-rim-color", planet.systemStarColor);
+    moonElement.append(moonTextureElement, moonShade, moonRimInner, moonRimNear, moonRimFar);
     layer.append(moonElement);
     const moonLabel = document.createElement("div");
     moonLabel.className = "planet-screen__moon-label";
     moonLabel.textContent = moon.name;
-    moonLabel.style.left = `${x}px`;
-    moonLabel.style.top = `${y - radius - 7}px`;
-    layer.append(moonLabel);
+    moonLabel.style.left = `${x - 80}px`;
+    moonLabel.style.top = `${y - radius - 7 - 80}px`;
+    moonLabel.style.setProperty("--planet-screen-label-depth", String(depth));
+    planetScreen.append(moonLabel);
+    planetScreenController.state.activeMoons.push({
+      element: moonElement,
+      x,
+      y,
+      radius,
+      depth,
+    });
   }
 }
 

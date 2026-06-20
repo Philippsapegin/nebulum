@@ -527,6 +527,7 @@
         <button id="gasTab" class="tab active" type="button" role="tab" aria-selected="true">Gas Giants Noise-Gen</button>
         <button id="planetTab" class="tab" type="button" role="tab" aria-selected="false">Planet Noise Gen</button>
         <button id="moltenTab" class="tab" type="button" role="tab" aria-selected="false">Molten Noise Gen</button>
+        <button id="moonTab" class="tab" type="button" role="tab" aria-selected="false">MOON NOISE</button>
         <button id="tidalTab" class="tab" type="button" role="tab" aria-selected="false">TIDALLY LOCKED NOISE COMBINE</button>
       </div>
 
@@ -551,6 +552,25 @@
       <div class="field">
         <div class="field__label"><span>Octaves</span><output id="octavesVal"></output></div>
         <input id="octaves" type="range" min="4" max="4" step="1" value="4" />
+      </div>
+
+      <div id="moonCraterFields" class="moon-only is-hidden">
+        <div class="field">
+          <div class="field__label"><span>Crater count</span><output id="moonCraterCountVal"></output></div>
+          <input id="moonCraterCount" type="range" min="200" max="220" step="1" value="210" />
+        </div>
+        <div class="field">
+          <div class="field__label"><span>Crater size</span><output id="moonCraterSizeVal"></output></div>
+          <input id="moonCraterSize" type="range" min="3" max="6" step="0.1" value="4.5" />
+        </div>
+        <div class="field">
+          <div class="field__label"><span>Crater depth</span><output id="moonCraterDepthVal"></output></div>
+          <input id="moonCraterDepth" type="range" min="25" max="35" step="1" value="30" />
+        </div>
+        <div class="field">
+          <div class="field__label"><span>Crater rim</span><output id="moonCraterRimVal"></output></div>
+          <input id="moonCraterRim" type="range" min="25" max="40" step="1" value="32" />
+        </div>
       </div>
 
       <button id="aspect" class="btn-block" type="button">Stretch to 2&times;1</button>
@@ -674,6 +694,7 @@
       import { GAS_GIANT_PALETTES } from "./src/gasGiantPalettes.js";
       import { PLANET_PALETTES } from "./src/planetPalettes.js";
       import { MOLTEN_PALETTES } from "./src/moltenPalettes.js";
+      import { MOON_PALETTES } from "./src/moonPalettes.js";
 
       const HEIGHT = 512;
       const STRETCHED_ASPECT = 2;
@@ -688,6 +709,7 @@
         "highlands",
         "peaks",
       ];
+      const MOON_STOP_LABELS = ["basins", "maria", "regolith", "craters", "highlands", "peaks"];
       const MOLTEN_STOP_LABELS = [
         "highlands",
         "mountains",
@@ -737,6 +759,17 @@
           scale: { min: 1, max: 96, step: 1, value: 7 },
           octaves: { min: 1, max: 10, step: 1, value: 9 },
         },
+        moon: {
+          label: "Moon preview",
+          palettes: MOON_PALETTES,
+          saveUrl: "/api/moon-palettes",
+          saveTarget: "src/moonPalettes.js",
+          maxStops: 6,
+          fixedStops: true,
+          defaultAspect: 2,
+          scale: { min: 5, max: 14, step: 1, value: 9 },
+          octaves: { min: 7, max: 7, step: 1, value: 7 },
+        },
         tidal: {
           label: "Planet preview",
           palettes: [],
@@ -764,6 +797,7 @@
       const gasTab = document.getElementById("gasTab");
       const planetTab = document.getElementById("planetTab");
       const moltenTab = document.getElementById("moltenTab");
+      const moonTab = document.getElementById("moonTab");
       const tidalTab = document.getElementById("tidalTab");
       const stretchField = document.getElementById("stretchField");
       const tiledPreviewGroup = document.getElementById("tiledPreviewGroup");
@@ -774,9 +808,18 @@
       const planetNameInput = document.getElementById("planetName");
       const scaleInput = document.getElementById("scale");
       const octavesInput = document.getElementById("octaves");
+      const moonCraterFields = document.getElementById("moonCraterFields");
+      const moonCraterCountInput = document.getElementById("moonCraterCount");
+      const moonCraterSizeInput = document.getElementById("moonCraterSize");
+      const moonCraterDepthInput = document.getElementById("moonCraterDepth");
+      const moonCraterRimInput = document.getElementById("moonCraterRim");
       const stretchInput = document.getElementById("stretch");
       const scaleVal = document.getElementById("scaleVal");
       const octavesVal = document.getElementById("octavesVal");
+      const moonCraterCountVal = document.getElementById("moonCraterCountVal");
+      const moonCraterSizeVal = document.getElementById("moonCraterSizeVal");
+      const moonCraterDepthVal = document.getElementById("moonCraterDepthVal");
+      const moonCraterRimVal = document.getElementById("moonCraterRimVal");
       const stretchVal = document.getElementById("stretchVal");
       const aspectButton = document.getElementById("aspect");
       const paletteSelect = document.getElementById("paletteSelect");
@@ -820,13 +863,15 @@
         const fallbackStops = mode === "tidal"
           ? PLANET_PALETTES[0]?.stops ?? createDefaultStops(8)
           : palettes[0]?.stops ?? createDefaultStops(config.maxStops);
+        const stopMode = mode === "tidal" ? "planet" : mode;
+        const stopCount = mode === "tidal" ? 8 : config.maxStops;
         return [mode, {
           palettes,
           activePaletteId: palettes[0]?.id ?? "custom",
           planetPaletteId: PLANET_PALETTES[0]?.id ?? "",
           moltenPaletteId: MOLTEN_PALETTES[0]?.id ?? "",
-          gradientStops: cloneModeStops(mode === "tidal" ? "planet" : mode, fallbackStops, mode === "tidal" ? 8 : config.maxStops),
-          iceStops: cloneModeStops(mode === "tidal" ? "planet" : mode, palettes[0]?.iceStops ?? createDefaultIceStops(mode === "tidal" ? 8 : config.maxStops), mode === "tidal" ? 8 : config.maxStops),
+          gradientStops: cloneModeStops(stopMode, fallbackStops, stopCount),
+          iceStops: cloneModeStops(stopMode, palettes[0]?.iceStops ?? createDefaultIceStops(stopCount), stopCount),
           cloudStops: cloneCloudStops(palettes[0]?.cloudStops ?? createDefaultCloudStops()),
           activeGradient: "surface",
           iceCaps: Number.isFinite(palettes[0]?.iceCaps) ? palettes[0].iceCaps : 18,
@@ -837,6 +882,10 @@
           tidalEdgeDetailFreq: 12,
           tidalEdgeDetailAmp: 2,
           tidalEdgeSoftness: 3,
+          moonCraterCount: 210,
+          moonCraterSize: 4.5,
+          moonCraterDepth: 30,
+          moonCraterRim: 32,
           scale: config.scale.value,
           octaves: config.octaves.value,
           stretch: 6,
@@ -873,6 +922,9 @@
         if (mode === "molten") {
           return normalizeMoltenStops(cloned.length === maxStops ? cloned : createDefaultMoltenStops());
         }
+        if (mode === "moon") {
+          return normalizeMoonStops(cloned.length === maxStops ? cloned : createDefaultMoonStops());
+        }
         if (mode !== "planet") {
           return cloned;
         }
@@ -906,6 +958,17 @@
         }));
       }
 
+      function createDefaultMoonStops() {
+        const colors = ["#2f3136", "#55565b", "#818085", "#a9a7a2", "#c9c6bd", "#ece8dd"];
+        return MOON_STOP_LABELS.map((label, index) => ({
+          pos: index / (MOON_STOP_LABELS.length - 1),
+          color: colors[index],
+          label,
+          hueShift: [-3, 3],
+          brightnessShift: [-5, 5],
+        }));
+      }
+
       function createDefaultCloudStops() {
         return [
           { pos: 0.48, color: "#000000", label: "alpha", hueShift: [0, 0], brightnessShift: [0, 0] },
@@ -924,7 +987,19 @@
       }
 
       function isPlanetLikeMode(mode = activeMode) {
+        return mode === "planet" || mode === "molten" || mode === "moon" || mode === "tidal";
+      }
+
+      function hasPlanetAuxiliaryMaps(mode = activeMode) {
         return mode === "planet" || mode === "molten" || mode === "tidal";
+      }
+
+      function hasGradientSubtabs(mode = activeMode) {
+        return mode === "planet" || mode === "molten";
+      }
+
+      function usesRelativeStopScale(mode = activeMode) {
+        return mode === "planet" || mode === "molten";
       }
 
       function getPaletteById(palettes, id) {
@@ -969,6 +1044,23 @@
         normalized[0].pos = waterPos * 0.75;
         for (let index = 2; index < normalized.length; index += 1) {
           normalized[index].pos = Math.max(waterPos, clamp01(normalized[index].pos));
+        }
+        normalized[normalized.length - 1].pos = 1;
+        return normalized;
+      }
+
+      function normalizeMoonStops(stops) {
+        const normalized = stops.slice(0, MOON_STOP_LABELS.length).map((stop, index) => ({
+          ...stop,
+          label: MOON_STOP_LABELS[index],
+          pos: Number.isFinite(stop.pos) ? clamp01(stop.pos) : index / (MOON_STOP_LABELS.length - 1),
+        }));
+        while (normalized.length < MOON_STOP_LABELS.length) {
+          normalized.push(normalizeStop(createDefaultMoonStops()[normalized.length]));
+        }
+        normalized[0].pos = 0;
+        for (let index = 1; index < normalized.length; index += 1) {
+          normalized[index].pos = Math.max(normalized[index - 1].pos, clamp01(normalized[index].pos));
         }
         normalized[normalized.length - 1].pos = 1;
         return normalized;
@@ -1142,6 +1234,115 @@
             index += 1;
           }
         }
+
+        if (activeMode === "moon") {
+          applyMoonCraterField(baseSeed);
+        }
+      }
+
+      function applyMoonCraterField(baseSeed) {
+        const state = currentState();
+        const craterCount = Math.max(0, Math.round(state.moonCraterCount ?? 0));
+        if (craterCount <= 0) {
+          return;
+        }
+
+        const random = seededRandom(baseSeed ^ 0x4f1bbcdc);
+        const sizeScale = Math.max(0.001, (state.moonCraterSize ?? 8) / 100);
+        const depthScale = Math.max(0, (state.moonCraterDepth ?? 22) / 100);
+        const rimScale = Math.max(0, (state.moonCraterRim ?? 28) / 100);
+        const craters = [];
+
+        for (let index = 0; index < craterCount; index += 1) {
+          const radius = sizeScale * (0.35 + Math.pow(random(), 1.85) * 1.75);
+          const age = random();
+          craters.push({
+            u: random(),
+            v: random(),
+            radius,
+            age,
+            depth: depthScale * (0.95 + random() * 1.2) * (1 - age * 0.48),
+            rim: rimScale * (0.55 + random() * 1.1) * (1 - age * 0.76),
+            roughness: 0.035 + random() * 0.11 + age * 0.08,
+            seed: (baseSeed + Math.imul(index + 1, 0x85ebca6b)) >>> 0,
+          });
+        }
+
+        for (const crater of craters) {
+          applyMoonCrater(crater);
+        }
+      }
+
+      function applyMoonCrater(crater) {
+        const influenceRadius = crater.radius * 1.48;
+        const influenceX = influenceRadius / Math.max(0.0001, aspect);
+        const minY = Math.max(0, Math.floor((crater.v - influenceRadius) * noiseH));
+        const maxY = Math.min(noiseH - 1, Math.ceil((crater.v + influenceRadius) * noiseH));
+        const minX = Math.floor((crater.u - influenceX) * noiseW);
+        const maxX = Math.ceil((crater.u + influenceX) * noiseW);
+
+        for (let y = minY; y <= maxY; y += 1) {
+          const v = y / noiseH;
+          for (let rawX = minX; rawX <= maxX; rawX += 1) {
+            const x = positiveModuloInt(rawX, noiseW);
+            const u = x / noiseW;
+            const dx = wrappedSignedDistance(u, crater.u) * aspect;
+            const dy = v - crater.v;
+            const delta = sampleMoonCraterDelta(u, v, dx, dy, crater);
+            if (delta === 0) {
+              continue;
+            }
+            const offset = y * noiseW + x;
+            noiseField[offset] = clamp01(noiseField[offset] + delta);
+          }
+        }
+      }
+
+      function sampleMoonCraterDelta(u, v, dx, dy, crater) {
+        const distance = Math.hypot(dx, dy);
+        const radius = crater.radius;
+        if (distance > radius * 1.48) {
+          return 0;
+        }
+
+        const angle = Math.atan2(dy, dx);
+        const edgeNoise = craterAngularNoise(angle, crater.seed);
+        const visibilityNoise = craterAngularNoise(angle + 1.73, crater.seed ^ 0xc2b2ae35);
+        const erodedRadius = radius * (1 + (edgeNoise - 0.5) * 2 * crater.roughness);
+        const t = distance / Math.max(0.0001, erodedRadius);
+        const ageSoftness = 0.09 + crater.age * 0.16;
+        const floorMask = 1 - smoothstep(0.18, 0.92 + ageSoftness, t);
+        const floorRoughness = (octaveNoise2D(u, v, 38, 19, crater.seed ^ 0x27d4eb2f) - 0.5) * crater.depth * 0.16;
+        const bowl = floorMask * (-crater.depth + floorRoughness);
+        const wallDrop = (smoothstep(0.58, 0.92, t) - smoothstep(0.92, 1.08, t)) * -crater.depth * 0.22;
+        const rimBreakup = smoothstep(0.18 + crater.age * 0.42, 0.95, visibilityNoise);
+        const rimProfile = Math.exp(-Math.pow((t - 1) / (0.07 + crater.age * 0.08), 2));
+        const rim = rimProfile * crater.rim * rimBreakup;
+        const ejecta = (1 - smoothstep(1.0, 1.48, t)) * smoothstep(0.94, 1.06, t) * crater.rim * 0.16 * (1 - crater.age);
+        return bowl + wallDrop + rim + ejecta;
+      }
+
+      function wrappedDistance(a, b) {
+        const direct = Math.abs(a - b);
+        return Math.min(direct, 1 - direct);
+      }
+
+      function wrappedSignedDistance(a, b) {
+        let delta = a - b;
+        if (delta > 0.5) delta -= 1;
+        if (delta < -0.5) delta += 1;
+        return delta;
+      }
+
+      function positiveModuloInt(value, divisor) {
+        return ((value % divisor) + divisor) % divisor;
+      }
+
+      function craterAngularNoise(angle, seed) {
+        const normalized = ((angle / (Math.PI * 2)) % 1 + 1) % 1;
+        return octaveNoise2D(normalized, 0.37, 9, 1, seed) * 0.55
+          + octaveNoise2D(normalized, 0.71, 17, 1, seed ^ 0x9e3779b9) * 0.3
+          + octaveNoise2D(normalized, 0.13, 31, 1, seed ^ 0x165667b1) * 0.15;
       }
 
       function computeStretchedNoise() {
@@ -1365,7 +1566,9 @@
           renderStretchedCanvas();
         } else {
           updatePlanetPreview();
-          renderPlanetMaps();
+          if (hasPlanetAuxiliaryMaps()) {
+            renderPlanetMaps();
+          }
         }
         resLabel.textContent = noiseW + " × " + noiseH;
       }
@@ -1805,7 +2008,7 @@
       }
 
       function syncPlanetPercentControls() {
-        if (!isPlanetLikeMode()) {
+        if (!usesRelativeStopScale()) {
           return;
         }
 
@@ -2080,7 +2283,7 @@
         }
         active.name = paletteNameInput.value.trim() || active.name;
         active.stops = cloneModeStops(activeMode, currentState().gradientStops, currentConfig().maxStops);
-        if (isPlanetLikeMode()) {
+        if (hasGradientSubtabs()) {
           active.iceStops = cloneModeStops(activeMode, currentState().iceStops, currentConfig().maxStops);
           active.cloudStops = cloneCloudStops(currentState().cloudStops);
           active.iceCaps = currentState().iceCaps;
@@ -2111,7 +2314,7 @@
         gradStops.replaceChildren();
         const config = currentConfig();
         const stops = currentEditableStops();
-        const usesRelativeStopScale = isPlanetLikeMode();
+        const usesRelativeScale = usesRelativeStopScale();
         const locksFirstStop = activeMode === "planet" && currentState().activeGradient !== "clouds";
         stops.forEach((stop, index) => {
           const row = document.createElement("div");
@@ -2148,7 +2351,7 @@
           position.min = "0";
           position.max = "100";
           position.step = "1";
-          position.value = String(Math.round(usesRelativeStopScale
+          position.value = String(Math.round(usesRelativeScale
             ? getRelativeStopPercent(stops, index)
             : stop.pos * 100));
 
@@ -2163,7 +2366,7 @@
           position.disabled = locksFirstStop && index === 0;
 
           const updatePosition = (value) => {
-            if (usesRelativeStopScale) {
+            if (usesRelativeScale) {
               setRelativeStopPercent(stops, index, Number(value));
               syncPlanetPercentControls();
               updateGradientPreview();
@@ -2286,7 +2489,7 @@
           name,
           stops: cloneStops(currentState().gradientStops),
         };
-        if (isPlanetLikeMode()) {
+        if (hasGradientSubtabs()) {
           palette.iceStops = cloneStops(currentState().iceStops);
           palette.cloudStops = cloneCloudStops(currentState().cloudStops);
           palette.iceCaps = currentState().iceCaps;
@@ -2338,6 +2541,10 @@
         state.tidalEdgeDetailFreq = Number(tidalEdgeDetailFreqInput.value);
         state.tidalEdgeDetailAmp = Number(tidalEdgeDetailAmpInput.value);
         state.tidalEdgeSoftness = Number(tidalEdgeSoftnessInput.value);
+        state.moonCraterCount = Number(moonCraterCountInput.value);
+        state.moonCraterSize = Number(moonCraterSizeInput.value);
+        state.moonCraterDepth = Number(moonCraterDepthInput.value);
+        state.moonCraterRim = Number(moonCraterRimInput.value);
       }
 
       function applyMode(mode) {
@@ -2346,6 +2553,9 @@
         const config = currentConfig();
         const state = currentState();
         aspect = config.defaultAspect;
+        if (!hasGradientSubtabs(mode)) {
+          state.activeGradient = "surface";
+        }
 
         scaleInput.min = String(config.scale.min);
         scaleInput.max = String(config.scale.max);
@@ -2364,24 +2574,34 @@
         tidalEdgeDetailFreqInput.value = String(state.tidalEdgeDetailFreq);
         tidalEdgeDetailAmpInput.value = String(state.tidalEdgeDetailAmp);
         tidalEdgeSoftnessInput.value = String(state.tidalEdgeSoftness);
+        moonCraterCountInput.value = String(state.moonCraterCount);
+        moonCraterSizeInput.value = String(state.moonCraterSize);
+        moonCraterDepthInput.value = String(state.moonCraterDepth);
+        moonCraterRimInput.value = String(state.moonCraterRim);
 
         const isPlanetLike = isPlanetLikeMode();
         const isTidal = activeMode === "tidal";
+        const isMoon = activeMode === "moon";
+        const hasAuxiliaryMaps = hasPlanetAuxiliaryMaps();
+        const hasSubtabs = hasGradientSubtabs();
         document.body.classList.toggle("planet-mode", isPlanetLike);
         document.body.classList.toggle("tidal-mode", isTidal);
         gasTab.classList.toggle("active", activeMode === "gas");
         planetTab.classList.toggle("active", activeMode === "planet");
         moltenTab.classList.toggle("active", activeMode === "molten");
+        moonTab.classList.toggle("active", activeMode === "moon");
         tidalTab.classList.toggle("active", isTidal);
         gasTab.setAttribute("aria-selected", activeMode === "gas" ? "true" : "false");
         planetTab.setAttribute("aria-selected", activeMode === "planet" ? "true" : "false");
         moltenTab.setAttribute("aria-selected", activeMode === "molten" ? "true" : "false");
+        moonTab.setAttribute("aria-selected", activeMode === "moon" ? "true" : "false");
         tidalTab.setAttribute("aria-selected", isTidal ? "true" : "false");
+        moonCraterFields.classList.toggle("is-hidden", !isMoon);
         aspectButton.classList.toggle("is-hidden", isPlanetLike);
         aspectButton.innerHTML = aspect === 1 ? "Stretch to 2&times;1" : "Back to 1&times;1";
         stretchField.classList.toggle("is-hidden", isPlanetLike);
         tiledPreviewGroup.classList.toggle("is-hidden", isPlanetLike);
-        mapsGroup.classList.toggle("is-hidden", !isPlanetLike);
+        mapsGroup.classList.toggle("is-hidden", !hasAuxiliaryMaps);
         stretchedCanvas.classList.toggle("is-hidden", isPlanetLike);
         planetPreviewLabel.textContent = config.label;
         specularLabel.textContent = activeMode === "molten" ? "Emissive map" : "Specular map";
@@ -2389,8 +2609,8 @@
         paletteNameField.classList.toggle("is-hidden", isTidal);
         paletteActions.classList.toggle("is-hidden", isTidal);
         saveStatus.classList.toggle("is-hidden", isTidal);
-        document.getElementById("iceCapsField").classList.toggle("is-hidden", isTidal);
-        document.getElementById("gradientModeTabs").classList.toggle("is-hidden", isTidal);
+        document.getElementById("iceCapsField").classList.toggle("is-hidden", !hasSubtabs);
+        document.getElementById("gradientModeTabs").classList.toggle("is-hidden", !hasSubtabs);
         document.querySelector(".grad-head").classList.toggle("is-hidden", isTidal);
         gradPreview.classList.toggle("is-hidden", isTidal);
         gradStops.classList.toggle("is-hidden", isTidal);
@@ -2417,6 +2637,10 @@
         tidalEdgeDetailFreqVal.textContent = tidalEdgeDetailFreqInput.value;
         tidalEdgeDetailAmpVal.textContent = tidalEdgeDetailAmpInput.value + "%";
         tidalEdgeSoftnessVal.textContent = tidalEdgeSoftnessInput.value + "%";
+        moonCraterCountVal.textContent = moonCraterCountInput.value;
+        moonCraterSizeVal.textContent = moonCraterSizeInput.value + "%";
+        moonCraterDepthVal.textContent = moonCraterDepthInput.value + "%";
+        moonCraterRimVal.textContent = moonCraterRimInput.value + "%";
       }
 
       function syncGradientModeTabs() {
@@ -2435,6 +2659,26 @@
       });
       octavesInput.addEventListener("input", () => {
         currentState().octaves = Number(octavesInput.value);
+        syncLabels();
+        scheduleRender(true);
+      });
+      moonCraterCountInput.addEventListener("input", () => {
+        currentState().moonCraterCount = Number(moonCraterCountInput.value);
+        syncLabels();
+        scheduleRender(true);
+      });
+      moonCraterSizeInput.addEventListener("input", () => {
+        currentState().moonCraterSize = Number(moonCraterSizeInput.value);
+        syncLabels();
+        scheduleRender(true);
+      });
+      moonCraterDepthInput.addEventListener("input", () => {
+        currentState().moonCraterDepth = Number(moonCraterDepthInput.value);
+        syncLabels();
+        scheduleRender(true);
+      });
+      moonCraterRimInput.addEventListener("input", () => {
+        currentState().moonCraterRim = Number(moonCraterRimInput.value);
         syncLabels();
         scheduleRender(true);
       });
@@ -2506,6 +2750,7 @@
       gasTab.addEventListener("click", () => applyMode("gas"));
       planetTab.addEventListener("click", () => applyMode("planet"));
       moltenTab.addEventListener("click", () => applyMode("molten"));
+      moonTab.addEventListener("click", () => applyMode("moon"));
       tidalTab.addEventListener("click", () => applyMode("tidal"));
       surfaceGradientTab.addEventListener("click", () => {
         currentState().activeGradient = "surface";

@@ -186,6 +186,7 @@ const SYSTEM_PLANET_ROTATION_DISPLAY_SCALE = 3.14;
 const PLANET_ENTRY_MIN_OVERLAY_MS = 1500;
 const PLANET_ENTRY_ZOOM_MS = 520;
 const PLANET_ENTRY_FADE_MS = 420;
+const SYSTEM_ORBIT_STAR_EDGE_GAP_CAP = 96;
 let activeSystemStar = null;
 let activeSystemStarSurface = null;
 let tooltipTypingTimeout = null;
@@ -2149,7 +2150,8 @@ function renderStarSystem(node) {
   const orbitItems = [];
   starSystem.append(orbitLayer);
 
-  const minOrbit = Math.max(starRadius * 1.12, -starX + 96);
+  const starEdgeOrbit = starRadius + Math.min(starRadius * 0.12, SYSTEM_ORBIT_STAR_EDGE_GAP_CAP);
+  const minOrbit = Math.max(starEdgeOrbit, -starX + 96);
   const maxOrbit = Math.max(minOrbit + 80, width - starX - 84);
   const orbitRadii = createSystemOrbitRadii(node.planets, minOrbit, maxOrbit, random);
 
