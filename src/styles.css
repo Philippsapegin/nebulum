@@ -1998,6 +1998,22 @@ body.system-open .music-player {
   gap: 8px;
 }
 
+.planet-screen__object-hit {
+  position: absolute;
+  z-index: 8;
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transform: translate(
+    calc(var(--planet-screen-parallax-x, 0px) * var(--planet-screen-hit-depth, 0)),
+    calc(var(--planet-screen-parallax-y, 0px) * var(--planet-screen-hit-depth, 0))
+  );
+  transition: transform 120ms ease-out;
+}
+
 .planet-screen__layer {
   position: absolute;
   inset: -80px;
@@ -2187,6 +2203,182 @@ body.system-open .music-player {
     0 1px 8px rgba(0, 0, 0, 0.44);
   text-transform: uppercase;
   pointer-events: none;
+}
+
+.object-detail-screen {
+  --object-detail-surface-height: 90vh;
+  position: absolute;
+  inset: 0;
+  z-index: 43;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+
+.object-detail-screen.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.object-detail-screen__top-bar {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  z-index: 3;
+  display: flex;
+  gap: 8px;
+}
+
+.object-detail-screen__texture {
+  position: relative;
+  width: calc(var(--object-detail-surface-height) * 2);
+  height: var(--object-detail-surface-height);
+  max-width: none;
+  max-height: none;
+  aspect-ratio: 2 / 1;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.object-detail-screen__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.object-detail-screen__hex-overlay {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.object-detail-screen__frame {
+  --object-detail-line-margin: 17px;
+  --object-detail-line-left: calc(var(--object-detail-observed-left, 0px) + var(--object-detail-line-margin));
+  --object-detail-line-right: calc(var(--object-detail-observed-right, 0px) + var(--object-detail-line-margin));
+  --object-detail-line-top: calc(var(--object-detail-observed-top, 0px) + var(--object-detail-line-margin));
+  --object-detail-line-bottom: calc(var(--object-detail-observed-bottom, 0px) + var(--object-detail-line-margin));
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  color: rgba(255, 255, 255, 0.92);
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.object-detail-screen__line {
+  position: absolute;
+  left: var(--object-detail-line-left);
+  right: var(--object-detail-line-right);
+  z-index: 1;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.object-detail-screen__line--top {
+  top: var(--object-detail-line-top);
+}
+
+.object-detail-screen__line--bottom {
+  bottom: var(--object-detail-line-bottom);
+}
+
+.object-detail-screen__body-title {
+  position: absolute;
+  left: 50%;
+  top: calc(100% - var(--object-detail-line-bottom));
+  z-index: 3;
+  padding: 0 18px;
+  background: #000;
+  color: rgba(255, 255, 255, 0.94);
+  font-family: "Wire One", "Albert Sans", sans-serif;
+  font-size: 46px;
+  font-weight: 400;
+  line-height: 0.9;
+  letter-spacing: 0;
+  text-shadow:
+    0 0 14px rgba(255, 255, 255, 0.12),
+    0 1px 8px rgba(0, 0, 0, 0.44);
+  text-transform: uppercase;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.object-detail-screen__marker-layer {
+  position: absolute;
+  left: var(--object-detail-line-left);
+  right: var(--object-detail-line-right);
+  top: var(--object-detail-line-top);
+  z-index: 2;
+  height: 1px;
+}
+
+.object-detail-screen__day-marker {
+  position: absolute;
+  top: 0;
+  width: 28px;
+  height: 18px;
+  color: currentColor;
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity 120ms ease;
+}
+
+.object-detail-screen__day-marker-mask {
+  position: absolute;
+  left: 50%;
+  top: -3px;
+  width: 29px;
+  height: 6px;
+  background: #000;
+  transform: translateX(-50%);
+}
+
+.object-detail-screen__day-marker-glow {
+  position: absolute;
+  left: 50%;
+  top: -15px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow:
+    0 0 8px currentColor,
+    0 0 18px currentColor;
+  transform: translateX(-50%);
+}
+
+.object-detail-screen__day-marker.black-hole .object-detail-screen__day-marker-glow::after {
+  position: absolute;
+  inset: 1.5px;
+  border-radius: 50%;
+  background: #000;
+  content: "";
+}
+
+.object-detail-screen__day-marker-triangle {
+  position: absolute;
+  left: 50%;
+  top: -1px;
+  width: 9px;
+  height: 7px;
+  overflow: visible;
+  transform: translateX(-50%);
+}
+
+.object-detail-screen__day-marker-triangle path {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.9);
+  stroke-width: 0.9;
+  stroke-linejoin: round;
 }
 
 .planet-window__info {

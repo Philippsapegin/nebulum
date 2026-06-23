@@ -33,6 +33,7 @@ const PLANET_SCREEN_EMISSIVE_NOISE_SPEED = 0.030;
 const PLANET_SCREEN_EMISSIVE_NOISE_BLACK_STOP = 0.16;
 const PLANET_SCREEN_EMISSIVE_NOISE_WHITE_STOP = 1;
 const PLANET_SCREEN_EMISSIVE_NOISE_OCTAVES = 3;
+const MOON_DETAIL_TEXTURE_HEIGHT = 1024;
 
 export function createPlanetScreenRenderer({
   root,
@@ -40,10 +41,12 @@ export function createPlanetScreenRenderer({
   seed,
   createSystemStarSurface,
   drawSystemStarSurface,
+  onOpenObjectDetail,
 }) {
   const planetScreen = root;
   const planetScreenController = controller;
   const SEED = seed;
+  const openObjectDetail = onOpenObjectDetail;
 
 function renderPlanetScreenFallback(planet) {
   planetScreenController.state.activeStar = null;
@@ -219,8 +222,62 @@ function renderPlanetScreenPlanet(layer, planet, geometry, starDir) {
 
   const sphere3D = createPlanetScreen3D(planet, texture, geometry, starDir, glowColor);
   layer.append(sphere3D.canvas);
+  renderPlanetScreenObjectHit(planetScreen, {
+    x: centerX,
+    y: centerY,
+    radius,
+    depth: -0.18,
+    detail: createPlanetScreenBodyDetail(planet, texture),
+  });
   planetScreenController.state.active3D = sphere3D;
   renderPlanetScreen3D(sphere3D);
+}
+
+function createPlanetScreenBodyDetail(planet, texture) {
+  return {
+    kind: planet.kind,
+    name: planet.name,
+    textureUrl: getPlanetScreenTextureUrl(texture),
+    textureCanvas: texture?.canvas ?? null,
+    cloudCanvas: texture?.cloudCanvas ?? null,
+    bumpCanvas: planet.kind === "PLANET" ? texture?.bumpCanvas ?? null : null,
+    dayCycleSeconds: planet.dayCycleSeconds,
+    starGlowColor: planet.systemStarColor,
+    starBlackCore: Boolean(planet.systemStarBlackCore),
+    sizeIndex: planet.sizeIndex,
+    bodySizeRank: planet.sizeIndex + 3,
+  };
+}
+
+function getPlanetScreenTextureUrl(texture) {
+  if (texture?.url) {
+    return texture.url;
+  }
+
+  return texture?.canvas
+    ? `url(${texture.canvas.toDataURL("image/png")})`
+    : null;
+}
+
+function renderPlanetScreenObjectHit(root, { x, y, radius, depth, detail }) {
+  if (!openObjectDetail || !detail?.textureUrl) {
+    return;
+  }
+
+  const hit = document.createElement("button");
+  hit.className = "planet-screen__object-hit";
+  hit.type = "button";
+  hit.setAttribute("aria-label", detail.name ? `Open ${detail.name}` : "Open object");
+  hit.style.width = `${radius * 2}px`;
+  hit.style.height = `${radius * 2}px`;
+  hit.style.left = `${x - radius - 80}px`;
+  hit.style.top = `${y - radius - 80}px`;
+  hit.style.setProperty("--planet-screen-hit-depth", String(depth));
+  hit.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openObjectDetail(detail);
+  });
+  root.append(hit);
 }
 
 function getPlanetScreenEmissiveNoiseFrequency() {
@@ -265,9 +322,20 @@ function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, st
     moonElement.style.height = `${radius * 2}px`;
     moonElement.style.left = `${x - radius}px`;
     moonElement.style.top = `${y - radius}px`;
-    const moonTexture = createMoonTexture(`${SEED}:moon-texture:${planet.systemId}:${planet.name}:${moon.name}`, undefined, {
+    const moonTextureSeed = `${SEED}:moon-texture:${planet.systemId}:${planet.name}:${moon.name}`;
+    const moonTexture = createMoonTexture(moonTextureSeed, undefined, {
       paletteMode: moonPaletteMode,
     });
+    const moonDetail = {
+      kind: "MOON",
+      name: moon.name,
+      textureUrl: moonTexture.url,
+      sizeIndex: moon.sizeIndex,
+      bodySizeRank: moon.sizeIndex,
+      createTexture: () => createMoonTexture(moonTextureSeed, MOON_DETAIL_TEXTURE_HEIGHT, {
+        paletteMode: moonPaletteMode,
+      })?.url ?? null,
+    };
     const moonTextureElement = document.createElement("span");
     moonTextureElement.className = "planet-screen__moon-texture";
     moonTextureElement.style.backgroundImage = moonTexture.url;
@@ -295,6 +363,13 @@ function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, st
       y,
       radius,
       depth,
+    });
+    renderPlanetScreenObjectHit(planetScreen, {
+      x,
+      y,
+      radius,
+      depth,
+      detail: moonDetail,
     });
   }
 }

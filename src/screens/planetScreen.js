@@ -81,7 +81,7 @@ export function createPlanetScreenController({
 
   function clearRendered() {
     root
-      .querySelectorAll(".planet-screen__layer, .planet-screen__title, .planet-screen__moon-label, .planet-screen__star-hover-glow")
+      .querySelectorAll(".planet-screen__layer, .planet-screen__title, .planet-screen__moon-label, .planet-screen__star-hover-glow, .planet-screen__object-hit")
       .forEach((element) => element.remove());
   }
 

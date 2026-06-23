@@ -29,7 +29,8 @@ export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_
   const createUrls = options.createUrls ?? true;
   const textureMode = options.textureMode ?? "default";
   const surfaceScale = options.surfaceScale ?? 7;
-  const cacheKey = `${seed}:${textureHeight}:${waterPosition.toFixed(4)}:${iceCaps.toFixed(2)}:${cloudAlpha ?? "no-clouds"}:${textureMode}:${surfaceScale.toFixed(3)}:${createUrls ? "urls" : "canvas"}`;
+  const freezeWater = Boolean(options.freezeWater);
+  const cacheKey = `${seed}:${textureHeight}:${waterPosition.toFixed(4)}:${iceCaps.toFixed(2)}:${cloudAlpha ?? "no-clouds"}:${textureMode}:${surfaceScale.toFixed(3)}:${freezeWater ? "frozen-water" : "normal-water"}:${createUrls ? "urls" : "canvas"}`;
   if (planetTextureCache.has(cacheKey)) {
     return planetTextureCache.get(cacheKey);
   }
@@ -74,6 +75,8 @@ export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_
     renderSurfaceCanvas(surfaceCanvas, field, surfaceStops, iceStops, {
       seed: `${seed}:ice`,
       iceCaps: textureMode === "molten" ? 0 : iceCaps,
+      freezeWater,
+      waterPosition,
     });
   }
 
@@ -281,7 +284,12 @@ function renderSurfaceCanvas(canvas, field, surfaceStops, iceStops, iceConfig) {
   for (let index = 0; index < field.length; index += 1) {
     const baseNoise = THREE.MathUtils.clamp(field[index], 0, 1);
     const color = samplePaletteStops(surfaceStops, baseNoise);
-    const iceAlpha = getIceMaskAlpha(index, width, height, iceMask, baseNoise, surfaceStops[1]?.pos ?? 0);
+    const waterLimit = surfaceStops[1]?.pos ?? 0;
+    const specularWaterLimit = THREE.MathUtils.clamp((iceConfig.waterPosition ?? waterLimit) + 0.01, 0, 1);
+    const shouldFreezeWater = iceConfig.freezeWater && baseNoise <= specularWaterLimit && specularWaterLimit > 0;
+    const iceAlpha = shouldFreezeWater
+      ? 1
+      : getIceMaskAlpha(index, width, height, iceMask, baseNoise, waterLimit);
     const iceColor = iceAlpha > 0 ? samplePaletteStops(iceStops, baseNoise) : color;
     const offset = index * 4;
     image.data[offset] = THREE.MathUtils.lerp(color[0], iceColor[0], iceAlpha);
@@ -391,18 +399,18 @@ function createCloudNoise(u, v, seed, baseFreq, octaveCount = PLANET_CLOUD_OCTAV
 function createIceMaskConfig(seed, iceCaps) {
   const random = createRandom(seed);
   return {
-    width: THREE.MathUtils.clamp(iceCaps / 100, 0, 0.5),
+    capWidth: THREE.MathUtils.clamp(iceCaps / 100, 0, 0.55),
     isFullCoverage: iceCaps >= 55,
     macroFreq: 7 + Math.floor(random() * 7),
-    macroAmp: (5 + random() * 7) / 100,
+    macroAmp: 5 + random() * 7,
     detailFreq: 50,
-    detailAmp: 3 / 100,
+    detailAmp: 3,
     seed,
   };
 }
 
 function getIceMaskAlpha(index, width, height, config, noiseValue, waterLimit) {
-  if (!config.width) {
+  if (!config.capWidth) {
     return 0;
   }
   if (config.isFullCoverage) {
@@ -413,14 +421,48 @@ function getIceMaskAlpha(index, width, height, config, noiseValue, waterLimit) {
   const y = Math.floor(index / width);
   const u = x / width;
   const v = y / height;
-  const poleDistance = Math.min(v, 1 - v);
-  const isLand = noiseValue > waterLimit;
-  const wave =
-    (sampleTileableValueNoise(u, 0.23, config.macroFreq, 1, hashString(`${config.seed}:macro`)) - 0.5) * 2 * config.macroAmp +
-    (isLand ? 0 : (sampleTileableValueNoise(u, 0.61, config.detailFreq, 1, hashString(`${config.seed}:detail`)) - 0.5) * 2 * config.detailAmp);
-  const edge = THREE.MathUtils.clamp(config.width + wave, 0, 0.5);
-  const softness = isLand ? 0.035 : 0.012;
-  return 1 - smoothstep(edge, edge + softness, poleDistance);
+  const isWater = noiseValue <= waterLimit;
+  const localCapWidth = Math.min(0.5, config.capWidth + (isWater ? 0 : 0.05));
+  const northEdge = createPoleIceEdge(u, v, config.seed, config, localCapWidth, isWater);
+  const southEdge = createPoleIceEdge(u, 1 - v, hashString(`${config.seed}:south`), config, localCapWidth, isWater);
+  const edge = Math.max(northEdge, southEdge);
+
+  if (isWater) {
+    return edge >= 0 ? 1 : 0;
+  }
+
+  const softBand = Math.max(0.036, localCapWidth * 0.66);
+  return THREE.MathUtils.clamp((edge + softBand) / softBand, 0, 1);
+}
+
+function createPoleIceEdge(u, distanceFromPole, seed, config, localCapWidth, isWater) {
+  const normalizedPoleDistance = distanceFromPole / 0.5;
+  const edgeOffset = createLayeredIceEdgeOffset(u, normalizedPoleDistance, seed, config, isWater);
+  const edge = Math.max(0, localCapWidth * 1.35 + edgeOffset);
+  return edge - distanceFromPole;
+}
+
+function createLayeredIceEdgeOffset(u, normalizedPoleDistance, seed, config, isWater) {
+  const macroFreq = Math.max(1, Math.round(config.macroFreq ?? 2));
+  const detailFreq = Math.max(1, Math.round(config.detailFreq ?? 7));
+  const macroAmp = Math.max(0, (config.macroAmp ?? 9) / 100);
+  const detailAmp = isWater ? Math.max(0, (config.detailAmp ?? 4) / 100) : 0;
+  const macro =
+    sampleTileableValueNoise(u, 0.13, macroFreq, 1, hashString(`${seed}:macro-a`)) * 0.58 +
+    sampleTileableValueNoise(u, 0.49, macroFreq + 1, 1, hashString(`${seed}:macro-b`)) * 0.42;
+  const macroWave = (macro - 0.5) * 2;
+  let detailWave = 0;
+
+  if (detailAmp > 0) {
+    const irregularity =
+      sampleTileableValueNoise(u, 0.31, detailFreq, 1, hashString(`${seed}:detail-a`)) * 0.38 +
+      sampleTileableValueNoise(u, 0.67, detailFreq * 2 - 1, 1, hashString(`${seed}:detail-b`)) * 0.31 +
+      sampleTileableValueNoise(u, normalizedPoleDistance + 0.17, detailFreq * 3 + 2, 5, hashString(`${seed}:detail-c`)) * 0.2 +
+      sampleTileableValueNoise(u, 0.83, detailFreq * 5 + 2, 1, hashString(`${seed}:detail-d`)) * 0.11;
+    detailWave = (irregularity - 0.5) * 2;
+  }
+
+  return macroWave * macroAmp + detailWave * detailAmp;
 }
 
 function getTidalCenterMask(u, v, percent, seed) {

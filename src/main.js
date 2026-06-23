@@ -96,6 +96,11 @@ const planetLinkPath = document.querySelector("#planet-link-path");
 const planetScreen = document.querySelector("#planet-screen");
 const planetScreenBackStarmap = document.querySelector("#planet-screen-back-starmap");
 const planetScreenBackSystem = document.querySelector("#planet-screen-back-system");
+const objectDetailScreen = document.querySelector("#object-detail-screen");
+const objectDetailTexture = document.querySelector("#object-detail-texture");
+const objectDetailBackStarmap = document.querySelector("#object-detail-back-starmap");
+const objectDetailBackSystem = document.querySelector("#object-detail-back-system");
+const objectDetailBackOrbit = document.querySelector("#object-detail-back-orbit");
 const systemTransitionOverlay = document.createElement("div");
 systemTransitionOverlay.className = "system-transition-overlay";
 starWindow.append(systemTransitionOverlay);
@@ -187,6 +192,40 @@ const PLANET_ENTRY_MIN_OVERLAY_MS = 1500;
 const PLANET_ENTRY_ZOOM_MS = 520;
 const PLANET_ENTRY_FADE_MS = 420;
 const SYSTEM_ORBIT_STAR_EDGE_GAP_CAP = 96;
+const OBJECT_DETAIL_SURFACE_WORLD_WIDTH = 2;
+const OBJECT_DETAIL_LIGHT_Z = 1.28;
+const OBJECT_DETAIL_LIGHT_INTENSITY = 3.71;
+const OBJECT_DETAIL_LIGHT_ANGLE_DEGREES = 25;
+const OBJECT_DETAIL_LIGHT_PENUMBRA = 0.2;
+const OBJECT_DETAIL_AMBIENT_INTENSITY = 0.08;
+const OBJECT_DETAIL_DISPLACEMENT_SCALE = 0.3;
+const OBJECT_DETAIL_CLOUD_HEIGHT = 0.23;
+const OBJECT_DETAIL_HEX_GRID_HEIGHT = OBJECT_DETAIL_CLOUD_HEIGHT - 0.008;
+const OBJECT_DETAIL_HEX_GRID_TEXTURE_WIDTH = 2048;
+const OBJECT_DETAIL_HEX_GRID_TEXTURE_HEIGHT = 1024;
+const OBJECT_DETAIL_CLOUD_ALPHA_TEST = 0.03;
+const OBJECT_DETAIL_CLOUD_CYCLE_SECONDS = 180;
+const OBJECT_DETAIL_GAS_GIANT_CLOUD_CYCLE_SECONDS = OBJECT_DETAIL_CLOUD_CYCLE_SECONDS / 3;
+const OBJECT_DETAIL_GAS_GIANT_TEXTURE_CYCLE_SECONDS = OBJECT_DETAIL_CLOUD_CYCLE_SECONDS * 3;
+const OBJECT_DETAIL_CLOUD_SHADOW_STRENGTH = 0.38;
+const OBJECT_DETAIL_CLOUD_SHADOW_DARKEN = 0.48;
+const OBJECT_DETAIL_CLOUD_SHADOW_OFFSET_U = 0.035;
+const OBJECT_DETAIL_CLOUD_SHADOW_OFFSET_V = -0.018;
+const OBJECT_DETAIL_CAMERA_HALF_WIDTH = 1.15;
+const OBJECT_DETAIL_CAMERA_HALF_HEIGHT = 0.575;
+const OBJECT_DETAIL_CURSOR_CLEAR_RADIUS = 0.184;
+const OBJECT_DETAIL_CURSOR_CLEAR_FEATHER = 0.12;
+const OBJECT_DETAIL_CURSOR_LIGHT_INTENSITY = OBJECT_DETAIL_LIGHT_INTENSITY;
+const OBJECT_DETAIL_CURSOR_LIGHT_ANGLE_DEGREES = 12;
+const OBJECT_DETAIL_CURSOR_LIGHT_PENUMBRA = 0.62;
+const OBJECT_DETAIL_CURSOR_LIGHT_FADE_SPEED = 7.5;
+const OBJECT_DETAIL_LIGHT_MAX_CHANNEL = 1.08;
+const OBJECT_DETAIL_CURSOR_LIGHT_MIN_PROXIMITY = 0.16;
+const OBJECT_DETAIL_TINT_LIGHT_INTENSITY = 0.46;
+const OBJECT_DETAIL_TINT_LIGHT_ANGLE_DEGREES = 30;
+const OBJECT_DETAIL_TINT_LIGHT_PENUMBRA = 0.72;
+const OBJECT_DETAIL_LIGHT_FALLBACK_DAY_SECONDS = 24;
+const OBJECT_DETAIL_LIGHT_WRAP_MARGIN = 0.9;
 let activeSystemStar = null;
 let activeSystemStarSurface = null;
 let tooltipTypingTimeout = null;
@@ -199,6 +238,10 @@ let isHzZoneVisible = false;
 let activeZoneElements = [];
 let isPlanetWindowOpen = false;
 let openPlanetData = null;
+let objectDetailOrbitPlanet = null;
+let isObjectDetailOpen = false;
+let objectDetailToken = 0;
+let objectDetail3D = null;
 let isDraggingPlanetWindow = false;
 const planetWindowOffset = { x: 0, y: 0 };
 const planetWindowDragStart = { x: 0, y: 0, offsetX: 0, offsetY: 0 };
@@ -329,12 +372,29 @@ function initPanel() {
   planetScreenBackSystem.addEventListener("click", returnToStarSystemFromPlanet);
   planetScreenBackStarmap.addEventListener("click", () => {
     planetScreenController.close();
+    closeObjectDetailScreen();
     closeStarWindow();
   });
+  objectDetailBackSystem.addEventListener("click", () => {
+    closeObjectDetailScreen();
+    returnToStarSystemFromPlanet();
+  });
+  objectDetailBackStarmap.addEventListener("click", () => {
+    closeObjectDetailScreen();
+    planetScreenController.close();
+    closeStarWindow();
+  });
+  objectDetailBackOrbit.addEventListener("click", returnToOrbitFromObjectDetail);
+  objectDetailTexture.addEventListener("pointermove", updateObjectDetailCursorInteraction);
+  objectDetailTexture.addEventListener("pointerleave", clearObjectDetailCursorInteraction);
 
   planetWindowClose.addEventListener("click", closePlanetWindow);
 
   window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && isObjectDetailOpen) {
+      returnToOrbitFromObjectDetail();
+      return;
+    }
     if (event.key === "Escape" && planetScreenController.isOpen()) {
       planetScreenController.close();
       return;
@@ -1910,6 +1970,7 @@ function closeStarWindow() {
   setSystemTransitionOverlay(0);
   releaseSystemPointerLock();
   planetScreenController.close();
+  closeObjectDetailScreen();
   closePlanetWindow();
   activeSystemStar = null;
   activeSystemStarSurface = null;
@@ -1945,6 +2006,7 @@ async function loadPlanetScreenRenderer() {
           seed: SEED,
           createSystemStarSurface,
           drawSystemStarSurface,
+          onOpenObjectDetail: openObjectDetailFromPlanetView,
         });
         return planetScreenRenderer;
       })
@@ -1994,6 +2056,813 @@ function returnToStarSystemFromPlanet() {
   updateSystemGlow(window.innerWidth / 2, window.innerHeight / 2, 0, 0);
   updateSystemParallax(lastClientPointer.x, lastClientPointer.y, true);
   preloadPlanetScreenRenderer();
+}
+
+async function openObjectDetailFromPlanetView(detail) {
+  if (!detail || !openPlanetData) {
+    return;
+  }
+
+  objectDetailOrbitPlanet = openPlanetData;
+  isObjectDetailOpen = true;
+  const detailToken = ++objectDetailToken;
+  cancelPlanetEntryTransition();
+  closePlanetWindow();
+  disposeObjectDetail3D();
+  objectDetailTexture.replaceChildren();
+  objectDetailTexture.style.backgroundImage = "none";
+  objectDetailScreen.classList.add("visible");
+  objectDetailScreen.setAttribute("aria-hidden", "false");
+  planetScreenController.close();
+
+  await nextAnimationFrame();
+  if (!isObjectDetailOpen || detailToken !== objectDetailToken) {
+    return;
+  }
+
+  renderObjectDetailContent(detail);
+  if (detail.createTexture) {
+    await nextAnimationFrame();
+    if (!isObjectDetailOpen || detailToken !== objectDetailToken) {
+      return;
+    }
+
+    const textureUrl = detail.createTexture();
+    if (isObjectDetailOpen && detailToken === objectDetailToken && textureUrl) {
+      detail.textureUrl = textureUrl;
+      renderObjectDetailContent(detail);
+    }
+  }
+}
+
+function renderObjectDetailContent(detail) {
+  disposeObjectDetail3D();
+  objectDetailTexture.replaceChildren();
+  objectDetailTexture.style.backgroundImage = "none";
+
+  if ((detail.kind === "PLANET" || detail.kind === "GAS GIANT") && detail.textureCanvas) {
+    renderObjectDetailPlanetSurface(detail);
+    renderObjectDetailFrame(detail);
+    return;
+  }
+
+  objectDetailTexture.style.backgroundImage = detail.textureUrl ?? "none";
+  renderObjectDetailFlatHexGrid(detail);
+  renderObjectDetailFrame(detail);
+}
+
+function renderObjectDetailFrame(detail) {
+  const frame = document.createElement("div");
+  frame.className = "object-detail-screen__frame";
+  frame.style.color = detail.starGlowColor ?? "rgba(255, 255, 255, 0.92)";
+
+  const topLine = document.createElement("div");
+  topLine.className = "object-detail-screen__line object-detail-screen__line--top";
+  const markerLayer = document.createElement("div");
+  markerLayer.className = "object-detail-screen__marker-layer";
+  for (let index = 0; index < 2; index += 1) {
+    const marker = document.createElement("div");
+    marker.className = `object-detail-screen__day-marker${detail.starBlackCore ? " black-hole" : ""}`;
+    marker.innerHTML = `
+      <span class="object-detail-screen__day-marker-mask"></span>
+      <span class="object-detail-screen__day-marker-glow"></span>
+      <svg class="object-detail-screen__day-marker-triangle" viewBox="0 0 9 7" aria-hidden="true">
+        <path d="M1 1 L4.5 6 L8 1 Z" />
+      </svg>
+    `;
+    markerLayer.append(marker);
+  }
+
+  const bottomLine = document.createElement("div");
+  bottomLine.className = "object-detail-screen__line object-detail-screen__line--bottom";
+  const title = document.createElement("div");
+  title.className = "object-detail-screen__body-title";
+  title.textContent = detail.name ?? "";
+
+  frame.append(topLine, markerLayer, bottomLine, title);
+  objectDetailTexture.append(frame);
+  updateObjectDetailFrame();
+}
+
+function updateObjectDetailObservedBounds() {
+  const rect = objectDetailTexture.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+
+  const rawBounds = objectDetail3D
+    ? getObjectDetailProjectedSurfaceBounds(rect)
+    : {
+      left: 0,
+      top: 0,
+      right: rect.width,
+      bottom: rect.height,
+    };
+  const left = THREE.MathUtils.clamp(
+    Math.max(rawBounds.left, -rect.left),
+    0,
+    rect.width,
+  );
+  const right = THREE.MathUtils.clamp(
+    Math.min(rawBounds.right, window.innerWidth - rect.left),
+    left,
+    rect.width,
+  );
+  const top = THREE.MathUtils.clamp(
+    Math.max(rawBounds.top, -rect.top),
+    0,
+    rect.height,
+  );
+  const bottom = THREE.MathUtils.clamp(
+    Math.min(rawBounds.bottom, window.innerHeight - rect.top),
+    top,
+    rect.height,
+  );
+  const bounds = {
+    left,
+    top,
+    right,
+    bottom,
+    width: Math.max(1, right - left),
+    height: Math.max(1, bottom - top),
+  };
+
+  objectDetailTexture.style.setProperty("--object-detail-observed-left", `${bounds.left}px`);
+  objectDetailTexture.style.setProperty("--object-detail-observed-top", `${bounds.top}px`);
+  objectDetailTexture.style.setProperty("--object-detail-observed-right", `${rect.width - bounds.right}px`);
+  objectDetailTexture.style.setProperty("--object-detail-observed-bottom", `${rect.height - bounds.bottom}px`);
+  return bounds;
+}
+
+function getObjectDetailProjectedSurfaceBounds(rect) {
+  const cameraWidth = OBJECT_DETAIL_CAMERA_HALF_WIDTH * 2;
+  const cameraHeight = OBJECT_DETAIL_CAMERA_HALF_HEIGHT * 2;
+  const left = ((-OBJECT_DETAIL_SURFACE_WORLD_WIDTH / 2) + OBJECT_DETAIL_CAMERA_HALF_WIDTH) / cameraWidth * rect.width;
+  const right = ((OBJECT_DETAIL_SURFACE_WORLD_WIDTH / 2) + OBJECT_DETAIL_CAMERA_HALF_WIDTH) / cameraWidth * rect.width;
+  const top = (OBJECT_DETAIL_CAMERA_HALF_HEIGHT - 0.5) / cameraHeight * rect.height;
+  const bottom = (OBJECT_DETAIL_CAMERA_HALF_HEIGHT + 0.5) / cameraHeight * rect.height;
+  return { left, top, right, bottom };
+}
+
+function renderObjectDetailFlatHexGrid(detail) {
+  const canvas = document.createElement("canvas");
+  canvas.className = "object-detail-screen__hex-overlay";
+  canvas.width = OBJECT_DETAIL_HEX_GRID_TEXTURE_WIDTH;
+  canvas.height = OBJECT_DETAIL_HEX_GRID_TEXTURE_HEIGHT;
+  const hexes = drawObjectDetailHexGrid(canvas, detail.bodySizeRank);
+  canvas.objectDetailHexes = hexes;
+  canvas.dataset.hexCount = String(hexes.length);
+  objectDetailTexture.append(canvas);
+}
+
+function closeObjectDetailScreen() {
+  isObjectDetailOpen = false;
+  objectDetailToken += 1;
+  disposeObjectDetail3D();
+  objectDetailScreen.classList.remove("visible");
+  objectDetailScreen.setAttribute("aria-hidden", "true");
+  objectDetailTexture.replaceChildren();
+  objectDetailTexture.style.backgroundImage = "none";
+}
+
+function renderObjectDetailPlanetSurface(detail) {
+  const canvas = document.createElement("canvas");
+  canvas.className = "object-detail-screen__canvas";
+  objectDetailTexture.append(canvas);
+
+  const renderer3D = new THREE.WebGLRenderer({
+    canvas,
+    alpha: true,
+    antialias: true,
+    powerPreference: "high-performance",
+  });
+  renderer3D.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+  renderer3D.outputColorSpace = THREE.SRGBColorSpace;
+  renderer3D.shadowMap.enabled = true;
+  renderer3D.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  const scene3D = new THREE.Scene();
+  const camera3D = new THREE.OrthographicCamera(
+    -OBJECT_DETAIL_CAMERA_HALF_WIDTH,
+    OBJECT_DETAIL_CAMERA_HALF_WIDTH,
+    OBJECT_DETAIL_CAMERA_HALF_HEIGHT,
+    -OBJECT_DETAIL_CAMERA_HALF_HEIGHT,
+    0.01,
+    20,
+  );
+  camera3D.position.set(0, 0, 3);
+  camera3D.lookAt(0, 0, 0);
+  const ambientLight = new THREE.AmbientLight(0xffffff, OBJECT_DETAIL_AMBIENT_INTENSITY);
+  scene3D.add(ambientLight);
+
+  const colorMap = new THREE.CanvasTexture(detail.textureCanvas);
+  colorMap.colorSpace = THREE.SRGBColorSpace;
+  colorMap.wrapS = THREE.RepeatWrapping;
+  colorMap.wrapT = THREE.ClampToEdgeWrapping;
+  colorMap.anisotropy = Math.min(8, renderer3D.capabilities.getMaxAnisotropy());
+  colorMap.needsUpdate = true;
+
+  const heightMap = detail.bumpCanvas
+    ? new THREE.CanvasTexture(detail.bumpCanvas)
+    : null;
+  if (heightMap) {
+    heightMap.colorSpace = THREE.NoColorSpace;
+    heightMap.wrapS = THREE.RepeatWrapping;
+    heightMap.wrapT = THREE.ClampToEdgeWrapping;
+    heightMap.needsUpdate = true;
+  }
+  const cloudMap = detail.cloudCanvas
+    ? new THREE.CanvasTexture(detail.cloudCanvas)
+    : null;
+  if (cloudMap) {
+    cloudMap.colorSpace = THREE.SRGBColorSpace;
+    cloudMap.wrapS = THREE.RepeatWrapping;
+    cloudMap.wrapT = THREE.ClampToEdgeWrapping;
+    cloudMap.anisotropy = Math.min(8, renderer3D.capabilities.getMaxAnisotropy());
+    cloudMap.needsUpdate = true;
+  }
+
+  const hasDisplacement = Boolean(heightMap);
+  const geometry = hasDisplacement
+    ? new THREE.PlaneGeometry(2, 1, 512, 256)
+    : new THREE.PlaneGeometry(2, 1, 1, 1);
+  const material = new THREE.MeshStandardMaterial({
+    map: colorMap,
+    displacementMap: heightMap ?? undefined,
+    displacementScale: hasDisplacement ? OBJECT_DETAIL_DISPLACEMENT_SCALE : 0,
+    displacementBias: hasDisplacement ? -0.035 : 0,
+    roughness: 0.86,
+    metalness: 0,
+  });
+  applyObjectDetailSurfaceEffects(material, cloudMap ?? colorMap, Boolean(cloudMap));
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.receiveShadow = true;
+  scene3D.add(mesh);
+
+  const hexGrid = createObjectDetailHexGrid(detail, renderer3D);
+  scene3D.add(hexGrid.mesh);
+
+  const cloudGeometry = cloudMap ? new THREE.PlaneGeometry(2, 1, 1, 1) : null;
+  const cloudMaterial = cloudMap
+    ? new THREE.MeshStandardMaterial({
+      map: cloudMap,
+      transparent: true,
+      alphaTest: OBJECT_DETAIL_CLOUD_ALPHA_TEST,
+      depthWrite: false,
+      roughness: 0.9,
+      metalness: 0,
+    })
+    : null;
+  if (cloudMaterial) {
+    applyObjectDetailCloudClear(cloudMaterial);
+  }
+  const cloudDepthMaterial = cloudMap
+    ? new THREE.MeshDepthMaterial({
+      map: cloudMap,
+      alphaTest: OBJECT_DETAIL_CLOUD_ALPHA_TEST,
+      depthPacking: THREE.RGBADepthPacking,
+    })
+    : null;
+  let cloudMesh = null;
+  if (cloudGeometry && cloudMaterial && cloudDepthMaterial) {
+    cloudMesh = new THREE.Mesh(cloudGeometry, cloudMaterial);
+    cloudMesh.position.z = OBJECT_DETAIL_CLOUD_HEIGHT;
+    cloudMesh.castShadow = true;
+    cloudMesh.receiveShadow = false;
+    cloudMesh.customDepthMaterial = cloudDepthMaterial;
+    cloudMesh.renderOrder = 2;
+    scene3D.add(cloudMesh);
+  }
+
+  const spotLights = [-1, 1].map((startX) => {
+    const target = new THREE.Object3D();
+    target.position.set(startX, 0, 0);
+    scene3D.add(target);
+
+    const light = new THREE.SpotLight(
+      0xffffff,
+      OBJECT_DETAIL_LIGHT_INTENSITY,
+      8,
+      THREE.MathUtils.degToRad(OBJECT_DETAIL_LIGHT_ANGLE_DEGREES),
+      OBJECT_DETAIL_LIGHT_PENUMBRA,
+      0.8,
+    );
+    light.position.set(startX, 0, OBJECT_DETAIL_LIGHT_Z);
+    light.target = target;
+    light.castShadow = true;
+    light.shadow.mapSize.set(1024, 1024);
+    light.shadow.bias = -0.00008;
+    light.shadow.normalBias = 0.015;
+    scene3D.add(light);
+
+    const tintLight = new THREE.SpotLight(
+      new THREE.Color(detail.starGlowColor ?? "#ffffff"),
+      OBJECT_DETAIL_TINT_LIGHT_INTENSITY,
+      8,
+      THREE.MathUtils.degToRad(OBJECT_DETAIL_TINT_LIGHT_ANGLE_DEGREES),
+      OBJECT_DETAIL_TINT_LIGHT_PENUMBRA,
+      0.8,
+    );
+    tintLight.position.set(startX, 0, OBJECT_DETAIL_LIGHT_Z);
+    tintLight.target = target;
+    tintLight.castShadow = false;
+    scene3D.add(tintLight);
+    return { light, tintLight, target, startX };
+  });
+
+  const cursorTarget = new THREE.Object3D();
+  cursorTarget.position.set(0, 0, 0);
+  scene3D.add(cursorTarget);
+  const cursorLight = new THREE.SpotLight(
+    0xffffff,
+    0,
+    8,
+    THREE.MathUtils.degToRad(OBJECT_DETAIL_CURSOR_LIGHT_ANGLE_DEGREES),
+    OBJECT_DETAIL_CURSOR_LIGHT_PENUMBRA,
+    0.8,
+  );
+  cursorLight.position.set(0, 0, OBJECT_DETAIL_LIGHT_Z);
+  cursorLight.target = cursorTarget;
+  cursorLight.castShadow = false;
+  scene3D.add(cursorLight);
+
+  objectDetail3D = {
+    renderer: renderer3D,
+    scene: scene3D,
+    camera: camera3D,
+    geometry,
+    material,
+    colorMap,
+    heightMap,
+    isGasGiant: detail.kind === "GAS GIANT",
+    hexGrid,
+    cloudMap,
+    cloudGeometry,
+    cloudMaterial,
+    cloudDepthMaterial,
+    cloudMesh,
+    ambientLight,
+    spotLights,
+    cursorLight,
+    cursorTarget,
+    cursorLightIntensity: 0,
+    cursorLightUpdatedAt: performance.now(),
+    cursor: {
+      active: false,
+      uv: new THREE.Vector2(0.5, 0.5),
+      world: new THREE.Vector2(0, 0),
+      clearRadius: OBJECT_DETAIL_CURSOR_CLEAR_RADIUS,
+      clearFeather: OBJECT_DETAIL_CURSOR_CLEAR_FEATHER,
+    },
+    lightStartedAt: performance.now(),
+    lightDaySeconds: detail.dayCycleSeconds === Infinity
+      ? Infinity
+      : Number.isFinite(detail.dayCycleSeconds)
+        ? Math.max(0.001, detail.dayCycleSeconds)
+        : OBJECT_DETAIL_LIGHT_FALLBACK_DAY_SECONDS,
+    bodyTextureCycleSeconds: detail.kind === "GAS GIANT"
+      ? OBJECT_DETAIL_GAS_GIANT_TEXTURE_CYCLE_SECONDS
+      : Infinity,
+    cloudCycleSeconds: detail.kind === "GAS GIANT"
+      ? OBJECT_DETAIL_GAS_GIANT_CLOUD_CYCLE_SECONDS
+      : OBJECT_DETAIL_CLOUD_CYCLE_SECONDS,
+  };
+
+  resizeObjectDetail3D();
+  updateObjectDetailLightMotion(performance.now());
+  renderObjectDetail3D();
+}
+
+function resizeObjectDetail3D() {
+  if (!objectDetail3D) {
+    return;
+  }
+
+  const rect = objectDetailTexture.getBoundingClientRect();
+  const width = Math.max(1, Math.round(rect.width));
+  const height = Math.max(1, Math.round(rect.height));
+  objectDetail3D.renderer.setSize(width, height, false);
+  objectDetail3D.camera.updateProjectionMatrix();
+  updateObjectDetailObservedBounds();
+}
+
+function renderObjectDetail3D() {
+  if (!objectDetail3D) {
+    return;
+  }
+
+  objectDetail3D.renderer.render(objectDetail3D.scene, objectDetail3D.camera);
+}
+
+function updateObjectDetailCursorInteraction(event) {
+  if (!objectDetail3D?.cursor || !isObjectDetailOpen) {
+    return;
+  }
+
+  const rect = objectDetailTexture.getBoundingClientRect();
+  const bounds = updateObjectDetailObservedBounds();
+  if (rect.width <= 0 || rect.height <= 0 || !bounds) {
+    return;
+  }
+  const left = rect.left + bounds.left;
+  const right = rect.left + bounds.right;
+  const top = rect.top + bounds.top;
+  const bottom = rect.top + bounds.bottom;
+  if (
+    event.clientX < left
+    || event.clientX > right
+    || event.clientY < top
+    || event.clientY > bottom
+  ) {
+    clearObjectDetailCursorInteraction();
+    return;
+  }
+
+  const u = THREE.MathUtils.clamp((event.clientX - left) / bounds.width, 0, 1);
+  const v = THREE.MathUtils.clamp((event.clientY - top) / bounds.height, 0, 1);
+  const worldX = (u - 0.5) * OBJECT_DETAIL_SURFACE_WORLD_WIDTH;
+  const worldY = 0.5 - v;
+  objectDetail3D.cursor.active = true;
+  objectDetail3D.cursor.uv.set(u, v);
+  objectDetail3D.cursor.world.set(worldX, worldY);
+  updateObjectDetailCursorLight(performance.now());
+  updateObjectDetailCursorUniforms();
+  renderObjectDetail3D();
+}
+
+function clearObjectDetailCursorInteraction() {
+  if (!objectDetail3D?.cursor) {
+    return;
+  }
+
+  objectDetail3D.cursor.active = false;
+  updateObjectDetailCursorLight(performance.now());
+  updateObjectDetailCursorUniforms();
+  renderObjectDetail3D();
+}
+
+function updateObjectDetailCursorLight(now = performance.now()) {
+  if (!objectDetail3D?.cursorLight || !objectDetail3D?.cursorTarget || !objectDetail3D?.cursor) {
+    return;
+  }
+
+  const { active, world } = objectDetail3D.cursor;
+  const x = world.x;
+  const y = world.y;
+  objectDetail3D.cursorLight.position.set(x, y, OBJECT_DETAIL_LIGHT_Z);
+  objectDetail3D.cursorTarget.position.set(x, y, 0);
+  const targetIntensity = active
+    ? OBJECT_DETAIL_CURSOR_LIGHT_INTENSITY * getObjectDetailCursorLightProximityMultiplier(world)
+    : 0;
+  const previous = objectDetail3D.cursorLightUpdatedAt ?? now;
+  const deltaSeconds = Math.max(0, (now - previous) / 1000);
+  const smoothing = 1 - Math.exp(-OBJECT_DETAIL_CURSOR_LIGHT_FADE_SPEED * deltaSeconds);
+  objectDetail3D.cursorLightIntensity = THREE.MathUtils.lerp(
+    objectDetail3D.cursorLightIntensity ?? 0,
+    targetIntensity,
+    smoothing,
+  );
+  objectDetail3D.cursorLight.intensity = objectDetail3D.cursorLightIntensity;
+  objectDetail3D.cursorLightUpdatedAt = now;
+}
+
+function getObjectDetailCursorLightProximityMultiplier(world) {
+  if (!objectDetail3D?.spotLights?.length) {
+    return 1;
+  }
+
+  const daySpotRadius = OBJECT_DETAIL_LIGHT_Z * Math.tan(THREE.MathUtils.degToRad(OBJECT_DETAIL_LIGHT_ANGLE_DEGREES));
+  const nearestFactor = objectDetail3D.spotLights.reduce((factor, item) => {
+    const distance = Math.hypot(world.x - item.target.position.x, world.y - item.target.position.y);
+    const proximity = 1 - THREE.MathUtils.smoothstep(distance, daySpotRadius * 0.25, daySpotRadius);
+    return Math.max(factor, proximity);
+  }, 0);
+  return THREE.MathUtils.lerp(1, OBJECT_DETAIL_CURSOR_LIGHT_MIN_PROXIMITY, nearestFactor);
+}
+
+function updateObjectDetailLightMotion(now) {
+  if (!objectDetail3D?.spotLights) {
+    return false;
+  }
+
+  const elapsedSeconds = (now - objectDetail3D.lightStartedAt) / 1000;
+  const speed = Number.isFinite(objectDetail3D.lightDaySeconds)
+    ? OBJECT_DETAIL_SURFACE_WORLD_WIDTH / objectDetail3D.lightDaySeconds
+    : 0;
+  for (const item of objectDetail3D.spotLights) {
+    const x = wrapObjectDetailLightX(item.startX + elapsedSeconds * speed);
+    item.light.position.set(x, 0, OBJECT_DETAIL_LIGHT_Z);
+    item.tintLight.position.set(x, 0, OBJECT_DETAIL_LIGHT_Z);
+    item.target.position.set(x, 0, 0);
+  }
+  updateObjectDetailCursorLight(now);
+  if (Number.isFinite(objectDetail3D.bodyTextureCycleSeconds)) {
+    const bodyPhase = elapsedSeconds / objectDetail3D.bodyTextureCycleSeconds;
+    objectDetail3D.colorMap.offset.x = ((bodyPhase % 1) + 1) % 1;
+  }
+  if (objectDetail3D.cloudMap) {
+    const cloudCycleSeconds = Number.isFinite(objectDetail3D.cloudCycleSeconds)
+      ? objectDetail3D.cloudCycleSeconds
+      : OBJECT_DETAIL_CLOUD_CYCLE_SECONDS;
+    const cloudPhase = elapsedSeconds / cloudCycleSeconds;
+    objectDetail3D.cloudMap.offset.x = ((cloudPhase % 1) + 1) % 1;
+  }
+  updateObjectDetailSurfaceEffectUniforms();
+  updateObjectDetailFrame();
+  return true;
+}
+
+function updateObjectDetailFrame() {
+  updateObjectDetailObservedBounds();
+  const markers = objectDetailTexture.querySelectorAll(".object-detail-screen__day-marker");
+  if (!markers.length || !objectDetail3D?.spotLights?.length) {
+    return;
+  }
+
+  objectDetail3D.spotLights.forEach((item, index) => {
+    const marker = markers[index];
+    if (!marker) {
+      return;
+    }
+    const relative = (item.target.position.x + OBJECT_DETAIL_SURFACE_WORLD_WIDTH / 2) / OBJECT_DETAIL_SURFACE_WORLD_WIDTH;
+    const isVisible = relative >= 0 && relative <= 1;
+    marker.style.left = `${THREE.MathUtils.clamp(relative, 0, 1) * 100}%`;
+    marker.style.opacity = isVisible ? "1" : "0";
+  });
+}
+
+function wrapObjectDetailLightX(x) {
+  const rightEdge = OBJECT_DETAIL_SURFACE_WORLD_WIDTH / 2 + OBJECT_DETAIL_LIGHT_WRAP_MARGIN;
+  const wrapSpan = OBJECT_DETAIL_SURFACE_WORLD_WIDTH * 2;
+  let wrapped = x;
+  while (wrapped > rightEdge) {
+    wrapped -= wrapSpan;
+  }
+  return wrapped;
+}
+
+function createObjectDetailHexGrid(detail, renderer3D) {
+  const canvas = document.createElement("canvas");
+  canvas.width = OBJECT_DETAIL_HEX_GRID_TEXTURE_WIDTH;
+  canvas.height = OBJECT_DETAIL_HEX_GRID_TEXTURE_HEIGHT;
+  const hexes = drawObjectDetailHexGrid(canvas, detail.bodySizeRank);
+  canvas.objectDetailHexes = hexes;
+  canvas.dataset.hexCount = String(hexes.length);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = Math.min(8, renderer3D.capabilities.getMaxAnisotropy());
+  texture.needsUpdate = true;
+
+  const geometry = new THREE.PlaneGeometry(2, 1, 1, 1);
+  const material = new THREE.MeshBasicMaterial({
+    map: texture,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    toneMapped: false,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.z = OBJECT_DETAIL_HEX_GRID_HEIGHT;
+  mesh.renderOrder = 1;
+  return { canvas, texture, geometry, material, mesh, hexes };
+}
+
+function drawObjectDetailHexGrid(canvas, bodySizeRank = 12) {
+  const context = canvas.getContext("2d");
+  const width = canvas.width;
+  const height = canvas.height;
+  context.clearRect(0, 0, width, height);
+  context.lineJoin = "round";
+  context.lineCap = "round";
+  context.strokeStyle = "rgba(216, 238, 255, 0.5)";
+  context.lineWidth = 1.15;
+  context.shadowColor = "rgba(60, 170, 255, 0.12)";
+  context.shadowBlur = 3;
+
+  const rank = THREE.MathUtils.clamp(Math.round(bodySizeRank), 0, 12);
+  const columns = 7 + rank * 2;
+  const horizontalPadding = width * 0.006;
+  const hexRadius = (width - horizontalPadding * 2) / (1.5 * (columns - 1) + 2);
+  const hexHeight = Math.sqrt(3) * hexRadius;
+  const hexHalfHeight = hexHeight / 2;
+  const horizontalStep = hexRadius * 1.5;
+  const verticalStep = hexHeight;
+  const rows = Math.max(1, Math.floor((height - hexHeight) / verticalStep) + 1);
+  const startX = horizontalPadding + hexRadius;
+  const gridHeight = hexHeight + Math.max(0, rows - 1) * verticalStep;
+  const startY = hexHalfHeight + Math.max(0, (height - gridHeight) / 2);
+  const hexes = [];
+
+  for (let column = 0; column < columns; column += 1) {
+    const centerX = startX + column * horizontalStep;
+    const columnOffset = column % 2 === 0 ? 0 : verticalStep / 2;
+    for (let row = 0; row < rows; row += 1) {
+      const centerY = startY + row * verticalStep + columnOffset;
+      if (!isObjectDetailHexFullyVisible(centerX, centerY, hexRadius, hexHalfHeight, width, height)) {
+        continue;
+      }
+      const address = `${column}:${row}`;
+      hexes.push({ address, column, row, x: centerX / width, y: centerY / height });
+      drawObjectDetailHex(context, centerX, centerY, hexRadius);
+    }
+  }
+  return hexes;
+}
+
+function drawObjectDetailHex(context, centerX, centerY, radius) {
+  context.beginPath();
+  for (let index = 0; index < 6; index += 1) {
+    const angle = THREE.MathUtils.degToRad(60 * index);
+    const x = centerX + Math.cos(angle) * radius;
+    const y = centerY + Math.sin(angle) * radius;
+    if (index === 0) {
+      context.moveTo(x, y);
+    } else {
+      context.lineTo(x, y);
+    }
+  }
+  context.closePath();
+  context.stroke();
+}
+
+function isObjectDetailHexFullyVisible(centerX, centerY, radius, halfHeight, width, height) {
+  return centerX - radius >= 0
+    && centerX + radius <= width
+    && centerY - halfHeight >= 0
+    && centerY + halfHeight <= height;
+}
+
+function applyObjectDetailSurfaceEffects(material, cloudMap, hasCloudShadow) {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.detailCloudShadowMap = { value: cloudMap };
+    shader.uniforms.detailHasCloudShadow = { value: hasCloudShadow ? 1 : 0 };
+    shader.uniforms.detailCloudShadowTextureOffset = { value: new THREE.Vector2(0, 0) };
+    shader.uniforms.detailCloudShadowOffset = {
+      value: new THREE.Vector2(OBJECT_DETAIL_CLOUD_SHADOW_OFFSET_U, OBJECT_DETAIL_CLOUD_SHADOW_OFFSET_V),
+    };
+    shader.uniforms.detailCloudShadowStrength = { value: OBJECT_DETAIL_CLOUD_SHADOW_STRENGTH };
+    shader.uniforms.detailCloudShadowDarken = { value: OBJECT_DETAIL_CLOUD_SHADOW_DARKEN };
+    shader.uniforms.detailCursorUv = { value: new THREE.Vector2(0.5, 0.5) };
+    shader.uniforms.detailCursorActive = { value: 0 };
+    shader.uniforms.detailCursorClearRadius = { value: OBJECT_DETAIL_CURSOR_CLEAR_RADIUS };
+    shader.uniforms.detailCursorClearFeather = { value: OBJECT_DETAIL_CURSOR_CLEAR_FEATHER };
+    shader.uniforms.detailLightMaxChannel = { value: OBJECT_DETAIL_LIGHT_MAX_CHANNEL };
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        "#include <common>",
+        `#include <common>
+varying vec2 vDetailCloudShadowUv;
+`,
+      )
+      .replace(
+        "#include <project_vertex>",
+        `vDetailCloudShadowUv = uv;
+#include <project_vertex>`,
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        `#include <common>
+uniform sampler2D detailCloudShadowMap;
+uniform float detailHasCloudShadow;
+uniform vec2 detailCloudShadowTextureOffset;
+uniform vec2 detailCloudShadowOffset;
+uniform float detailCloudShadowStrength;
+uniform float detailCloudShadowDarken;
+uniform vec2 detailCursorUv;
+uniform float detailCursorActive;
+uniform float detailCursorClearRadius;
+uniform float detailCursorClearFeather;
+uniform float detailLightMaxChannel;
+varying vec2 vDetailCloudShadowUv;
+`,
+      )
+      .replace(
+        "#include <dithering_fragment>",
+        `vec2 detailAspectUv = vec2((vDetailCloudShadowUv.x - detailCursorUv.x) * 2.0, vDetailCloudShadowUv.y - detailCursorUv.y);
+float detailCursorDistance = length(detailAspectUv);
+float detailCursorClear = smoothstep(detailCursorClearRadius, detailCursorClearRadius + detailCursorClearFeather, detailCursorDistance);
+float detailCloudShadowAlpha = texture2D(detailCloudShadowMap, vDetailCloudShadowUv + detailCloudShadowTextureOffset + detailCloudShadowOffset).a * detailCursorClear;
+float detailCloudShadow = clamp(detailCloudShadowAlpha * detailCloudShadowStrength * detailHasCloudShadow, 0.0, 1.0);
+gl_FragColor.rgb = mix(gl_FragColor.rgb, gl_FragColor.rgb * detailCloudShadowDarken, detailCloudShadow);
+float detailLightMax = max(max(gl_FragColor.r, gl_FragColor.g), gl_FragColor.b);
+if (detailLightMax > detailLightMaxChannel) {
+  gl_FragColor.rgb *= detailLightMaxChannel / detailLightMax;
+}
+#include <dithering_fragment>`,
+      );
+    material.userData.detailSurfaceEffectShader = shader;
+    updateObjectDetailSurfaceEffectUniforms();
+  };
+}
+
+function applyObjectDetailCloudClear(material) {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.detailCursorUv = { value: new THREE.Vector2(0.5, 0.5) };
+    shader.uniforms.detailCursorActive = { value: 0 };
+    shader.uniforms.detailCursorClearRadius = { value: OBJECT_DETAIL_CURSOR_CLEAR_RADIUS };
+    shader.uniforms.detailCursorClearFeather = { value: OBJECT_DETAIL_CURSOR_CLEAR_FEATHER };
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        "#include <common>",
+        `#include <common>
+varying vec2 vDetailCursorCloudUv;`,
+      )
+      .replace(
+        "#include <uv_vertex>",
+        `#include <uv_vertex>
+vDetailCursorCloudUv = uv;`,
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        `#include <common>
+uniform vec2 detailCursorUv;
+uniform float detailCursorActive;
+uniform float detailCursorClearRadius;
+uniform float detailCursorClearFeather;
+varying vec2 vDetailCursorCloudUv;`,
+      )
+      .replace(
+        "#include <alphatest_fragment>",
+        `vec2 detailCursorCloudAspectUv = vec2((vDetailCursorCloudUv.x - detailCursorUv.x) * 2.0, vDetailCursorCloudUv.y - detailCursorUv.y);
+float detailCursorCloudDistance = length(detailCursorCloudAspectUv);
+float detailCursorCloudKeep = mix(1.0, smoothstep(detailCursorClearRadius, detailCursorClearRadius + detailCursorClearFeather, detailCursorCloudDistance), detailCursorActive);
+diffuseColor.a *= detailCursorCloudKeep;
+#include <alphatest_fragment>`,
+      );
+    material.userData.detailCloudClearShader = shader;
+    updateObjectDetailCursorUniforms();
+  };
+}
+
+function updateObjectDetailSurfaceEffectUniforms() {
+  const shader = objectDetail3D?.material?.userData.detailSurfaceEffectShader;
+  if (!shader || !objectDetail3D?.spotLights?.length) {
+    return;
+  }
+
+  shader.uniforms.detailCloudShadowTextureOffset.value.set(objectDetail3D.cloudMap?.offset.x ?? 0, 0);
+  updateObjectDetailCursorUniforms();
+}
+
+function updateObjectDetailCursorUniforms() {
+  if (!objectDetail3D?.cursor) {
+    return;
+  }
+
+  const { active, uv, clearRadius, clearFeather } = objectDetail3D.cursor;
+  for (const shader of [
+    objectDetail3D.material?.userData.detailSurfaceEffectShader,
+    objectDetail3D.cloudMaterial?.userData.detailCloudClearShader,
+  ]) {
+    if (!shader) {
+      continue;
+    }
+    shader.uniforms.detailCursorActive.value = active ? 1 : 0;
+    shader.uniforms.detailCursorUv.value.copy(uv);
+    shader.uniforms.detailCursorClearRadius.value = clearRadius;
+    shader.uniforms.detailCursorClearFeather.value = clearFeather;
+  }
+}
+
+function disposeObjectDetail3D() {
+  if (!objectDetail3D) {
+    return;
+  }
+
+  objectDetail3D.geometry.dispose();
+  objectDetail3D.material.dispose();
+  objectDetail3D.colorMap.dispose();
+  objectDetail3D.heightMap?.dispose();
+  objectDetail3D.hexGrid?.texture.dispose();
+  objectDetail3D.hexGrid?.geometry.dispose();
+  objectDetail3D.hexGrid?.material.dispose();
+  objectDetail3D.cloudMap?.dispose();
+  objectDetail3D.cloudGeometry?.dispose();
+  objectDetail3D.cloudMaterial?.dispose();
+  objectDetail3D.cloudDepthMaterial?.dispose();
+  objectDetail3D.renderer.dispose();
+  objectDetail3D.renderer.forceContextLoss();
+  objectDetail3D.renderer.domElement = null;
+  objectDetail3D = null;
+}
+
+async function returnToOrbitFromObjectDetail() {
+  const planet = objectDetailOrbitPlanet;
+  closeObjectDetailScreen();
+  if (!planet) {
+    return;
+  }
+
+  try {
+    await loadPlanetScreenRenderer();
+  } catch (error) {
+    console.error("Planet screen module failed to load", error);
+  }
+  planetScreenController.open(planet);
+  planetScreenController.updateParallax(lastClientPointer.x, lastClientPointer.y);
 }
 
 function renderSystemStars(node) {
@@ -2343,6 +3212,7 @@ function renderStarSystem(node) {
       temperature: planetTemperature,
       tags: planetSurfaceTags.tags,
       surfaceTextureParams: planetTextureParams,
+      dayCycleSeconds: planetRotation.period,
       // Window scale excludes the accretion disk so a planet with a large disk
       // is not shrunk; the disk is allowed to overflow the stage instead.
       extentRadius: accretionDisk
@@ -2584,11 +3454,13 @@ function createPlanetTextureParams({ seed, temperature, hasWater, atmosphere, ti
     ? createTemperatureIceCaps(temperature)
     : 0;
   const cloudAlpha = createAtmosphereCloudAlpha(atmosphere, atmosphereRandom);
+  const freezeWater = hasWater && !atmosphere && !hotAndDry && !forceDryTexture;
 
   return {
     waterPosition,
     iceCaps,
     cloudAlpha,
+    freezeWater,
     textureMode,
   };
 }
@@ -4740,6 +5612,8 @@ function resize() {
   if (systemScreenController.isOpen()) {
     musicPlayerController.ensureSystemPosition();
   }
+  resizeObjectDetail3D();
+  renderObjectDetail3D();
   musicPlayerController.updateScrollbar();
 }
 
@@ -4774,6 +5648,10 @@ function animate() {
   }
 
   planetScreenController.tick(now, deltaSeconds);
+
+  if (updateObjectDetailLightMotion(now)) {
+    renderObjectDetail3D();
+  }
 
   if (!planetScreenController.isOpen()) {
     updateSystemPlanetRotationLayers(deltaSeconds, now);
