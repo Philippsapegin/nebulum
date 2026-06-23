@@ -231,6 +231,7 @@ const OBJECT_DETAIL_OBSERVED_DEFAULT_WIDTH_PERCENT = 89;
 const OBJECT_DETAIL_OBSERVED_DEFAULT_HEIGHT_PERCENT = 95;
 const OBJECT_DETAIL_HOVER_WIDTH_PERCENT = 87;
 const OBJECT_DETAIL_HOVER_HEIGHT_PERCENT = 87;
+const OBJECT_DETAIL_DAY_MARKER_EDGE_FADE = 0.02;
 let activeSystemStar = null;
 let activeSystemStarSurface = null;
 let tooltipTypingTimeout = null;
@@ -2616,9 +2617,13 @@ function updateObjectDetailFrame() {
       return;
     }
     const relative = (item.target.position.x + OBJECT_DETAIL_SURFACE_WORLD_WIDTH / 2) / OBJECT_DETAIL_SURFACE_WORLD_WIDTH;
-    const isVisible = relative >= 0 && relative <= 1;
+    const edgeScale = Math.min(
+      THREE.MathUtils.smoothstep(relative, 0, OBJECT_DETAIL_DAY_MARKER_EDGE_FADE),
+      1 - THREE.MathUtils.smoothstep(relative, 1 - OBJECT_DETAIL_DAY_MARKER_EDGE_FADE, 1),
+    );
     marker.style.left = `${THREE.MathUtils.clamp(relative, 0, 1) * 100}%`;
-    marker.style.opacity = isVisible ? "1" : "0";
+    marker.style.opacity = relative >= 0 && relative <= 1 ? "1" : "0";
+    marker.style.setProperty("--object-detail-day-marker-edge-scale", String(edgeScale));
   });
 }
 

@@ -2334,6 +2334,7 @@ body.system-open .music-player {
 }
 
 .object-detail-screen__day-marker {
+  --object-detail-day-marker-edge-scale: 1;
   position: absolute;
   top: 0;
   width: 28px;
@@ -2351,21 +2352,28 @@ body.system-open .music-player {
   width: 29px;
   height: 6px;
   background: #000;
-  transform: translateX(-50%);
+  transform: translateX(-50%) scaleX(var(--object-detail-day-marker-edge-scale));
+  transform-origin: center;
 }
 
 .object-detail-screen__day-marker-glow {
   position: absolute;
   left: 50%;
-  top: -15px;
-  width: 7px;
-  height: 7px;
+  top: -16px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: #fff;
+  background:
+    radial-gradient(circle, #fff 0 20%, currentColor 42%, currentColor 64%, rgba(255, 255, 255, 0.16) 82%, rgba(255, 255, 255, 0) 100%);
   box-shadow:
-    0 0 8px currentColor,
-    0 0 18px currentColor;
-  transform: translateX(-50%);
+    0 0 3px #fff,
+    0 0 13px currentColor,
+    0 0 30px currentColor,
+    0 0 64px currentColor;
+  transform: translateX(-50%) scale(var(--object-detail-day-marker-edge-scale));
+  transform-origin: center;
+  filter: saturate(1.55) brightness(1.22);
+  opacity: var(--object-detail-day-marker-edge-scale);
 }
 
 .object-detail-screen__day-marker.black-hole .object-detail-screen__day-marker-glow::after {
@@ -2380,10 +2388,12 @@ body.system-open .music-player {
   position: absolute;
   left: 50%;
   top: -1px;
-  width: 9px;
-  height: 7px;
+  width: calc(1px + 8px * var(--object-detail-day-marker-edge-scale));
+  height: calc(1px + 6px * var(--object-detail-day-marker-edge-scale));
   overflow: visible;
   transform: translateX(-50%);
+  transform-origin: center top;
+  opacity: var(--object-detail-day-marker-edge-scale);
 }
 
 .object-detail-screen__day-marker-triangle path {
@@ -2391,6 +2401,7 @@ body.system-open .music-player {
   stroke: rgba(255, 255, 255, 0.9);
   stroke-width: 0.9;
   stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
 }
 
 .planet-window__info {
