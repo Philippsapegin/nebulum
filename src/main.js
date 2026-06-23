@@ -226,6 +226,8 @@ const OBJECT_DETAIL_TINT_LIGHT_ANGLE_DEGREES = 30;
 const OBJECT_DETAIL_TINT_LIGHT_PENUMBRA = 0.72;
 const OBJECT_DETAIL_LIGHT_FALLBACK_DAY_SECONDS = 24;
 const OBJECT_DETAIL_LIGHT_WRAP_MARGIN = 0.9;
+const OBJECT_DETAIL_OBSERVED_WIDTH_PERCENT = 89;
+const OBJECT_DETAIL_OBSERVED_HEIGHT_PERCENT = 95;
 let activeSystemStar = null;
 let activeSystemStarSurface = null;
 let tooltipTypingTimeout = null;
@@ -2195,12 +2197,12 @@ function updateObjectDetailObservedBounds() {
 }
 
 function getObjectDetailProjectedSurfaceBounds(rect) {
-  const cameraWidth = OBJECT_DETAIL_CAMERA_HALF_WIDTH * 2;
-  const cameraHeight = OBJECT_DETAIL_CAMERA_HALF_HEIGHT * 2;
-  const left = ((-OBJECT_DETAIL_SURFACE_WORLD_WIDTH / 2) + OBJECT_DETAIL_CAMERA_HALF_WIDTH) / cameraWidth * rect.width;
-  const right = ((OBJECT_DETAIL_SURFACE_WORLD_WIDTH / 2) + OBJECT_DETAIL_CAMERA_HALF_WIDTH) / cameraWidth * rect.width;
-  const top = (OBJECT_DETAIL_CAMERA_HALF_HEIGHT - 0.5) / cameraHeight * rect.height;
-  const bottom = (OBJECT_DETAIL_CAMERA_HALF_HEIGHT + 0.5) / cameraHeight * rect.height;
+  const width = rect.width * OBJECT_DETAIL_OBSERVED_WIDTH_PERCENT / 100;
+  const height = rect.height * OBJECT_DETAIL_OBSERVED_HEIGHT_PERCENT / 100;
+  const left = (rect.width - width) / 2;
+  const right = left + width;
+  const top = (rect.height - height) / 2;
+  const bottom = top + height;
   return { left, top, right, bottom };
 }
 
