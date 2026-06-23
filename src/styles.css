@@ -2294,7 +2294,7 @@ body.system-open .music-player {
 .object-detail-screen__body-title {
   position: absolute;
   left: 50%;
-  top: calc(100% - var(--object-detail-line-bottom) - 10px);
+  top: calc(100% - var(--object-detail-line-bottom) - 4px);
   z-index: 3;
   padding: 0 18px 4px;
   background: transparent;
@@ -2317,7 +2317,7 @@ body.system-open .music-player {
   position: absolute;
   left: 0;
   right: 0;
-  top: 8px;
+  top: -2px;
   bottom: 0;
   z-index: -1;
   background: #000;
