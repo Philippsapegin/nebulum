@@ -218,7 +218,8 @@ const OBJECT_DETAIL_CURSOR_CLEAR_FEATHER = 0.12;
 const OBJECT_DETAIL_CURSOR_LIGHT_INTENSITY = OBJECT_DETAIL_LIGHT_INTENSITY;
 const OBJECT_DETAIL_CURSOR_LIGHT_ANGLE_DEGREES = 12;
 const OBJECT_DETAIL_CURSOR_LIGHT_PENUMBRA = 0.62;
-const OBJECT_DETAIL_CURSOR_LIGHT_FADE_SPEED = 7.5;
+const OBJECT_DETAIL_CURSOR_LIGHT_FADE_IN_SPEED = 1.8;
+const OBJECT_DETAIL_CURSOR_LIGHT_FADE_OUT_SPEED = 7.5;
 const OBJECT_DETAIL_LIGHT_MAX_CHANNEL = 1.08;
 const OBJECT_DETAIL_CURSOR_LIGHT_MIN_PROXIMITY = 0.16;
 const OBJECT_DETAIL_TINT_LIGHT_INTENSITY = 0.46;
@@ -226,8 +227,10 @@ const OBJECT_DETAIL_TINT_LIGHT_ANGLE_DEGREES = 30;
 const OBJECT_DETAIL_TINT_LIGHT_PENUMBRA = 0.72;
 const OBJECT_DETAIL_LIGHT_FALLBACK_DAY_SECONDS = 24;
 const OBJECT_DETAIL_LIGHT_WRAP_MARGIN = 0.9;
-const OBJECT_DETAIL_OBSERVED_WIDTH_PERCENT = 89;
-const OBJECT_DETAIL_OBSERVED_HEIGHT_PERCENT = 95;
+const OBJECT_DETAIL_OBSERVED_DEFAULT_WIDTH_PERCENT = 89;
+const OBJECT_DETAIL_OBSERVED_DEFAULT_HEIGHT_PERCENT = 95;
+const OBJECT_DETAIL_HOVER_WIDTH_PERCENT = 87;
+const OBJECT_DETAIL_HOVER_HEIGHT_PERCENT = 87;
 let activeSystemStar = null;
 let activeSystemStarSurface = null;
 let tooltipTypingTimeout = null;
@@ -387,8 +390,8 @@ function initPanel() {
     closeStarWindow();
   });
   objectDetailBackOrbit.addEventListener("click", returnToOrbitFromObjectDetail);
-  objectDetailTexture.addEventListener("pointermove", updateObjectDetailCursorInteraction);
-  objectDetailTexture.addEventListener("pointerleave", clearObjectDetailCursorInteraction);
+  objectDetailScreen.addEventListener("pointermove", updateObjectDetailCursorInteraction);
+  objectDetailScreen.addEventListener("pointerleave", clearObjectDetailCursorInteraction);
 
   planetWindowClose.addEventListener("click", closePlanetWindow);
 
@@ -2152,8 +2155,35 @@ function updateObjectDetailObservedBounds() {
     return null;
   }
 
+  const bounds = getObjectDetailBoundRect(
+    rect,
+    OBJECT_DETAIL_OBSERVED_DEFAULT_WIDTH_PERCENT,
+    OBJECT_DETAIL_OBSERVED_DEFAULT_HEIGHT_PERCENT,
+  );
+
+  objectDetailTexture.style.setProperty("--object-detail-observed-left", `${bounds.left}px`);
+  objectDetailTexture.style.setProperty("--object-detail-observed-top", `${bounds.top}px`);
+  objectDetailTexture.style.setProperty("--object-detail-observed-right", `${rect.width - bounds.right}px`);
+  objectDetailTexture.style.setProperty("--object-detail-observed-bottom", `${rect.height - bounds.bottom}px`);
+  return bounds;
+}
+
+function updateObjectDetailHoverBounds() {
+  const rect = objectDetailTexture.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+
+  return getObjectDetailBoundRect(
+    rect,
+    OBJECT_DETAIL_HOVER_WIDTH_PERCENT,
+    OBJECT_DETAIL_HOVER_HEIGHT_PERCENT,
+  );
+}
+
+function getObjectDetailBoundRect(rect, widthPercent, heightPercent) {
   const rawBounds = objectDetail3D
-    ? getObjectDetailProjectedSurfaceBounds(rect)
+    ? getObjectDetailProjectedSurfaceBounds(rect, widthPercent, heightPercent)
     : {
       left: 0,
       top: 0,
@@ -2180,7 +2210,7 @@ function updateObjectDetailObservedBounds() {
     top,
     rect.height,
   );
-  const bounds = {
+  return {
     left,
     top,
     right,
@@ -2188,17 +2218,11 @@ function updateObjectDetailObservedBounds() {
     width: Math.max(1, right - left),
     height: Math.max(1, bottom - top),
   };
-
-  objectDetailTexture.style.setProperty("--object-detail-observed-left", `${bounds.left}px`);
-  objectDetailTexture.style.setProperty("--object-detail-observed-top", `${bounds.top}px`);
-  objectDetailTexture.style.setProperty("--object-detail-observed-right", `${rect.width - bounds.right}px`);
-  objectDetailTexture.style.setProperty("--object-detail-observed-bottom", `${rect.height - bounds.bottom}px`);
-  return bounds;
 }
 
-function getObjectDetailProjectedSurfaceBounds(rect) {
-  const width = rect.width * OBJECT_DETAIL_OBSERVED_WIDTH_PERCENT / 100;
-  const height = rect.height * OBJECT_DETAIL_OBSERVED_HEIGHT_PERCENT / 100;
+function getObjectDetailProjectedSurfaceBounds(rect, widthPercent, heightPercent) {
+  const width = rect.width * widthPercent / 100;
+  const height = rect.height * heightPercent / 100;
   const left = (rect.width - width) / 2;
   const right = left + width;
   const top = (rect.height - height) / 2;
@@ -2408,6 +2432,7 @@ function renderObjectDetailPlanetSurface(detail) {
     cursorLight,
     cursorTarget,
     cursorLightIntensity: 0,
+    cursorEffectMix: 0,
     cursorLightUpdatedAt: performance.now(),
     cursor: {
       active: false,
@@ -2446,6 +2471,7 @@ function resizeObjectDetail3D() {
   objectDetail3D.renderer.setSize(width, height, false);
   objectDetail3D.camera.updateProjectionMatrix();
   updateObjectDetailObservedBounds();
+  updateObjectDetailHoverBounds();
 }
 
 function renderObjectDetail3D() {
@@ -2462,7 +2488,7 @@ function updateObjectDetailCursorInteraction(event) {
   }
 
   const rect = objectDetailTexture.getBoundingClientRect();
-  const bounds = updateObjectDetailObservedBounds();
+  const bounds = updateObjectDetailHoverBounds();
   if (rect.width <= 0 || rect.height <= 0 || !bounds) {
     return;
   }
@@ -2470,23 +2496,16 @@ function updateObjectDetailCursorInteraction(event) {
   const right = rect.left + bounds.right;
   const top = rect.top + bounds.top;
   const bottom = rect.top + bounds.bottom;
-  if (
-    event.clientX < left
-    || event.clientX > right
-    || event.clientY < top
-    || event.clientY > bottom
-  ) {
-    clearObjectDetailCursorInteraction();
-    return;
-  }
-
-  const u = THREE.MathUtils.clamp((event.clientX - left) / bounds.width, 0, 1);
-  const screenV = THREE.MathUtils.clamp((event.clientY - top) / bounds.height, 0, 1);
-  const textureV = 1 - screenV;
-  const worldX = (u - 0.5) * OBJECT_DETAIL_SURFACE_WORLD_WIDTH;
-  const worldY = 0.5 - screenV;
-  objectDetail3D.cursor.active = true;
-  objectDetail3D.cursor.uv.set(u, textureV);
+  const rawU = (event.clientX - left) / bounds.width;
+  const rawScreenV = (event.clientY - top) / bounds.height;
+  const insideHoverZone = rawU >= 0 && rawU <= 1 && rawScreenV >= 0 && rawScreenV <= 1;
+  const shaderU = THREE.MathUtils.clamp(rawU, 0, 1);
+  const shaderScreenV = THREE.MathUtils.clamp(rawScreenV, 0, 1);
+  const textureV = 1 - shaderScreenV;
+  const worldX = (rawU - 0.5) * OBJECT_DETAIL_SURFACE_WORLD_WIDTH;
+  const worldY = 0.5 - rawScreenV;
+  objectDetail3D.cursor.active = insideHoverZone;
+  objectDetail3D.cursor.uv.set(shaderU, textureV);
   objectDetail3D.cursor.world.set(worldX, worldY);
   updateObjectDetailCursorLight(performance.now());
   updateObjectDetailCursorUniforms();
@@ -2519,10 +2538,18 @@ function updateObjectDetailCursorLight(now = performance.now()) {
     : 0;
   const previous = objectDetail3D.cursorLightUpdatedAt ?? now;
   const deltaSeconds = Math.max(0, (now - previous) / 1000);
-  const smoothing = 1 - Math.exp(-OBJECT_DETAIL_CURSOR_LIGHT_FADE_SPEED * deltaSeconds);
+  const fadeSpeed = active
+    ? OBJECT_DETAIL_CURSOR_LIGHT_FADE_IN_SPEED
+    : OBJECT_DETAIL_CURSOR_LIGHT_FADE_OUT_SPEED;
+  const smoothing = 1 - Math.exp(-fadeSpeed * deltaSeconds);
   objectDetail3D.cursorLightIntensity = THREE.MathUtils.lerp(
     objectDetail3D.cursorLightIntensity ?? 0,
     targetIntensity,
+    smoothing,
+  );
+  objectDetail3D.cursorEffectMix = THREE.MathUtils.lerp(
+    objectDetail3D.cursorEffectMix ?? 0,
+    active ? 1 : 0,
     smoothing,
   );
   objectDetail3D.cursorLight.intensity = objectDetail3D.cursorLightIntensity;
@@ -2577,6 +2604,7 @@ function updateObjectDetailLightMotion(now) {
 
 function updateObjectDetailFrame() {
   updateObjectDetailObservedBounds();
+  updateObjectDetailHoverBounds();
   const markers = objectDetailTexture.querySelectorAll(".object-detail-screen__day-marker");
   if (!markers.length || !objectDetail3D?.spotLights?.length) {
     return;
@@ -2745,7 +2773,7 @@ varying vec2 vDetailCloudShadowUv;
         "#include <dithering_fragment>",
         `vec2 detailAspectUv = vec2((vDetailCloudShadowUv.x - detailCursorUv.x) * 2.0, vDetailCloudShadowUv.y - detailCursorUv.y);
 float detailCursorDistance = length(detailAspectUv);
-float detailCursorClear = smoothstep(detailCursorClearRadius, detailCursorClearRadius + detailCursorClearFeather, detailCursorDistance);
+float detailCursorClear = mix(1.0, smoothstep(detailCursorClearRadius, detailCursorClearRadius + detailCursorClearFeather, detailCursorDistance), detailCursorActive);
 float detailCloudShadowAlpha = texture2D(detailCloudShadowMap, vDetailCloudShadowUv + detailCloudShadowTextureOffset + detailCloudShadowOffset).a * detailCursorClear;
 float detailCloudShadow = clamp(detailCloudShadowAlpha * detailCloudShadowStrength * detailHasCloudShadow, 0.0, 1.0);
 gl_FragColor.rgb = mix(gl_FragColor.rgb, gl_FragColor.rgb * detailCloudShadowDarken, detailCloudShadow);
@@ -2815,7 +2843,8 @@ function updateObjectDetailCursorUniforms() {
     return;
   }
 
-  const { active, uv, clearRadius, clearFeather } = objectDetail3D.cursor;
+  const { uv, clearRadius, clearFeather } = objectDetail3D.cursor;
+  const activeMix = objectDetail3D.cursorEffectMix ?? 0;
   for (const shader of [
     objectDetail3D.material?.userData.detailSurfaceEffectShader,
     objectDetail3D.cloudMaterial?.userData.detailCloudClearShader,
@@ -2823,7 +2852,7 @@ function updateObjectDetailCursorUniforms() {
     if (!shader) {
       continue;
     }
-    shader.uniforms.detailCursorActive.value = active ? 1 : 0;
+    shader.uniforms.detailCursorActive.value = activeMix;
     shader.uniforms.detailCursorUv.value.copy(uv);
     shader.uniforms.detailCursorClearRadius.value = clearRadius;
     shader.uniforms.detailCursorClearFeather.value = clearFeather;
