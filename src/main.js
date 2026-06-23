@@ -2481,11 +2481,12 @@ function updateObjectDetailCursorInteraction(event) {
   }
 
   const u = THREE.MathUtils.clamp((event.clientX - left) / bounds.width, 0, 1);
-  const v = THREE.MathUtils.clamp((event.clientY - top) / bounds.height, 0, 1);
+  const screenV = THREE.MathUtils.clamp((event.clientY - top) / bounds.height, 0, 1);
+  const textureV = 1 - screenV;
   const worldX = (u - 0.5) * OBJECT_DETAIL_SURFACE_WORLD_WIDTH;
-  const worldY = 0.5 - v;
+  const worldY = 0.5 - screenV;
   objectDetail3D.cursor.active = true;
-  objectDetail3D.cursor.uv.set(u, v);
+  objectDetail3D.cursor.uv.set(u, textureV);
   objectDetail3D.cursor.world.set(worldX, worldY);
   updateObjectDetailCursorLight(performance.now());
   updateObjectDetailCursorUniforms();
