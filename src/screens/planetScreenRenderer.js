@@ -330,11 +330,15 @@ function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, st
       kind: "MOON",
       name: moon.name,
       textureUrl: moonTexture.url,
+      textureCanvas: moonTexture.canvas,
+      dayCycleSeconds: Infinity,
+      starGlowColor: planet.systemStarColor,
+      starBlackCore: Boolean(planet.systemStarBlackCore),
       sizeIndex: moon.sizeIndex,
       bodySizeRank: moon.sizeIndex,
       createTexture: () => createMoonTexture(moonTextureSeed, MOON_DETAIL_TEXTURE_HEIGHT, {
         paletteMode: moonPaletteMode,
-      })?.url ?? null,
+      }) ?? null,
     };
     const moonTextureElement = document.createElement("span");
     moonTextureElement.className = "planet-screen__moon-texture";

@@ -2093,9 +2093,16 @@ async function openObjectDetailFromPlanetView(detail) {
       return;
     }
 
-    const textureUrl = detail.createTexture();
-    if (isObjectDetailOpen && detailToken === objectDetailToken && textureUrl) {
-      detail.textureUrl = textureUrl;
+    const texture = detail.createTexture();
+    if (isObjectDetailOpen && detailToken === objectDetailToken && texture) {
+      if (typeof texture === "string") {
+        detail.textureUrl = texture;
+      } else {
+        detail.textureUrl = texture.url ?? detail.textureUrl;
+        detail.textureCanvas = texture.canvas ?? detail.textureCanvas;
+        detail.cloudCanvas = texture.cloudCanvas ?? detail.cloudCanvas;
+        detail.bumpCanvas = texture.bumpCanvas ?? detail.bumpCanvas;
+      }
       renderObjectDetailContent(detail);
     }
   }
@@ -2106,7 +2113,7 @@ function renderObjectDetailContent(detail) {
   objectDetailTexture.replaceChildren();
   objectDetailTexture.style.backgroundImage = "none";
 
-  if ((detail.kind === "PLANET" || detail.kind === "GAS GIANT") && detail.textureCanvas) {
+  if ((detail.kind === "PLANET" || detail.kind === "GAS GIANT" || detail.kind === "MOON") && detail.textureCanvas) {
     renderObjectDetailPlanetSurface(detail);
     renderObjectDetailFrame(detail);
     return;
@@ -2361,7 +2368,17 @@ function renderObjectDetailPlanetSurface(detail) {
     scene3D.add(cloudMesh);
   }
 
-  const spotLights = [-1, 1].map((startX) => {
+  const lightDaySeconds = detail.dayCycleSeconds === Infinity
+    ? Infinity
+    : Number.isFinite(detail.dayCycleSeconds)
+      ? Math.max(0.001, detail.dayCycleSeconds)
+      : OBJECT_DETAIL_LIGHT_FALLBACK_DAY_SECONDS;
+  const spotStartXs = detail.kind === "MOON"
+    ? [-OBJECT_DETAIL_SURFACE_WORLD_WIDTH, 0]
+    : lightDaySeconds === Infinity
+      ? [-0.94, 0.94]
+      : [-1, 1];
+  const spotLights = spotStartXs.map((startX) => {
     const target = new THREE.Object3D();
     target.position.set(startX, 0, 0);
     scene3D.add(target);
@@ -2443,11 +2460,7 @@ function renderObjectDetailPlanetSurface(detail) {
       clearFeather: OBJECT_DETAIL_CURSOR_CLEAR_FEATHER,
     },
     lightStartedAt: performance.now(),
-    lightDaySeconds: detail.dayCycleSeconds === Infinity
-      ? Infinity
-      : Number.isFinite(detail.dayCycleSeconds)
-        ? Math.max(0.001, detail.dayCycleSeconds)
-        : OBJECT_DETAIL_LIGHT_FALLBACK_DAY_SECONDS,
+    lightDaySeconds,
     bodyTextureCycleSeconds: detail.kind === "GAS GIANT"
       ? OBJECT_DETAIL_GAS_GIANT_TEXTURE_CYCLE_SECONDS
       : Infinity,
@@ -2622,7 +2635,7 @@ function updateObjectDetailFrame() {
       1 - THREE.MathUtils.smoothstep(relative, 1 - OBJECT_DETAIL_DAY_MARKER_EDGE_FADE, 1),
     );
     marker.style.left = `${THREE.MathUtils.clamp(relative, 0, 1) * 100}%`;
-    marker.style.opacity = relative >= 0 && relative <= 1 ? "1" : "0";
+    marker.style.visibility = relative >= 0 && relative <= 1 ? "visible" : "hidden";
     marker.style.setProperty("--object-detail-day-marker-edge-scale", String(edgeScale));
   });
 }
