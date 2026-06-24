@@ -1963,7 +1963,7 @@ body.system-open .music-player {
   --planet-screen-parallax-y: 0px;
   --moon-inner-rim-blur: 1px;
   --moon-inner-rim-wide-blur: 2.5px;
-  --moon-near-halo-radius: -1%;
+  --moon-near-halo-radius: -6.6%;
   --moon-far-halo-radius: 14%;
   --moon-shadow-darkness: 1;
   --moon-shadow-mid-alpha: 0.32;
@@ -2102,12 +2102,13 @@ body.system-open .music-player {
   position: absolute;
   border-radius: 50%;
   overflow: visible;
-  background: #111;
+  background: transparent;
   box-shadow: none;
 }
 
 .planet-screen__moon-texture,
 .planet-screen__moon-shade,
+.planet-screen__moon-bloom,
 .planet-screen__moon-rim {
   position: absolute;
   inset: 0;
@@ -2118,13 +2119,17 @@ body.system-open .music-player {
 
 .planet-screen__moon-texture {
   z-index: 0;
-  background-position: left center;
-  background-size: 200% 100%;
+  border-radius: 0;
+  background-position: center;
+  background-size: 100% 100%;
+  clip-path: var(--moon-silhouette-clip, circle(50% at 50% 50%));
 }
 
 .planet-screen__moon-shade {
   inset: -0.8px;
   z-index: 1;
+  border-radius: 0;
+  clip-path: var(--moon-silhouette-clip, circle(50% at 50% 50%));
   background:
     radial-gradient(circle at var(--moon-light-x) var(--moon-light-y),
       rgba(255, 255, 255, 0.34) 0 10%,
@@ -2137,8 +2142,32 @@ body.system-open .music-player {
       rgba(0, 0, 0, var(--moon-shadow-darkness)) 100%);
 }
 
-.planet-screen__moon-rim {
+.planet-screen__moon-bloom {
   z-index: 2;
+  border-radius: 0;
+  mix-blend-mode: screen;
+  opacity: calc(var(--moon-bloom-strength, 1) * var(--moon-bloom-base-opacity, 0.4) * var(--moon-bloom-flicker, 1));
+  transform-origin: 50% 50%;
+}
+
+.planet-screen__moon-bloom--soft {
+  --moon-bloom-base-opacity: 0.42;
+  background-position: center;
+  background-size: 100% 100%;
+}
+
+.planet-screen__moon-bloom--core {
+  --moon-bloom-base-opacity: 0.36;
+  background-position: center;
+  background-size: 100% 100%;
+  clip-path: var(--moon-silhouette-clip, circle(50% at 50% 50%));
+  filter:
+    saturate(1.18)
+    brightness(calc(0.84 + var(--moon-bloom-strength, 1) * 0.34));
+}
+
+.planet-screen__moon-rim {
+  z-index: 3;
   opacity: var(--moon-rim-opacity);
   color: var(--moon-rim-color);
   transition: opacity 120ms ease-out;
@@ -2146,6 +2175,8 @@ body.system-open .music-player {
 
 .planet-screen__moon-rim--inner {
   inset: -0.8px;
+  border-radius: 0;
+  clip-path: var(--moon-silhouette-clip, circle(50% at 50% 50%));
   box-shadow:
     inset 0 0 var(--moon-inner-rim-blur) 1px color-mix(in srgb, currentColor 38%, transparent),
     inset 0 0 var(--moon-inner-rim-wide-blur) 2px color-mix(in srgb, currentColor 17%, transparent);

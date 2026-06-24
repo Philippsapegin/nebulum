@@ -2102,6 +2102,9 @@ async function openObjectDetailFromPlanetView(detail) {
         detail.textureCanvas = texture.canvas ?? detail.textureCanvas;
         detail.cloudCanvas = texture.cloudCanvas ?? detail.cloudCanvas;
         detail.bumpCanvas = texture.bumpCanvas ?? detail.bumpCanvas;
+        detail.emissiveCanvas = detail.kind === "MOON"
+          ? null
+          : texture.emissiveCanvas ?? detail.emissiveCanvas;
       }
       renderObjectDetailContent(detail);
     }
@@ -2305,6 +2308,16 @@ function renderObjectDetailPlanetSurface(detail) {
     heightMap.wrapT = THREE.ClampToEdgeWrapping;
     heightMap.needsUpdate = true;
   }
+  const emissiveMap = detail.emissiveCanvas
+    ? new THREE.CanvasTexture(detail.emissiveCanvas)
+    : null;
+  if (emissiveMap) {
+    emissiveMap.colorSpace = THREE.SRGBColorSpace;
+    emissiveMap.wrapS = THREE.RepeatWrapping;
+    emissiveMap.wrapT = THREE.ClampToEdgeWrapping;
+    emissiveMap.anisotropy = Math.min(8, renderer3D.capabilities.getMaxAnisotropy());
+    emissiveMap.needsUpdate = true;
+  }
   const cloudMap = detail.cloudCanvas
     ? new THREE.CanvasTexture(detail.cloudCanvas)
     : null;
@@ -2325,6 +2338,9 @@ function renderObjectDetailPlanetSurface(detail) {
     displacementMap: heightMap ?? undefined,
     displacementScale: hasDisplacement ? OBJECT_DETAIL_DISPLACEMENT_SCALE : 0,
     displacementBias: hasDisplacement ? -0.035 : 0,
+    emissive: emissiveMap ? 0xffffff : 0x000000,
+    emissiveMap: emissiveMap ?? undefined,
+    emissiveIntensity: emissiveMap ? 0.59 : 0,
     roughness: 0.86,
     metalness: 0,
   });
@@ -2438,6 +2454,7 @@ function renderObjectDetailPlanetSurface(detail) {
     material,
     colorMap,
     heightMap,
+    emissiveMap,
     isGasGiant: detail.kind === "GAS GIANT",
     hexGrid,
     cloudMap,
@@ -2886,6 +2903,7 @@ function disposeObjectDetail3D() {
   objectDetail3D.material.dispose();
   objectDetail3D.colorMap.dispose();
   objectDetail3D.heightMap?.dispose();
+  objectDetail3D.emissiveMap?.dispose();
   objectDetail3D.hexGrid?.texture.dispose();
   objectDetail3D.hexGrid?.geometry.dispose();
   objectDetail3D.hexGrid?.material.dispose();

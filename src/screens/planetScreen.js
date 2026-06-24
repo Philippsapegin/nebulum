@@ -21,6 +21,11 @@ export function createPlanetScreenController({
     active3D: null,
     moonDebugSettings: {
       shadowOffset: 111,
+      shadowStrength: 1.2,
+      bloomStrength: 1.3,
+      bloomBlur: 6.5,
+      bloomPulse: 1,
+      nearHaloRadius: -6.6,
     },
     parallaxX: 0,
     parallaxY: 0,
@@ -136,6 +141,7 @@ export function createPlanetScreenController({
       const lightX = 50 + lightDirectionX * 34;
       const lightY = 50 + lightDirectionY * 34;
       const shadowOffset = state.moonDebugSettings?.shadowOffset ?? 111;
+      const shadowStrength = state.moonDebugSettings?.shadowStrength ?? 1.2;
       const shadowX = 50 + lightDirectionX * shadowOffset;
       const shadowY = 50 + lightDirectionY * shadowOffset;
       const rimContact = state.activeStar.radius + moon.radius - distance;
@@ -147,6 +153,9 @@ export function createPlanetScreenController({
       moon.element.style.setProperty("--moon-light-y", `${lightY.toFixed(2)}%`);
       moon.element.style.setProperty("--moon-shadow-x", `${shadowX.toFixed(2)}%`);
       moon.element.style.setProperty("--moon-shadow-y", `${shadowY.toFixed(2)}%`);
+      moon.element.style.setProperty("--moon-shadow-mid-alpha", Math.min(1, 0.62 * shadowStrength).toFixed(3));
+      moon.element.style.setProperty("--moon-shadow-core-alpha", Math.min(1, 0.86 * shadowStrength).toFixed(3));
+      moon.element.style.setProperty("--moon-shadow-darkness", Math.min(1, shadowStrength).toFixed(3));
       moon.element.style.setProperty("--moon-rim-opacity", rimStrength.toFixed(3));
     }
   }
