@@ -117,6 +117,9 @@ starWindow.append(planetEntryOverlay);
 const graphEntryOverlay = document.createElement("div");
 graphEntryOverlay.className = "graph-entry-overlay";
 document.querySelector("#app").append(graphEntryOverlay);
+const objectDetailEntryOverlay = document.createElement("div");
+objectDetailEntryOverlay.className = "object-detail-entry-overlay";
+document.querySelector("#app").append(objectDetailEntryOverlay);
 
 const renderer = new THREE.WebGLRenderer({
   canvas: sceneCanvas,
@@ -1976,7 +1979,7 @@ function closeStarWindow() {
   setSystemTransitionOverlay(0);
   releaseSystemPointerLock();
   planetScreenController.close();
-  closeObjectDetailScreen();
+  closeObjectDetailScreen({ preserveTransitionOverlay: true });
   closePlanetWindow();
   activeSystemStar = null;
   activeSystemStarSurface = null;
@@ -2042,7 +2045,7 @@ function renderPlanetScreenLoadFallback(planet) {
   planetScreen.append(title);
 }
 
-function returnToStarSystemFromPlanet() {
+async function returnToStarSystemFromPlanet() {
   const activeNode = systemScreenController.state.activeNode;
   if (!activeNode) {
     closeStarWindow();
@@ -2050,6 +2053,10 @@ function returnToStarSystemFromPlanet() {
   }
 
   cancelPlanetEntryTransition();
+  await runPlanetScreenZoomOutTransition({
+    originX: window.innerWidth / 2,
+    originY: window.innerHeight / 2,
+  });
   planetScreenController.close();
   closePlanetWindow();
   systemScreenController.open(activeNode);
@@ -2062,23 +2069,46 @@ function returnToStarSystemFromPlanet() {
   updateSystemGlow(window.innerWidth / 2, window.innerHeight / 2, 0, 0);
   updateSystemParallax(lastClientPointer.x, lastClientPointer.y, true);
   preloadPlanetScreenRenderer();
+  resetTransitionSurfaces();
+  await revealObjectDetailEntryOverlay(300);
 }
 
-async function openObjectDetailFromPlanetView(detail) {
+async function openObjectDetailFromPlanetView(detail, clientX = window.innerWidth / 2, clientY = window.innerHeight / 2) {
   if (!detail || !openPlanetData) {
     return;
   }
 
   objectDetailOrbitPlanet = openPlanetData;
   isObjectDetailOpen = true;
+  starWindow.classList.add("object-detail-open");
   const detailToken = ++objectDetailToken;
   cancelPlanetEntryTransition();
   closePlanetWindow();
   disposeObjectDetail3D();
   objectDetailTexture.replaceChildren();
   objectDetailTexture.style.backgroundImage = "none";
-  objectDetailScreen.classList.add("visible");
-  objectDetailScreen.setAttribute("aria-hidden", "false");
+
+  const origin = getObjectDetailEntryOrigin(detail, clientX, clientY);
+  planetScreen.style.setProperty("--surface-entry-origin-x", `${origin.x}px`);
+  planetScreen.style.setProperty("--surface-entry-origin-y", `${origin.y}px`);
+  planetScreen.style.setProperty("--surface-entry-scale", "1");
+  objectDetailEntryOverlay.classList.add("active");
+  objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "0");
+
+  await nextAnimationFrame();
+  if (!isObjectDetailOpen || detailToken !== objectDetailToken) {
+    return;
+  }
+
+  planetScreen.classList.add("surface-entry-moving");
+  planetScreen.style.setProperty("--surface-entry-scale", "7");
+  objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "1");
+
+  await delay(420);
+  if (!isObjectDetailOpen || detailToken !== objectDetailToken) {
+    return;
+  }
+
   planetScreenController.close();
 
   await nextAnimationFrame();
@@ -2087,6 +2117,10 @@ async function openObjectDetailFromPlanetView(detail) {
   }
 
   renderObjectDetailContent(detail);
+  objectDetailScreen.style.removeProperty("opacity");
+  objectDetailScreen.style.removeProperty("transition");
+  objectDetailScreen.classList.add("visible");
+  objectDetailScreen.setAttribute("aria-hidden", "false");
   if (detail.createTexture) {
     await nextAnimationFrame();
     if (!isObjectDetailOpen || detailToken !== objectDetailToken) {
@@ -2109,6 +2143,34 @@ async function openObjectDetailFromPlanetView(detail) {
       renderObjectDetailContent(detail);
     }
   }
+
+  await nextAnimationFrame();
+  if (!isObjectDetailOpen || detailToken !== objectDetailToken) {
+    return;
+  }
+
+  resetTransitionSurfaces();
+  objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "0");
+  await delay(240);
+  if (!isObjectDetailOpen || detailToken !== objectDetailToken) {
+    return;
+  }
+
+  objectDetailEntryOverlay.classList.remove("active");
+}
+
+function getObjectDetailEntryOrigin(detail, clientX, clientY) {
+  if (detail.kind === "PLANET" || detail.kind === "GAS GIANT") {
+    return {
+      x: window.innerWidth / 2,
+      y: window.innerHeight,
+    };
+  }
+
+  return {
+    x: THREE.MathUtils.clamp(clientX, 0, window.innerWidth),
+    y: THREE.MathUtils.clamp(clientY, 0, window.innerHeight),
+  };
 }
 
 function renderObjectDetailContent(detail) {
@@ -2252,10 +2314,21 @@ function renderObjectDetailFlatHexGrid(detail) {
   objectDetailTexture.append(canvas);
 }
 
-function closeObjectDetailScreen() {
+function closeObjectDetailScreen({ preserveTransitionOverlay = false, keepSystemHidden = false } = {}) {
   isObjectDetailOpen = false;
   objectDetailToken += 1;
+  if (!keepSystemHidden) {
+    starWindow.classList.remove("object-detail-open");
+  }
   disposeObjectDetail3D();
+  if (!preserveTransitionOverlay) {
+    objectDetailEntryOverlay.classList.remove("active");
+    objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "0");
+    planetScreen.classList.remove("surface-entry-moving");
+    planetScreen.style.setProperty("--surface-entry-scale", "1");
+    objectDetailScreen.classList.remove("object-detail-exit-moving");
+    objectDetailScreen.style.setProperty("--object-detail-exit-scale", "1");
+  }
   objectDetailScreen.classList.remove("visible");
   objectDetailScreen.setAttribute("aria-hidden", "true");
   objectDetailTexture.replaceChildren();
@@ -2919,10 +2992,13 @@ function disposeObjectDetail3D() {
 
 async function returnToOrbitFromObjectDetail() {
   const planet = objectDetailOrbitPlanet;
-  closeObjectDetailScreen();
   if (!planet) {
+    closeObjectDetailScreen();
     return;
   }
+
+  await runObjectDetailZoomOutTransition();
+  closeObjectDetailScreen({ preserveTransitionOverlay: true, keepSystemHidden: true });
 
   try {
     await loadPlanetScreenRenderer();
@@ -2930,7 +3006,58 @@ async function returnToOrbitFromObjectDetail() {
     console.error("Planet screen module failed to load", error);
   }
   planetScreenController.open(planet);
+  starWindow.classList.remove("object-detail-open");
   planetScreenController.updateParallax(lastClientPointer.x, lastClientPointer.y);
+  resetTransitionSurfaces();
+  snapObjectDetailHidden();
+  await revealObjectDetailEntryOverlay(260);
+}
+
+async function runPlanetScreenZoomOutTransition({ originX, originY }) {
+  planetScreen.style.setProperty("--surface-entry-origin-x", `${originX}px`);
+  planetScreen.style.setProperty("--surface-entry-origin-y", `${originY}px`);
+  planetScreen.style.setProperty("--surface-entry-scale", "1");
+  objectDetailEntryOverlay.classList.add("active");
+  objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "0");
+  await nextAnimationFrame();
+  planetScreen.classList.add("surface-entry-moving");
+  planetScreen.style.setProperty("--surface-entry-scale", "0.08");
+  objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "1");
+  await delay(500);
+}
+
+async function runObjectDetailZoomOutTransition() {
+  objectDetailScreen.style.setProperty("--object-detail-exit-scale", "1");
+  objectDetailEntryOverlay.classList.add("active");
+  objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "0");
+  await nextAnimationFrame();
+  objectDetailScreen.classList.add("object-detail-exit-moving");
+  objectDetailScreen.style.setProperty("--object-detail-exit-scale", "0.08");
+  objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "1");
+  await delay(500);
+}
+
+async function revealObjectDetailEntryOverlay(duration = 360) {
+  await nextAnimationFrame();
+  objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "0");
+  await delay(duration);
+  objectDetailEntryOverlay.classList.remove("active");
+  objectDetailScreen.style.removeProperty("opacity");
+  objectDetailScreen.style.removeProperty("transition");
+}
+
+function resetTransitionSurfaces() {
+  planetScreen.classList.remove("surface-entry-moving");
+  planetScreen.style.setProperty("--surface-entry-scale", "1");
+  objectDetailScreen.classList.remove("object-detail-exit-moving");
+  objectDetailScreen.style.setProperty("--object-detail-exit-scale", "1");
+}
+
+function snapObjectDetailHidden() {
+  objectDetailScreen.style.transition = "none";
+  objectDetailScreen.style.opacity = "0";
+  objectDetailScreen.classList.remove("visible");
+  void objectDetailScreen.offsetWidth;
 }
 
 function renderSystemStars(node) {
@@ -5666,7 +5793,12 @@ function resize() {
   renderer.setSize(width, height, false);
   systemGlowLayer.resize(width, height);
   const didResizePlanetScreen = planetScreenController.resize();
-  if (!didResizePlanetScreen && systemScreenController.isOpen() && systemScreenController.state.activeNode) {
+  if (
+    !didResizePlanetScreen &&
+    !isObjectDetailOpen &&
+    systemScreenController.isOpen() &&
+    systemScreenController.state.activeNode
+  ) {
     renderStarSystem(systemScreenController.state.activeNode);
     renderSystemStars(systemScreenController.state.activeNode);
     renderSystemParticles(systemScreenController.state.activeNode);
@@ -5707,11 +5839,11 @@ function animate() {
       targetRotation.y += rotationVelocity.y;
       rotationVelocity.multiplyScalar(0.95);
     }
-  } else if (!planetScreenController.isOpen() && activeSystemStarSurface) {
+  } else if (!planetScreenController.isOpen() && !isObjectDetailOpen && activeSystemStarSurface) {
     drawSystemStarSurface(activeSystemStarSurface, now);
   }
 
-  if (systemScreenController.isOpen()) {
+  if (systemScreenController.isOpen() && !planetScreenController.isOpen() && !isObjectDetailOpen) {
     updateSystemParallax(lastClientPointer.x, lastClientPointer.y);
   }
 
@@ -5721,7 +5853,7 @@ function animate() {
     renderObjectDetail3D();
   }
 
-  if (!planetScreenController.isOpen()) {
+  if (!planetScreenController.isOpen() && !isObjectDetailOpen) {
     updateSystemPlanetRotationLayers(deltaSeconds, now);
   }
 

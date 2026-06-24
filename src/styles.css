@@ -509,7 +509,13 @@ body.system-open .music-player {
 .star-window.planet-screen-open .system-stars,
 .star-window.planet-screen-open .system-particles,
 .star-window.planet-screen-open .system-glow,
-.star-window.planet-screen-open .planet-link {
+.star-window.planet-screen-open .planet-link,
+.star-window.object-detail-open .star-system,
+.star-window.object-detail-open .system-star-layer,
+.star-window.object-detail-open .system-stars,
+.star-window.object-detail-open .system-particles,
+.star-window.object-detail-open .system-glow,
+.star-window.object-detail-open .planet-link {
   visibility: hidden;
 }
 
@@ -517,7 +523,12 @@ body.system-open .music-player {
 .star-window.planet-screen-open .system-jump,
 .star-window.planet-screen-open .system-planet-hit,
 .star-window.planet-screen-open .system-hover-name-wrap,
-.star-window.planet-screen-open .system-hover-panel {
+.star-window.planet-screen-open .system-hover-panel,
+.star-window.object-detail-open .system-top-bar,
+.star-window.object-detail-open .system-jump,
+.star-window.object-detail-open .system-planet-hit,
+.star-window.object-detail-open .system-hover-name-wrap,
+.star-window.object-detail-open .system-hover-panel {
   pointer-events: none;
   visibility: hidden;
 }
@@ -1961,6 +1972,9 @@ body.system-open .music-player {
 .planet-screen {
   --planet-screen-parallax-x: 0px;
   --planet-screen-parallax-y: 0px;
+  --surface-entry-origin-x: 50vw;
+  --surface-entry-origin-y: 50vh;
+  --surface-entry-scale: 1.035;
   --moon-inner-rim-blur: 1px;
   --moon-inner-rim-wide-blur: 2.5px;
   --moon-near-halo-radius: -6.6%;
@@ -1977,16 +1991,37 @@ body.system-open .music-player {
   background: #000;
   opacity: 0;
   pointer-events: none;
-  transform: scale(1.035);
+  transform-origin: var(--surface-entry-origin-x) var(--surface-entry-origin-y);
+  transform: scale(var(--surface-entry-scale));
   transition:
     opacity 280ms ease,
-    transform 520ms cubic-bezier(0.16, 1, 0.3, 1);
+    transform 420ms cubic-bezier(0.72, 0, 0.18, 1);
 }
 
 .planet-screen.visible {
   opacity: 1;
   pointer-events: auto;
-  transform: scale(1);
+  --surface-entry-scale: 1;
+}
+
+.planet-screen.surface-entry-moving {
+  pointer-events: none;
+}
+
+.object-detail-entry-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 44;
+  background: rgba(0, 0, 0, var(--surface-entry-alpha, 0));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    background 420ms ease,
+    opacity 180ms ease;
+}
+
+.object-detail-entry-overlay.active {
+  opacity: 1;
 }
 
 .planet-screen__top-bar {
@@ -2238,6 +2273,7 @@ body.system-open .music-player {
 
 .object-detail-screen {
   --object-detail-surface-height: 90vh;
+  --object-detail-exit-scale: 1;
   position: absolute;
   inset: 0;
   z-index: 43;
@@ -2247,12 +2283,19 @@ body.system-open .music-player {
   background: #000;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 180ms ease;
+  transform: scale(var(--object-detail-exit-scale));
+  transition:
+    opacity 260ms ease,
+    transform 520ms cubic-bezier(0.72, 0, 0.18, 1);
 }
 
 .object-detail-screen.visible {
   opacity: 1;
   pointer-events: auto;
+}
+
+.object-detail-screen.object-detail-exit-moving {
+  pointer-events: none;
 }
 
 .object-detail-screen__top-bar {

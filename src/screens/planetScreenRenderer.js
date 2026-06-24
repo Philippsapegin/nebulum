@@ -514,7 +514,7 @@ function renderPlanetScreenObjectHit(root, { x, y, radius, depth, detail }) {
   hit.style.setProperty("--planet-screen-hit-depth", String(depth));
   hit.addEventListener("click", (event) => {
     event.stopPropagation();
-    openObjectDetail(detail);
+    openObjectDetail(detail, event.clientX, event.clientY);
   });
   root.append(hit);
 }
