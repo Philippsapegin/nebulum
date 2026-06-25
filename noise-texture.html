@@ -85,6 +85,16 @@
         margin: 0 0 16px;
       }
 
+      .checkbox-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: rgba(255, 255, 255, 0.62);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
       .field__label {
         display: flex;
         justify-content: space-between;
@@ -607,6 +617,10 @@
           <div class="field__label"><span>Molten palette</span></div>
           <select id="tidalMoltenPalette"></select>
         </div>
+        <label class="field checkbox-row">
+          <input id="tidalHasWater" type="checkbox" checked />
+          <span>WATER TAG</span>
+        </label>
         <div class="field">
           <div class="field__label"><span>Ice spread</span><output id="tidalIceVal"></output></div>
           <input id="tidalIce" type="range" min="45" max="45" step="1" value="45" disabled />
@@ -832,6 +846,7 @@
       const saveStatus = document.getElementById("saveStatus");
       const tidalPlanetPalette = document.getElementById("tidalPlanetPalette");
       const tidalMoltenPalette = document.getElementById("tidalMoltenPalette");
+      const tidalHasWaterInput = document.getElementById("tidalHasWater");
       const tidalIceInput = document.getElementById("tidalIce");
       const tidalMoltenInput = document.getElementById("tidalMolten");
       const tidalEdgeMacroFreqInput = document.getElementById("tidalEdgeMacroFreq");
@@ -861,14 +876,14 @@
       const modeState = Object.fromEntries(Object.entries(MODES).map(([mode, config]) => {
         const palettes = clonePalettes(config.palettes);
         const fallbackStops = mode === "tidal"
-          ? PLANET_PALETTES[0]?.stops ?? createDefaultStops(8)
+          ? getTidalPlanetPalettes()[0]?.stops ?? createDefaultStops(8)
           : palettes[0]?.stops ?? createDefaultStops(config.maxStops);
         const stopMode = mode === "tidal" ? "planet" : mode;
         const stopCount = mode === "tidal" ? 8 : config.maxStops;
         return [mode, {
           palettes,
           activePaletteId: palettes[0]?.id ?? "custom",
-          planetPaletteId: PLANET_PALETTES[0]?.id ?? "",
+          planetPaletteId: getTidalPlanetPalettes()[0]?.id ?? PLANET_PALETTES[0]?.id ?? "",
           moltenPaletteId: MOLTEN_PALETTES[0]?.id ?? "",
           gradientStops: cloneModeStops(stopMode, fallbackStops, stopCount),
           iceStops: cloneModeStops(stopMode, palettes[0]?.iceStops ?? createDefaultIceStops(stopCount), stopCount),
@@ -877,6 +892,7 @@
           iceCaps: Number.isFinite(palettes[0]?.iceCaps) ? palettes[0].iceCaps : 18,
           tidalIce: 45,
           tidalMolten: 45,
+          tidalHasWater: true,
           tidalEdgeMacroFreq: 1,
           tidalEdgeMacroAmp: 0,
           tidalEdgeDetailFreq: 12,
@@ -1004,6 +1020,23 @@
 
       function getPaletteById(palettes, id) {
         return palettes.find((palette) => palette.id === id) ?? palettes[0] ?? null;
+      }
+
+      function getTidalPlanetPalettes() {
+        const filtered = PLANET_PALETTES.filter((palette) => {
+          const name = String(palette.name ?? "").trim().toUpperCase();
+          const id = String(palette.id ?? "").trim().toUpperCase();
+          return name.startsWith("B.") || id.startsWith("B.");
+        });
+        return filtered.length ? filtered : PLANET_PALETTES;
+      }
+
+      function ensureTidalPlanetPalette(state = currentState()) {
+        const palettes = getTidalPlanetPalettes();
+        if (!palettes.some((palette) => palette.id === state.planetPaletteId)) {
+          state.planetPaletteId = palettes[0]?.id ?? "";
+        }
+        return palettes;
       }
 
       function currentEditableStops() {
@@ -1463,7 +1496,9 @@
       function buildLUT() {
         if (activeMode === "tidal") {
           const state = currentState();
-          const planetPalette = getPaletteById(PLANET_PALETTES, state.planetPaletteId);
+          const tidalPlanetPalettes = getTidalPlanetPalettes();
+          ensureTidalPlanetPalette(state);
+          const planetPalette = getPaletteById(tidalPlanetPalettes, state.planetPaletteId);
           const moltenPalette = getPaletteById(MOLTEN_PALETTES, state.moltenPaletteId);
           buildGradientLUT(cloneModeStops("planet", planetPalette?.stops ?? createDefaultStops(8), 8), tidalPlanetLUT, "surface");
           buildGradientLUT(cloneModeStops("planet", planetPalette?.iceStops ?? createDefaultIceStops(8), 8), tidalIceLUT, "ice");
@@ -1579,23 +1614,20 @@
         const image = ctx.createImageData(noiseW, noiseH);
         const data = image.data;
         const state = currentState();
+        const moltenPalette = getPaletteById(MOLTEN_PALETTES, state.moltenPaletteId);
+        const moltenStops = sortedRenderStops(cloneModeStops("molten", moltenPalette?.stops ?? createDefaultMoltenStops(), 11));
         for (let p = 0; p < noiseField.length; p += 1) {
           const n = clamp01(noiseField[p]);
           const idx = (n * 255) | 0;
-          let r = tidalPlanetLUT[idx * 3];
-          let g = tidalPlanetLUT[idx * 3 + 1];
-          let b = tidalPlanetLUT[idx * 3 + 2];
+          const baseLUT = state.tidalHasWater ? tidalIceLUT : tidalPlanetLUT;
+          let r = baseLUT[idx * 3];
+          let g = baseLUT[idx * 3 + 1];
+          let b = baseLUT[idx * 3 + 2];
           const x = p % noiseW;
           const y = Math.floor(p / noiseW);
           const u = x / noiseW;
           const v = y / noiseH;
-          const iceAlpha = getTidalCenterMaskUv(u, v, state.tidalIce, "ice");
-          if (iceAlpha > 0) {
-            r += (tidalIceLUT[idx * 3] - r) * iceAlpha;
-            g += (tidalIceLUT[idx * 3 + 1] - g) * iceAlpha;
-            b += (tidalIceLUT[idx * 3 + 2] - b) * iceAlpha;
-          }
-          const moltenAlpha = getTidalEdgeMaskUv(u, v, state.tidalMolten, "molten");
+          const moltenAlpha = getTidalMoltenEdgeMaskUv(u, v, state.tidalMolten, n, moltenStops);
           if (moltenAlpha > 0) {
             r += (tidalMoltenLUT[idx * 3] - r) * moltenAlpha;
             g += (tidalMoltenLUT[idx * 3 + 1] - g) * moltenAlpha;
@@ -1673,6 +1705,64 @@
           1 - smoothstep(leftEdge, leftEdge + getTidalEdgeSoftness(), u),
           1 - smoothstep(rightEdge, rightEdge + getTidalEdgeSoftness(), 1 - u),
         );
+      }
+
+      function getTidalMoltenEdgeMaskUv(u, v, percent, moltenNoise, moltenStops) {
+        const width = Math.max(0, Math.min(100, percent)) / 100 * 0.5;
+        if (width <= 0) {
+          return 0;
+        }
+
+        const strength = sampleTidalMoltenEdgeStrength(moltenNoise, moltenStops);
+        const edgeInfluence = (strength - 0.42) * 0.18;
+        const localWidth = Math.max(0, Math.min(0.49, width + edgeInfluence));
+        const distanceFromEdge = Math.min(u, 1 - u);
+        const maskFeather = 2 / noiseW;
+        const signedMaskDistance = localWidth - distanceFromEdge;
+        return smoothstep(-maskFeather, maskFeather, signedMaskDistance);
+      }
+
+      function sampleTidalMoltenEdgeStrength(value, stops) {
+        if (!stops.length) {
+          return 0.35;
+        }
+        if (value <= stops[0].pos) {
+          return getTidalMoltenStopEdgeStrength(stops[0]);
+        }
+        for (let index = 0; index < stops.length - 1; index += 1) {
+          const current = stops[index];
+          const next = stops[index + 1];
+          if (value >= current.pos && value <= next.pos) {
+            const span = next.pos - current.pos || 1;
+            const amount = (value - current.pos) / span;
+            return getTidalMoltenStopEdgeStrength(current)
+              + (getTidalMoltenStopEdgeStrength(next) - getTidalMoltenStopEdgeStrength(current)) * amount;
+          }
+        }
+        return getTidalMoltenStopEdgeStrength(stops[stops.length - 1]);
+      }
+
+      function getTidalMoltenStopEdgeStrength(stop) {
+        const label = String(stop?.label ?? "").trim().toLowerCase();
+        if (label === "deep lava") {
+          return 1;
+        }
+        if (label === "lava") {
+          return 0.72;
+        }
+        if (label === "shore") {
+          return 0.34;
+        }
+        if (label === "landmass") {
+          return 0.22;
+        }
+        if (label === "mountains") {
+          return 0.15;
+        }
+        if (label === "highlands") {
+          return 0.1;
+        }
+        return 0.2;
       }
 
       function getTidalEdgeOffset(v, salt, side) {
@@ -1906,14 +1996,11 @@
         const image = cloudCtx.createImageData(noiseW, noiseH);
         const data = image.data;
         const state = currentState();
-        const planetPalette = getPaletteById(PLANET_PALETTES, state.planetPaletteId);
         const moltenPalette = getPaletteById(MOLTEN_PALETTES, state.moltenPaletteId);
-        const planetCloudStops = cloneCloudStops(planetPalette?.cloudStops ?? createDefaultCloudStops());
         const moltenCloudStops = cloneCloudStops(moltenPalette?.cloudStops ?? createDefaultCloudStops());
-        const alphaCutoff = planetCloudStops[0]?.pos ?? 0.48;
+        const alphaCutoff = moltenCloudStops[0]?.pos ?? 0.48;
         const seed = strToSeed((seedInput.value || " ") + ":" + (planetNameInput.value.trim() || "planet") + ":clouds");
         const settings = { scale: createSeededCloudScale(seed), octaves: 7 };
-        const cloudMaskOffset = 0.17;
 
         for (let y = 0; y < noiseH; y += 1) {
           const v = y / noiseH;
@@ -1921,13 +2008,11 @@
             const u = x / noiseW;
             const cloud = createCloudNoise(u, v, seed, settings);
             const alpha = smoothstep(alphaCutoff, Math.min(1, alphaCutoff + 0.28), cloud);
-            const planetColor = sampleCloudColor(cloud, planetCloudStops);
             const moltenColor = sampleCloudColor(cloud, moltenCloudStops);
-            const moltenAlpha = getTidalEdgeMaskUv(clamp01((u + cloudMaskOffset) % 1), v, state.tidalMolten, "molten");
             const offset = (y * noiseW + x) * 4;
-            data[offset] = planetColor[0] + (moltenColor[0] - planetColor[0]) * moltenAlpha;
-            data[offset + 1] = planetColor[1] + (moltenColor[1] - planetColor[1]) * moltenAlpha;
-            data[offset + 2] = planetColor[2] + (moltenColor[2] - planetColor[2]) * moltenAlpha;
+            data[offset] = moltenColor[0];
+            data[offset + 1] = moltenColor[1];
+            data[offset + 2] = moltenColor[2];
             data[offset + 3] = Math.round(alpha * 255);
           }
         }
@@ -2224,7 +2309,8 @@
 
       function renderTidalPaletteSelects() {
         const state = currentState();
-        tidalPlanetPalette.replaceChildren(...PLANET_PALETTES.map((palette) => {
+        const tidalPlanetPalettes = ensureTidalPlanetPalette(state);
+        tidalPlanetPalette.replaceChildren(...tidalPlanetPalettes.map((palette) => {
           const option = document.createElement("option");
           option.value = palette.id;
           option.textContent = palette.name;
@@ -2536,6 +2622,7 @@
         state.stretch = Number(stretchInput.value);
         state.tidalIce = Number(tidalIceInput.value);
         state.tidalMolten = Number(tidalMoltenInput.value);
+        state.tidalHasWater = tidalHasWaterInput.checked;
         state.tidalEdgeMacroFreq = Number(tidalEdgeMacroFreqInput.value);
         state.tidalEdgeMacroAmp = Number(tidalEdgeMacroAmpInput.value);
         state.tidalEdgeDetailFreq = Number(tidalEdgeDetailFreqInput.value);
@@ -2569,6 +2656,7 @@
         iceCapsInput.value = String(state.iceCaps);
         tidalIceInput.value = String(state.tidalIce);
         tidalMoltenInput.value = String(state.tidalMolten);
+        tidalHasWaterInput.checked = Boolean(state.tidalHasWater);
         tidalEdgeMacroFreqInput.value = String(state.tidalEdgeMacroFreq);
         tidalEdgeMacroAmpInput.value = String(state.tidalEdgeMacroAmp);
         tidalEdgeDetailFreqInput.value = String(state.tidalEdgeDetailFreq);
@@ -2699,6 +2787,10 @@
       });
       tidalMoltenPalette.addEventListener("change", () => {
         currentState().moltenPaletteId = tidalMoltenPalette.value;
+        scheduleRender(false);
+      });
+      tidalHasWaterInput.addEventListener("change", () => {
+        currentState().tidalHasWater = tidalHasWaterInput.checked;
         scheduleRender(false);
       });
       tidalIceInput.addEventListener("input", () => {

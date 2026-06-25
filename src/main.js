@@ -237,6 +237,13 @@ const OBJECT_DETAIL_OBSERVED_DEFAULT_HEIGHT_PERCENT = 95;
 const OBJECT_DETAIL_HOVER_WIDTH_PERCENT = 87;
 const OBJECT_DETAIL_HOVER_HEIGHT_PERCENT = 87;
 const OBJECT_DETAIL_DAY_MARKER_EDGE_FADE = 0.02;
+const OBJECT_DETAIL_EMISSIVE_BLOOM_STRENGTH = 2;
+const OBJECT_DETAIL_EMISSIVE_BLOOM_TARGET_SCALE = 0.5;
+const OBJECT_DETAIL_EMISSIVE_NOISE_SCALE = 20;
+const OBJECT_DETAIL_EMISSIVE_NOISE_SPEED = 0.030;
+const OBJECT_DETAIL_EMISSIVE_NOISE_BLACK_STOP = 0.16;
+const OBJECT_DETAIL_EMISSIVE_NOISE_WHITE_STOP = 1;
+const OBJECT_DETAIL_EMISSIVE_NOISE_OCTAVES = 3;
 let activeSystemStar = null;
 let activeSystemStarSurface = null;
 let tooltipTypingTimeout = null;
@@ -2181,9 +2188,12 @@ function scheduleObjectDetailTextureUpgrade(detail, detailToken) {
       detail.textureUrl = texture.url ?? detail.textureUrl;
       detail.textureCanvas = texture.canvas ?? detail.textureCanvas;
       detail.cloudCanvas = texture.cloudCanvas ?? detail.cloudCanvas;
-      detail.bumpCanvas = texture.bumpCanvas ?? detail.bumpCanvas;
-      detail.emissiveCanvas = detail.kind === "MOON"
+      detail.textureMode = texture.textureMode ?? detail.textureMode;
+      detail.bumpCanvas = detail.kind === "MOON"
         ? null
+        : texture.bumpCanvas ?? detail.bumpCanvas;
+      detail.emissiveCanvas = detail.kind === "MOON"
+        ? texture.emissiveCanvas ?? detail.emissiveCanvas ?? null
         : texture.emissiveCanvas ?? detail.emissiveCanvas;
     }
     renderObjectDetailContent(detail);
@@ -2198,9 +2208,13 @@ function scheduleObjectDetailTextureUpgrade(detail, detailToken) {
 }
 
 function renderObjectDetailContent(detail) {
+  const runtimeState = captureObjectDetailRuntimeState();
   disposeObjectDetail3D();
   objectDetailTexture.replaceChildren();
   objectDetailTexture.style.backgroundImage = "none";
+  if (runtimeState) {
+    detail.objectDetailRuntimeState = runtimeState;
+  }
 
   if ((detail.kind === "PLANET" || detail.kind === "GAS GIANT" || detail.kind === "MOON") && detail.textureCanvas) {
     renderObjectDetailPlanetSurface(detail);
@@ -2211,6 +2225,23 @@ function renderObjectDetailContent(detail) {
   objectDetailTexture.style.backgroundImage = detail.textureUrl ?? "none";
   renderObjectDetailFlatHexGrid(detail);
   renderObjectDetailFrame(detail);
+}
+
+function captureObjectDetailRuntimeState() {
+  if (!objectDetail3D) {
+    return null;
+  }
+  return {
+    lightStartedAt: objectDetail3D.lightStartedAt,
+    lightMix: objectDetail3D.lightMix,
+    targetLightMix: objectDetail3D.targetLightMix,
+    cloudMix: objectDetail3D.cloudMix,
+    targetCloudMix: objectDetail3D.targetCloudMix,
+    optionMixUpdatedAt: objectDetail3D.optionMixUpdatedAt,
+    cursorLightIntensity: objectDetail3D.cursorLightIntensity,
+    cursorEffectMix: objectDetail3D.cursorEffectMix,
+    cursorLightUpdatedAt: objectDetail3D.cursorLightUpdatedAt,
+  };
 }
 
 function renderObjectDetailFrame(detail) {
@@ -2482,7 +2513,68 @@ function closeObjectDetailScreen({ preserveTransitionOverlay = false, keepSystem
   objectDetailTexture.style.backgroundImage = "none";
 }
 
+function getObjectDetailEmissiveCanvas(detail) {
+  if (!detail?.emissiveCanvas) {
+    return null;
+  }
+  return detail.textureMode === "molten"
+    ? createFeatheredObjectDetailEmissiveCanvas(detail.emissiveCanvas)
+    : detail.emissiveCanvas;
+}
+
+function createFeatheredObjectDetailEmissiveCanvas(sourceCanvas) {
+  const width = sourceCanvas.width;
+  const height = sourceCanvas.height;
+  const featherPixels = Math.max(2, Math.round(width / 512));
+  const sourceContext = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  const source = sourceContext.getImageData(0, 0, width, height);
+  const maskCanvas = document.createElement("canvas");
+  maskCanvas.width = width;
+  maskCanvas.height = height;
+  const maskContext = maskCanvas.getContext("2d");
+  const mask = maskContext.createImageData(width, height);
+  for (let offset = 0; offset < source.data.length; offset += 4) {
+    const luminance = source.data[offset] * 0.2126
+      + source.data[offset + 1] * 0.7152
+      + source.data[offset + 2] * 0.0722;
+    const value = luminance > 0.5 ? 255 : 0;
+    mask.data[offset] = 255;
+    mask.data[offset + 1] = 255;
+    mask.data[offset + 2] = 255;
+    mask.data[offset + 3] = value;
+  }
+  maskContext.putImageData(mask, 0, 0);
+
+  const featherCanvas = document.createElement("canvas");
+  featherCanvas.width = width;
+  featherCanvas.height = height;
+  const featherContext = featherCanvas.getContext("2d", { willReadFrequently: true });
+  featherContext.filter = `blur(${featherPixels}px)`;
+  featherContext.drawImage(maskCanvas, -width, 0, width, height);
+  featherContext.drawImage(maskCanvas, 0, 0, width, height);
+  featherContext.drawImage(maskCanvas, width, 0, width, height);
+  featherContext.filter = "none";
+  const feather = featherContext.getImageData(0, 0, width, height);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  const image = context.createImageData(width, height);
+  for (let offset = 0; offset < source.data.length; offset += 4) {
+    const edgeAlpha = feather.data[offset + 3] / 255;
+    image.data[offset] = source.data[offset] * edgeAlpha;
+    image.data[offset + 1] = source.data[offset + 1] * edgeAlpha;
+    image.data[offset + 2] = source.data[offset + 2] * edgeAlpha;
+    image.data[offset + 3] = 255;
+  }
+  context.putImageData(image, 0, 0);
+  return canvas;
+}
+
 function renderObjectDetailPlanetSurface(detail) {
+  const now = performance.now();
+  const runtimeState = detail.objectDetailRuntimeState ?? {};
   const canvas = document.createElement("canvas");
   canvas.className = "object-detail-screen__canvas";
   objectDetailTexture.append(canvas);
@@ -2528,8 +2620,9 @@ function renderObjectDetailPlanetSurface(detail) {
     heightMap.wrapT = THREE.ClampToEdgeWrapping;
     heightMap.needsUpdate = true;
   }
-  const emissiveMap = detail.emissiveCanvas
-    ? new THREE.CanvasTexture(detail.emissiveCanvas)
+  const objectDetailEmissiveCanvas = getObjectDetailEmissiveCanvas(detail);
+  const emissiveMap = objectDetailEmissiveCanvas
+    ? new THREE.CanvasTexture(objectDetailEmissiveCanvas)
     : null;
   if (emissiveMap) {
     emissiveMap.colorSpace = THREE.SRGBColorSpace;
@@ -2604,6 +2697,9 @@ function renderObjectDetailPlanetSurface(detail) {
     cloudMesh.renderOrder = 2;
     scene3D.add(cloudMesh);
   }
+  const bloomResources = emissiveMap
+    ? createObjectDetailEmissiveBloomResources(renderer3D, emissiveMap)
+    : null;
 
   const lightDaySeconds = detail.dayCycleSeconds === Infinity
     ? Infinity
@@ -2683,18 +2779,19 @@ function renderObjectDetailPlanetSurface(detail) {
     cloudMaterial,
     cloudDepthMaterial,
     cloudMesh,
+    bloomResources,
     ambientLight,
     spotLights,
     cursorLight,
     cursorTarget,
-    cursorLightIntensity: 0,
-    cursorEffectMix: 0,
-    cursorLightUpdatedAt: performance.now(),
-    lightMix: objectDetailOptions.light ? 1 : 0,
-    targetLightMix: objectDetailOptions.light ? 1 : 0,
-    cloudMix: objectDetailOptions.clouds ? 1 : 0,
-    targetCloudMix: objectDetailOptions.clouds ? 1 : 0,
-    optionMixUpdatedAt: performance.now(),
+    cursorLightIntensity: runtimeState.cursorLightIntensity ?? 0,
+    cursorEffectMix: runtimeState.cursorEffectMix ?? 0,
+    cursorLightUpdatedAt: runtimeState.cursorLightUpdatedAt ?? now,
+    lightMix: runtimeState.lightMix ?? (objectDetailOptions.light ? 1 : 0),
+    targetLightMix: runtimeState.targetLightMix ?? (objectDetailOptions.light ? 1 : 0),
+    cloudMix: runtimeState.cloudMix ?? (objectDetailOptions.clouds ? 1 : 0),
+    targetCloudMix: runtimeState.targetCloudMix ?? (objectDetailOptions.clouds ? 1 : 0),
+    optionMixUpdatedAt: runtimeState.optionMixUpdatedAt ?? now,
     cursor: {
       active: false,
       uv: new THREE.Vector2(0.5, 0.5),
@@ -2702,7 +2799,7 @@ function renderObjectDetailPlanetSurface(detail) {
       clearRadius: OBJECT_DETAIL_CURSOR_CLEAR_RADIUS,
       clearFeather: OBJECT_DETAIL_CURSOR_CLEAR_FEATHER,
     },
-    lightStartedAt: performance.now(),
+    lightStartedAt: runtimeState.lightStartedAt ?? now,
     lightDaySeconds,
     bodyTextureCycleSeconds: detail.kind === "GAS GIANT"
       ? OBJECT_DETAIL_GAS_GIANT_TEXTURE_CYCLE_SECONDS
@@ -2727,6 +2824,7 @@ function resizeObjectDetail3D() {
   const height = Math.max(1, Math.round(rect.height));
   objectDetail3D.renderer.setSize(width, height, false);
   objectDetail3D.camera.updateProjectionMatrix();
+  resizeObjectDetailBloomResources(objectDetail3D, width, height);
   updateObjectDetailObservedBounds();
   updateObjectDetailHoverBounds();
 }
@@ -2737,6 +2835,242 @@ function renderObjectDetail3D() {
   }
 
   objectDetail3D.renderer.render(objectDetail3D.scene, objectDetail3D.camera);
+  renderObjectDetailEmissiveBloom(objectDetail3D, performance.now());
+}
+
+function createObjectDetailEmissiveBloomResources(renderer3D, emissiveMap) {
+  const targetOptions = {
+    minFilter: THREE.LinearFilter,
+    magFilter: THREE.LinearFilter,
+    format: THREE.RGBAFormat,
+    depthBuffer: false,
+    stencilBuffer: false,
+  };
+  const targetA = new THREE.WebGLRenderTarget(1, 1, targetOptions);
+  const targetB = new THREE.WebGLRenderTarget(1, 1, targetOptions);
+  targetA.texture.colorSpace = THREE.SRGBColorSpace;
+  targetB.texture.colorSpace = THREE.SRGBColorSpace;
+
+  const bloomScene = new THREE.Scene();
+  const bloomMaterial = createObjectDetailEmissiveBloomMaterial(emissiveMap);
+  const bloomGeometry = new THREE.PlaneGeometry(2, 1, 1, 1);
+  bloomScene.add(new THREE.Mesh(bloomGeometry, bloomMaterial));
+
+  const postCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  const blurMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      inputTexture: { value: targetA.texture },
+      direction: { value: new THREE.Vector2(1, 0) },
+      resolution: { value: new THREE.Vector2(1, 1) },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D inputTexture;
+      uniform vec2 direction;
+      uniform vec2 resolution;
+      varying vec2 vUv;
+      void main() {
+        vec2 stepSize = direction / resolution;
+        vec4 color = texture2D(inputTexture, vUv) * 0.227027;
+        color += texture2D(inputTexture, vUv + stepSize * 1.384615) * 0.316216;
+        color += texture2D(inputTexture, vUv - stepSize * 1.384615) * 0.316216;
+        color += texture2D(inputTexture, vUv + stepSize * 3.230769) * 0.070270;
+        color += texture2D(inputTexture, vUv - stepSize * 3.230769) * 0.070270;
+        gl_FragColor = color;
+      }
+    `,
+    depthWrite: false,
+    depthTest: false,
+  });
+  const blurScene = new THREE.Scene();
+  blurScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), blurMaterial));
+
+  const compositeMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      inputTexture: { value: targetA.texture },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D inputTexture;
+      varying vec2 vUv;
+      void main() {
+        vec4 bloom = texture2D(inputTexture, vUv);
+        gl_FragColor = vec4(bloom.rgb, bloom.a);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const compositeScene = new THREE.Scene();
+  compositeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), compositeMaterial));
+
+  return {
+    renderer: renderer3D,
+    targetA,
+    targetB,
+    bloomScene,
+    bloomGeometry,
+    bloomMaterial,
+    blurScene,
+    blurMaterial,
+    compositeScene,
+    compositeCamera: postCamera,
+    compositeMaterial,
+  };
+}
+
+function createObjectDetailEmissiveBloomMaterial(emissiveMap) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      emissiveMap: { value: emissiveMap },
+      emissiveTime: { value: performance.now() * 0.001 },
+      emissiveNoiseScale: { value: OBJECT_DETAIL_EMISSIVE_NOISE_SCALE },
+      emissiveNoiseSpeed: { value: OBJECT_DETAIL_EMISSIVE_NOISE_SPEED },
+      emissiveNoiseBlackStop: { value: OBJECT_DETAIL_EMISSIVE_NOISE_BLACK_STOP },
+      emissiveNoiseWhiteStop: { value: OBJECT_DETAIL_EMISSIVE_NOISE_WHITE_STOP },
+      emissiveNoiseOctaves: { value: OBJECT_DETAIL_EMISSIVE_NOISE_OCTAVES },
+      emissiveBloomStrength: { value: OBJECT_DETAIL_EMISSIVE_BLOOM_STRENGTH },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D emissiveMap;
+      uniform float emissiveTime;
+      uniform float emissiveNoiseScale;
+      uniform float emissiveNoiseSpeed;
+      uniform float emissiveNoiseBlackStop;
+      uniform float emissiveNoiseWhiteStop;
+      uniform float emissiveNoiseOctaves;
+      uniform float emissiveBloomStrength;
+      varying vec2 vUv;
+      float emissiveHash(vec2 point) {
+        return fract(sin(dot(point, vec2(41.31, 289.17))) * 19341.1415);
+      }
+      float emissiveNoise(vec2 uvPoint, vec2 frequency) {
+        vec2 point = uvPoint * frequency;
+        vec2 cell = floor(point);
+        vec2 local = smoothstep(vec2(0.0), vec2(1.0), fract(point));
+        vec2 cell00 = mod(cell, frequency);
+        vec2 cell10 = mod(cell + vec2(1.0, 0.0), frequency);
+        vec2 cell01 = mod(cell + vec2(0.0, 1.0), frequency);
+        vec2 cell11 = mod(cell + vec2(1.0, 1.0), frequency);
+        float a = emissiveHash(cell00);
+        float b = emissiveHash(cell10);
+        float c = emissiveHash(cell01);
+        float d = emissiveHash(cell11);
+        return mix(mix(a, b, local.x), mix(c, d, local.x), local.y);
+      }
+      float emissiveOctaveNoise(vec2 uvPoint) {
+        float total = 0.0;
+        float amplitude = 1.0;
+        float amplitudeTotal = 0.0;
+        for (int octave = 0; octave < 8; octave += 1) {
+          if (float(octave) >= emissiveNoiseOctaves) {
+            break;
+          }
+          float octaveScale = pow(2.0, float(octave));
+          total += emissiveNoise(uvPoint, vec2(emissiveNoiseScale * octaveScale, emissiveNoiseScale * octaveScale * 0.5)) * amplitude;
+          amplitudeTotal += amplitude;
+          amplitude *= 0.5;
+        }
+        return total / max(0.0001, amplitudeTotal);
+      }
+      float emissiveNoiseMask(vec2 uvPoint) {
+        float blackStop = clamp(emissiveNoiseBlackStop, 0.0, 1.0);
+        float whiteStop = max(blackStop + 0.001, clamp(emissiveNoiseWhiteStop, 0.0, 1.0));
+        return smoothstep(blackStop, whiteStop, emissiveOctaveNoise(uvPoint));
+      }
+      void main() {
+        vec3 emissive = texture2D(emissiveMap, vUv).rgb;
+        vec2 emissiveUv = vec2(fract(vUv.x + emissiveTime * emissiveNoiseSpeed), vUv.y);
+        float noiseMask = emissiveNoiseMask(emissiveUv);
+        float mask = max(max(emissive.r, emissive.g), emissive.b);
+        float alpha = clamp(mask * emissiveBloomStrength * noiseMask, 0.0, 1.0);
+        if (alpha < 0.001) {
+          discard;
+        }
+        gl_FragColor = vec4(emissive * emissiveBloomStrength * noiseMask, alpha);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+    blending: THREE.AdditiveBlending,
+    toneMapped: false,
+  });
+}
+
+function resizeObjectDetailBloomResources(detail3D, width, height) {
+  const bloom = detail3D.bloomResources;
+  if (!bloom) {
+    return;
+  }
+  const pixelRatio = Math.min(window.devicePixelRatio, 1.5);
+  const targetWidth = Math.max(1, Math.ceil(width * pixelRatio * OBJECT_DETAIL_EMISSIVE_BLOOM_TARGET_SCALE));
+  const targetHeight = Math.max(1, Math.ceil(height * pixelRatio * OBJECT_DETAIL_EMISSIVE_BLOOM_TARGET_SCALE));
+  bloom.targetA.setSize(targetWidth, targetHeight);
+  bloom.targetB.setSize(targetWidth, targetHeight);
+  bloom.blurMaterial.uniforms.resolution.value.set(targetWidth, targetHeight);
+}
+
+function renderObjectDetailEmissiveBloom(detail3D, now) {
+  const bloom = detail3D.bloomResources;
+  if (!bloom) {
+    return;
+  }
+  bloom.bloomMaterial.uniforms.emissiveTime.value = now * 0.001;
+  const renderer3D = detail3D.renderer;
+  renderer3D.setRenderTarget(bloom.targetA);
+  renderer3D.clear(true, true, true);
+  renderer3D.render(bloom.bloomScene, detail3D.camera);
+
+  bloom.blurMaterial.uniforms.inputTexture.value = bloom.targetA.texture;
+  bloom.blurMaterial.uniforms.direction.value.set(1, 0);
+  renderer3D.setRenderTarget(bloom.targetB);
+  renderer3D.clear(true, true, true);
+  renderer3D.render(bloom.blurScene, bloom.compositeCamera);
+
+  bloom.blurMaterial.uniforms.inputTexture.value = bloom.targetB.texture;
+  bloom.blurMaterial.uniforms.direction.value.set(0, 1);
+  renderer3D.setRenderTarget(bloom.targetA);
+  renderer3D.clear(true, true, true);
+  renderer3D.render(bloom.blurScene, bloom.compositeCamera);
+
+  bloom.blurMaterial.uniforms.inputTexture.value = bloom.targetA.texture;
+  bloom.blurMaterial.uniforms.direction.value.set(1, 0);
+  renderer3D.setRenderTarget(bloom.targetB);
+  renderer3D.clear(true, true, true);
+  renderer3D.render(bloom.blurScene, bloom.compositeCamera);
+
+  bloom.blurMaterial.uniforms.inputTexture.value = bloom.targetB.texture;
+  bloom.blurMaterial.uniforms.direction.value.set(0, 1);
+  renderer3D.setRenderTarget(bloom.targetA);
+  renderer3D.clear(true, true, true);
+  renderer3D.render(bloom.blurScene, bloom.compositeCamera);
+
+  renderer3D.setRenderTarget(null);
+  renderer3D.autoClear = false;
+  renderer3D.render(bloom.compositeScene, bloom.compositeCamera);
+  renderer3D.autoClear = true;
 }
 
 function updateObjectDetailCursorInteraction(event) {
@@ -3181,6 +3515,12 @@ function disposeObjectDetail3D() {
   objectDetail3D.cloudGeometry?.dispose();
   objectDetail3D.cloudMaterial?.dispose();
   objectDetail3D.cloudDepthMaterial?.dispose();
+  objectDetail3D.bloomResources?.targetA.dispose();
+  objectDetail3D.bloomResources?.targetB.dispose();
+  objectDetail3D.bloomResources?.bloomGeometry.dispose();
+  objectDetail3D.bloomResources?.bloomMaterial.dispose();
+  objectDetail3D.bloomResources?.blurMaterial.dispose();
+  objectDetail3D.bloomResources?.compositeMaterial.dispose();
   objectDetail3D.renderer.dispose();
   objectDetail3D.renderer.forceContextLoss();
   objectDetail3D.renderer.domElement = null;
@@ -3864,6 +4204,7 @@ function createPlanetTextureParams({ seed, temperature, hasWater, atmosphere, ti
     cloudAlpha,
     freezeWater,
     textureMode,
+    hasWater,
   };
 }
 

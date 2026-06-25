@@ -26,7 +26,7 @@ const PLANET_SCREEN_SPECULAR_STRENGTH = 0.08;
 const PLANET_SCREEN_EMISSIVE_STRENGTH = 0.59;
 const PLANET_SCREEN_EMISSIVE_BLOOM_STRENGTH = 2;
 const PLANET_SCREEN_CLOUD_SPEED_MULTIPLIER = 1.15;
-const PLANET_SCREEN_TIDAL_LOCKED_TEXTURE_OFFSET = 0.006;
+const PLANET_SCREEN_TIDAL_LOCKED_TEXTURE_OFFSET = 0.05;
 const PLANET_SCREEN_EMISSIVE_NOISE_SCALE_MULTIPLIER = 20;
 const PLANET_SCREEN_EMISSIVE_NOISE_SCALE = 1;
 const PLANET_SCREEN_EMISSIVE_NOISE_SPEED = 0.030;
@@ -42,12 +42,13 @@ const MOON_SILHOUETTE_MIN_RADIUS = 0.38;
 const MOON_SILHOUETTE_MAX_RADIUS = 0.5;
 const MOON_SILHOUETTE_STRENGTH_BY_SIZE = [3, 2, 1];
 const MOLTEN_MOON_TEMPERATURE_THRESHOLD = 4000;
-const MOON_BLOOM_FLICKER_MIN_INTERVAL = 1.8;
-const MOON_BLOOM_FLICKER_MAX_INTERVAL = 14.5;
-const MOON_BLOOM_FLICKER_SMOOTHING = 0.56;
+const MOON_BLOOM_NOISE_MASK_SIZE = 128;
+const MOON_BLOOM_NOISE_BASE_SIZE = 32;
 const moonSilhouetteMaskCache = new Map();
 const moonMaskedTextureCache = new Map();
 const moonBloomTextureCache = new Map();
+const moonBloomNoiseMaskCache = new Map();
+const moonLavaReliefTextureCache = new Map();
 
 export function createPlanetScreenRenderer({
   root,
@@ -351,20 +352,27 @@ function sampleMoonTextureLuminance(data, width, height, u, v) {
 function getMoonDebugSettings() {
   const settings = planetScreenController.state.moonDebugSettings;
   settings.shadowStrength = Number.isFinite(settings.shadowStrength) ? settings.shadowStrength : 1.2;
-  settings.bloomStrength = Number.isFinite(settings.bloomStrength) ? settings.bloomStrength : 1.3;
-  settings.bloomBlur = Number.isFinite(settings.bloomBlur) ? settings.bloomBlur : 6.5;
+  settings.bloomStrength = Number.isFinite(settings.bloomStrength) ? settings.bloomStrength : 4;
+  settings.bloomBlur = Number.isFinite(settings.bloomBlur) ? settings.bloomBlur : 10;
   settings.bloomPulse = Number.isFinite(settings.bloomPulse) ? settings.bloomPulse : 1;
+  settings.bloomBrightness = Number.isFinite(settings.bloomBrightness) ? settings.bloomBrightness : 1;
+  settings.bloomContrast = Number.isFinite(settings.bloomContrast) ? settings.bloomContrast : 1;
+  settings.bloomThreshold = Number.isFinite(settings.bloomThreshold) ? settings.bloomThreshold : 0.14;
+  settings.bloomSoftOpacity = Number.isFinite(settings.bloomSoftOpacity) ? settings.bloomSoftOpacity : 1;
+  settings.bloomCoreOpacity = Number.isFinite(settings.bloomCoreOpacity) ? settings.bloomCoreOpacity : 1;
   settings.nearHaloRadius = Number.isFinite(settings.nearHaloRadius) ? settings.nearHaloRadius : -6.6;
   return settings;
 }
 
 function applyMoonBloomSettings(settings = getMoonDebugSettings()) {
   planetScreen.style.setProperty("--moon-bloom-strength", settings.bloomStrength.toFixed(2));
+  planetScreen.style.setProperty("--moon-bloom-soft-opacity", settings.bloomSoftOpacity.toFixed(2));
+  planetScreen.style.setProperty("--moon-bloom-core-opacity", settings.bloomCoreOpacity.toFixed(2));
   planetScreen.style.setProperty("--moon-near-halo-radius", `${settings.nearHaloRadius.toFixed(2)}%`);
 }
 
-function applyMoonBloomTexture(element, seed, emissiveCanvas, shape, blur) {
-  const bloom = createMoonBloomTexture(seed, emissiveCanvas, shape, blur);
+function applyMoonBloomTexture(element, seed, emissiveCanvas, shape, options = {}) {
+  const bloom = createMoonBloomTexture(seed, emissiveCanvas, shape, options);
   if (!bloom) {
     return;
   }
@@ -372,12 +380,23 @@ function applyMoonBloomTexture(element, seed, emissiveCanvas, shape, blur) {
   element.style.inset = `${(-bloom.insetPercent).toFixed(3)}%`;
 }
 
-function createMoonBloomTexture(seed, emissiveCanvas, shape, blur) {
+function createMoonBloomTexture(seed, emissiveCanvas, shape, options = {}) {
   if (!emissiveCanvas || !shape?.boundary?.length) {
     return null;
   }
+  const blur = options.blur ?? 0;
+  const brightness = THREE.MathUtils.clamp(options.brightness ?? 1, 0, 8);
+  const contrast = THREE.MathUtils.clamp(options.contrast ?? 1, 0.1, 8);
+  const threshold = THREE.MathUtils.clamp(options.threshold ?? 0, 0, 0.98);
   const normalizedBlur = THREE.MathUtils.clamp(blur, 0, 48);
-  const cacheKey = `${seed}:${emissiveCanvas.width}x${emissiveCanvas.height}:${normalizedBlur.toFixed(2)}`;
+  const cacheKey = [
+    seed,
+    `${emissiveCanvas.width}x${emissiveCanvas.height}`,
+    normalizedBlur.toFixed(2),
+    brightness.toFixed(3),
+    contrast.toFixed(3),
+    threshold.toFixed(3),
+  ].join(":");
   if (moonBloomTextureCache.has(cacheKey)) {
     return moonBloomTextureCache.get(cacheKey);
   }
@@ -401,6 +420,20 @@ function createMoonBloomTexture(seed, emissiveCanvas, shape, blur) {
     baseSize,
     baseSize,
   );
+  const sourceImage = sourceContext.getImageData(0, 0, outputSize, outputSize);
+  for (let offset = 0; offset < sourceImage.data.length; offset += 4) {
+    const red = sourceImage.data[offset] / 255;
+    const green = sourceImage.data[offset + 1] / 255;
+    const blue = sourceImage.data[offset + 2] / 255;
+    const heat = Math.max(red, green, blue);
+    const thresholded = THREE.MathUtils.clamp((heat - threshold) / Math.max(0.001, 1 - threshold), 0, 1);
+    const heatMask = Math.pow(thresholded, 1 / contrast);
+    sourceImage.data[offset] = THREE.MathUtils.clamp(red * brightness * heatMask * 255, 0, 255);
+    sourceImage.data[offset + 1] = THREE.MathUtils.clamp(green * brightness * heatMask * 255, 0, 255);
+    sourceImage.data[offset + 2] = THREE.MathUtils.clamp(blue * brightness * heatMask * 255, 0, 255);
+    sourceImage.data[offset + 3] = THREE.MathUtils.clamp(sourceImage.data[offset + 3] * heatMask, 0, 255);
+  }
+  sourceContext.putImageData(sourceImage, 0, 0);
   sourceContext.globalCompositeOperation = "destination-in";
   sourceContext.beginPath();
   shape.boundary.forEach((radius, index) => {
@@ -432,6 +465,38 @@ function createMoonBloomTexture(seed, emissiveCanvas, shape, blur) {
   };
   moonBloomTextureCache.set(cacheKey, bloom);
   return bloom;
+}
+
+function createMoonBloomNoiseMask(seed) {
+  if (moonBloomNoiseMaskCache.has(seed)) {
+    return moonBloomNoiseMaskCache.get(seed);
+  }
+
+  const random = createRandom(`${seed}:bloom-noise-mask`);
+  const sourceCanvas = document.createElement("canvas");
+  sourceCanvas.width = MOON_BLOOM_NOISE_BASE_SIZE;
+  sourceCanvas.height = MOON_BLOOM_NOISE_BASE_SIZE;
+  const sourceContext = sourceCanvas.getContext("2d");
+  const source = sourceContext.createImageData(MOON_BLOOM_NOISE_BASE_SIZE, MOON_BLOOM_NOISE_BASE_SIZE);
+  for (let offset = 0; offset < source.data.length; offset += 4) {
+    const value = THREE.MathUtils.clamp(0.52 + random() * 0.48, 0, 1) * 255;
+    source.data[offset] = 255;
+    source.data[offset + 1] = 255;
+    source.data[offset + 2] = 255;
+    source.data[offset + 3] = value;
+  }
+  sourceContext.putImageData(source, 0, 0);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = MOON_BLOOM_NOISE_MASK_SIZE;
+  canvas.height = MOON_BLOOM_NOISE_MASK_SIZE;
+  const context = canvas.getContext("2d");
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(sourceCanvas, 0, 0, canvas.width, canvas.height);
+  const url = `url(${canvas.toDataURL("image/png")})`;
+  moonBloomNoiseMaskCache.set(seed, url);
+  return url;
 }
 
 function createMaskedMoonTextureUrl(seed, textureCanvas, shape, cacheTag = "texture") {
@@ -471,6 +536,112 @@ function createMaskedMoonTextureUrl(seed, textureCanvas, shape, cacheTag = "text
   return url;
 }
 
+function createMoonLavaReliefTextures(seed, emissiveCanvas, shape) {
+  if (!emissiveCanvas || !shape?.boundary?.length) {
+    return null;
+  }
+  const shapeKey = [
+    shape.boundary.length,
+    shape.boundary[0],
+    shape.boundary[Math.floor(shape.boundary.length * 0.25)],
+    shape.boundary[Math.floor(shape.boundary.length * 0.5)],
+    shape.boundary[Math.floor(shape.boundary.length * 0.75)],
+  ].map((value) => Number(value || 0).toFixed(4)).join(":");
+  const cacheKey = `${seed}:${emissiveCanvas.width}x${emissiveCanvas.height}:${shapeKey}`;
+  if (moonLavaReliefTextureCache.has(cacheKey)) {
+    return moonLavaReliefTextureCache.get(cacheKey);
+  }
+
+  const size = Math.max(1, Math.min(emissiveCanvas.height, emissiveCanvas.width / 2));
+  const sourceCanvas = document.createElement("canvas");
+  sourceCanvas.width = size;
+  sourceCanvas.height = size;
+  const sourceContext = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  sourceContext.drawImage(emissiveCanvas, 0, 0, size, size, 0, 0, size, size);
+  const source = sourceContext.getImageData(0, 0, size, size);
+  const inverseMask = sourceContext.createImageData(size, size);
+  const lavaAlpha = sourceContext.createImageData(size, size);
+
+  for (let offset = 0; offset < source.data.length; offset += 4) {
+    const luminance = source.data[offset] * 0.2126
+      + source.data[offset + 1] * 0.7152
+      + source.data[offset + 2] * 0.0722;
+    const lava = THREE.MathUtils.clamp(luminance * 1.45, 0, 255);
+    const inverse = 255 - lava;
+    inverseMask.data[offset] = 255;
+    inverseMask.data[offset + 1] = 255;
+    inverseMask.data[offset + 2] = 255;
+    inverseMask.data[offset + 3] = inverse;
+    lavaAlpha.data[offset] = 255;
+    lavaAlpha.data[offset + 1] = 255;
+    lavaAlpha.data[offset + 2] = 255;
+    lavaAlpha.data[offset + 3] = lava;
+  }
+
+  const maskCanvas = document.createElement("canvas");
+  maskCanvas.width = size;
+  maskCanvas.height = size;
+  const maskContext = maskCanvas.getContext("2d");
+  maskContext.putImageData(inverseMask, 0, 0);
+  clipCanvasToMoonShape(maskContext, size, shape);
+
+  const alphaCanvas = document.createElement("canvas");
+  alphaCanvas.width = size;
+  alphaCanvas.height = size;
+  const alphaContext = alphaCanvas.getContext("2d");
+  alphaContext.putImageData(lavaAlpha, 0, 0);
+  clipCanvasToMoonShape(alphaContext, size, shape);
+
+  const blurredCanvas = document.createElement("canvas");
+  blurredCanvas.width = size;
+  blurredCanvas.height = size;
+  const blurredContext = blurredCanvas.getContext("2d");
+  blurredContext.filter = `blur(${Math.max(1.5, size * 0.018).toFixed(2)}px)`;
+  blurredContext.drawImage(alphaCanvas, 0, 0);
+  blurredContext.filter = "none";
+  const blurred = blurredContext.getImageData(0, 0, size, size);
+  const raw = alphaContext.getImageData(0, 0, size, size);
+  const relief = blurredContext.createImageData(size, size);
+
+  for (let offset = 0; offset < relief.data.length; offset += 4) {
+    const halo = Math.max(0, blurred.data[offset + 3] - raw.data[offset + 3] * 0.42);
+    const lavaPocket = raw.data[offset + 3] * 0.12;
+    const alpha = THREE.MathUtils.clamp(halo * 0.58 + lavaPocket, 0, 120);
+    relief.data[offset] = 0;
+    relief.data[offset + 1] = 0;
+    relief.data[offset + 2] = 0;
+    relief.data[offset + 3] = alpha;
+  }
+  blurredContext.putImageData(relief, 0, 0);
+  clipCanvasToMoonShape(blurredContext, size, shape);
+
+  const textures = {
+    inverseMaskUrl: `url(${maskCanvas.toDataURL("image/png")})`,
+    reliefUrl: `url(${blurredCanvas.toDataURL("image/png")})`,
+  };
+  moonLavaReliefTextureCache.set(cacheKey, textures);
+  return textures;
+}
+
+function clipCanvasToMoonShape(context, size, shape) {
+  context.globalCompositeOperation = "destination-in";
+  context.beginPath();
+  shape.boundary.forEach((radius, index) => {
+    const angle = (index / shape.boundary.length) * Math.PI * 2;
+    const x = size * 0.5 + Math.cos(angle) * radius * size;
+    const y = size * 0.5 + Math.sin(angle) * radius * size;
+    if (index === 0) {
+      context.moveTo(x, y);
+    } else {
+      context.lineTo(x, y);
+    }
+  });
+  context.closePath();
+  context.fillStyle = "#fff";
+  context.fill();
+  context.globalCompositeOperation = "source-over";
+}
+
 function createPlanetScreenBodyDetail(planet, texture) {
   return {
     kind: planet.kind,
@@ -480,6 +651,7 @@ function createPlanetScreenBodyDetail(planet, texture) {
     cloudCanvas: texture?.cloudCanvas ?? null,
     bumpCanvas: planet.kind === "PLANET" ? texture?.bumpCanvas ?? null : null,
     emissiveCanvas: planet.kind === "PLANET" ? texture?.emissiveCanvas ?? null : null,
+    textureMode: texture?.textureMode ?? planet.surfaceTextureParams?.textureMode ?? "default",
     dayCycleSeconds: planet.dayCycleSeconds,
     gravity: planet.gravity,
     temperature: planet.temperature,
@@ -566,11 +738,17 @@ function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, st
     const moonTexture = createMoonTexture(moonTextureSeed, undefined, {
       paletteMode: moonPaletteMode,
     });
+    if (moonPaletteMode === "molten") {
+      const textureAngle = Math.atan2(starGeometry.y - y, starGeometry.x - x);
+      moonElement.style.setProperty("--moon-texture-rotation", `${textureAngle.toFixed(4)}rad`);
+    }
     const moonDetail = {
       kind: "MOON",
       name: moon.name,
       textureUrl: moonTexture.url,
       textureCanvas: moonTexture.canvas,
+      emissiveCanvas: moonTexture.emissiveCanvas ?? null,
+      textureMode: moonTexture.textureMode ?? "moon",
       dayCycleSeconds: Infinity,
       gravity: moon.gravity,
       temperature: planet.temperature,
@@ -593,8 +771,27 @@ function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, st
       moonElement,
       silhouetteShape,
     );
+    const lavaReliefTextures = moonTexture.emissiveCanvas
+      ? createMoonLavaReliefTextures(moonTextureSeed, moonTexture.emissiveCanvas, silhouetteShape)
+      : null;
+    const moonLavaRelief = lavaReliefTextures
+      ? document.createElement("span")
+      : null;
+    if (moonLavaRelief) {
+      moonLavaRelief.className = "planet-screen__moon-lava-relief";
+      moonLavaRelief.style.backgroundImage = lavaReliefTextures.reliefUrl;
+    }
+    const moonHighlight = lavaReliefTextures
+      ? document.createElement("span")
+      : null;
+    if (moonHighlight) {
+      moonHighlight.className = "planet-screen__moon-highlight";
+      moonHighlight.style.setProperty("--moon-lava-inverse-mask", lavaReliefTextures.inverseMaskUrl);
+    }
     const moonShade = document.createElement("span");
-    moonShade.className = "planet-screen__moon-shade";
+    moonShade.className = lavaReliefTextures
+      ? "planet-screen__moon-shade planet-screen__moon-shade--shadow-only"
+      : "planet-screen__moon-shade";
     const moonBloomSoft = moonTexture.emissiveCanvas
       ? document.createElement("span")
       : null;
@@ -602,23 +799,35 @@ function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, st
       ? document.createElement("span")
       : null;
     if (moonBloomSoft && moonBloomCore) {
-      const bloomUrl = createMaskedMoonTextureUrl(
-        `${moonTextureSeed}:bloom-core`,
-        moonTexture.emissiveCanvas,
-        silhouetteShape,
-        "bloom-core",
-      ) ?? `url(${moonTexture.emissiveCanvas.toDataURL("image/png")})`;
+      const bloomSettings = getMoonDebugSettings();
       moonBloomSoft.className = "planet-screen__moon-bloom planet-screen__moon-bloom--soft";
       applyMoonBloomTexture(
         moonBloomSoft,
-        moonTextureSeed,
+        `${moonTextureSeed}:soft`,
         moonTexture.emissiveCanvas,
         silhouetteShape,
-        getMoonDebugSettings().bloomBlur,
+        {
+          blur: bloomSettings.bloomBlur,
+          brightness: bloomSettings.bloomBrightness,
+          contrast: bloomSettings.bloomContrast,
+          threshold: bloomSettings.bloomThreshold,
+        },
       );
       moonBloomCore.className = "planet-screen__moon-bloom planet-screen__moon-bloom--core";
-      moonBloomCore.style.backgroundImage = bloomUrl;
+      applyMoonBloomTexture(
+        moonBloomCore,
+        `${moonTextureSeed}:core`,
+        moonTexture.emissiveCanvas,
+        silhouetteShape,
+        {
+          blur: 0,
+          brightness: bloomSettings.bloomBrightness,
+          contrast: bloomSettings.bloomContrast,
+          threshold: bloomSettings.bloomThreshold,
+        },
+      );
       moonElement.style.setProperty("--moon-bloom-flicker", "1");
+      moonElement.style.setProperty("--moon-bloom-noise-mask", createMoonBloomNoiseMask(moonTextureSeed));
     }
     const moonRimInner = document.createElement("span");
     moonRimInner.className = "planet-screen__moon-rim planet-screen__moon-rim--inner";
@@ -629,7 +838,9 @@ function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, st
     moonElement.style.setProperty("--moon-rim-color", planet.systemStarColor);
     moonElement.append(
       moonTextureElement,
+      ...(moonLavaRelief ? [moonLavaRelief] : []),
       moonShade,
+      ...(moonHighlight ? [moonHighlight] : []),
       ...(moonBloomSoft && moonBloomCore ? [moonBloomSoft, moonBloomCore] : []),
       moonRimInner,
       moonRimNear,
@@ -649,9 +860,14 @@ function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, st
       y,
       radius,
       depth,
-      bloomFlicker: moonBloomSoft && moonBloomCore
-        ? createMoonBloomFlicker(`${SEED}:moon-bloom-flicker:${moon.name}`)
+      bloomMotion: moonBloomSoft && moonBloomCore
+        ? createMoonBloomMotion(`${SEED}:moon-bloom-motion:${moon.name}`)
         : null,
+      bloomSoftElement: moonBloomSoft,
+      bloomCoreElement: moonBloomCore,
+      bloomSeed: moonTextureSeed,
+      bloomEmissiveCanvas: moonTexture.emissiveCanvas,
+      bloomShape: silhouetteShape,
     });
     renderPlanetScreenObjectHit(planetScreen, {
       x,
@@ -676,13 +892,13 @@ function getMoonSilhouetteStrength(sizeIndex) {
   ] ?? MOON_SILHOUETTE_STRENGTH_BY_SIZE[1];
 }
 
-function createMoonBloomFlicker(seed) {
+function createMoonBloomMotion(seed) {
   const random = createRandom(seed);
   return {
-    random,
-    value: random(),
-    target: random(),
-    nextChangeAt: 0,
+    startX: random() * 100,
+    startY: random() * 100,
+    speedX: THREE.MathUtils.lerp(4.5, 8.5, random()),
+    speedY: THREE.MathUtils.lerp(-2.2, 2.2, random()),
   };
 }
 
@@ -765,7 +981,7 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
   }
   const cloudSpeedMultiplier = planet.tidallyLocked ? 1 : PLANET_SCREEN_CLOUD_SPEED_MULTIPLIER;
   const rotationPhase = getPlanetRotationPhase(rotation, performance.now() * 0.001);
-  const manualTextureOffset = planet.tidallyLocked ? PLANET_SCREEN_TIDAL_LOCKED_TEXTURE_OFFSET : 0;
+  const manualTextureOffset = getPlanetScreenManualTextureOffset(planet.tidallyLocked);
   const cloudRotationPhase = getPlanetRotationPhase({
     ...cloudRotation,
     turnsPerSecond: cloudRotation.turnsPerSecond * cloudSpeedMultiplier,
@@ -1171,6 +1387,10 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
     compositeCamera: postCamera,
     compositeMaterial,
   };
+}
+
+function getPlanetScreenManualTextureOffset(isTidallyLocked) {
+  return isTidallyLocked ? PLANET_SCREEN_TIDAL_LOCKED_TEXTURE_OFFSET : 0;
 }
 
 function createPlanetScreenCanvasTexture(canvas, renderer3D, srgb = true) {
@@ -1749,7 +1969,7 @@ function renderPlanetScreen3D(surface) {
 
 function updatePlanetScreen3D(surface, deltaSeconds, now) {
   let needsRender = false;
-  const manualTextureOffset = surface.isTidallyLocked ? PLANET_SCREEN_TIDAL_LOCKED_TEXTURE_OFFSET : 0;
+  const manualTextureOffset = getPlanetScreenManualTextureOffset(surface.isTidallyLocked);
   if (surface.textureRotation?.turnsPerSecond !== 0) {
     surface.texture.offset.x = getPlanetRotationPhase(surface.textureRotation, now * 0.001) + manualTextureOffset;
     surface.material.uniforms.textureOffset.value.x = surface.texture.offset.x;
@@ -1791,26 +2011,16 @@ function updatePlanetScreen3D(surface, deltaSeconds, now) {
 
 function updatePlanetScreenMoonBloom(now, deltaSeconds) {
   const seconds = now * 0.001;
-  const smoothing = 1 - Math.exp(-MOON_BLOOM_FLICKER_SMOOTHING * deltaSeconds);
+  void deltaSeconds;
   for (const moon of planetScreenController.state.activeMoons ?? []) {
-    const flicker = moon.bloomFlicker;
-    if (!flicker || !moon.element) {
+    const motion = moon.bloomMotion;
+    if (!motion || !moon.element) {
       continue;
     }
-    if (seconds >= flicker.nextChangeAt) {
-      flicker.target = flicker.random() < 0.18
-        ? 0
-        : Math.pow(flicker.random(), 1.45);
-      flicker.nextChangeAt = seconds + THREE.MathUtils.lerp(
-        MOON_BLOOM_FLICKER_MIN_INTERVAL,
-        MOON_BLOOM_FLICKER_MAX_INTERVAL,
-        flicker.random(),
-      );
-    }
-    flicker.value = THREE.MathUtils.lerp(flicker.value, flicker.target, smoothing);
-    const pulse = getMoonDebugSettings().bloomPulse;
-    const visibleValue = THREE.MathUtils.lerp(1, flicker.value, pulse);
-    moon.element.style.setProperty("--moon-bloom-flicker", THREE.MathUtils.clamp(visibleValue, 0, 1).toFixed(3));
+    const x = ((motion.startX + seconds * motion.speedX) % 100 + 100) % 100;
+    const y = ((motion.startY + seconds * motion.speedY) % 100 + 100) % 100;
+    moon.element.style.setProperty("--moon-bloom-noise-x", `${x.toFixed(2)}%`);
+    moon.element.style.setProperty("--moon-bloom-noise-y", `${y.toFixed(2)}%`);
   }
 }
 

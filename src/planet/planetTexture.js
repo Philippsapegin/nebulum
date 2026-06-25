@@ -18,6 +18,8 @@ const TIDAL_EDGE_MACRO_AMP = 0;
 const TIDAL_EDGE_DETAIL_FREQ = 12;
 const TIDAL_EDGE_DETAIL_AMP = 0.02;
 const TIDAL_EDGE_SOFTNESS = 0.03;
+const TIDAL_MOLTEN_MASK_FEATHER_PIXELS = 4;
+const FROZEN_WATER_MASK_FEATHER = 0.025;
 const planetTextureCache = new Map();
 
 export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_HEIGHT, options = {}) {
@@ -30,6 +32,7 @@ export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_
   const textureMode = options.textureMode ?? "default";
   const surfaceScale = options.surfaceScale ?? 7;
   const freezeWater = Boolean(options.freezeWater);
+  const hasWaterTag = Boolean(options.hasWater);
   const cacheKey = `${seed}:${textureHeight}:${waterPosition.toFixed(4)}:${iceCaps.toFixed(2)}:${cloudAlpha ?? "no-clouds"}:${textureMode}:${surfaceScale.toFixed(3)}:${freezeWater ? "frozen-water" : "normal-water"}:${createUrls ? "urls" : "canvas"}`;
   if (planetTextureCache.has(cacheKey)) {
     return planetTextureCache.get(cacheKey);
@@ -52,13 +55,12 @@ export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_
   const moltenStops = moltenPalette
     ? createShiftedStops(normalizeMoltenStops(moltenPalette.stops), random)
     : null;
-  const cloudPalette = textureMode === "molten" && moltenPalette ? moltenPalette : palette;
+  const cloudPalette = (textureMode === "molten" || textureMode === "tidal-combine") && moltenPalette
+    ? moltenPalette
+    : palette;
   const cloudStops = cloudAlpha === null
     ? null
     : createShiftedStops(normalizeCloudStops(cloudPalette.cloudStops ?? createDefaultCloudStops(), cloudAlpha), random);
-  const moltenCloudStops = cloudAlpha === null || !moltenPalette
-    ? null
-    : createShiftedStops(normalizeCloudStops(moltenPalette.cloudStops ?? createDefaultCloudStops(), cloudAlpha), random);
   const field = createSurfaceNoiseField({
     width,
     height,
@@ -70,7 +72,9 @@ export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_
   surfaceCanvas.width = width;
   surfaceCanvas.height = height;
   if (textureMode === "tidal-combine") {
-    renderTidalSurfaceCanvas(surfaceCanvas, field, surfaceStops, iceStops, moltenStops, `${seed}:tidal`);
+    renderTidalSurfaceCanvas(surfaceCanvas, field, surfaceStops, iceStops, moltenStops, `${seed}:tidal`, {
+      hasWater: hasWaterTag,
+    });
   } else {
     renderSurfaceCanvas(surfaceCanvas, field, surfaceStops, iceStops, {
       seed: `${seed}:ice`,
@@ -224,7 +228,7 @@ function renderEmissiveCanvas(canvas, field, moltenStops, { seed, textureMode })
     const stopInfo = samplePaletteStopInfo(moltenStops, value);
     const strength = getMoltenEmissiveStrength(stopInfo.label);
     const tidalMask = textureMode === "tidal-combine"
-      ? getTidalEdgeMask(u, v, TIDAL_MOLTEN_SPREAD, `${seed}:molten`)
+      ? getTidalMoltenEdgeMask(u, v, TIDAL_MOLTEN_SPREAD, value, moltenStops, canvas.width)
       : 1;
     const intensity = strength * tidalMask;
     const offset = index * 4;
@@ -286,10 +290,17 @@ function renderSurfaceCanvas(canvas, field, surfaceStops, iceStops, iceConfig) {
     const color = samplePaletteStops(surfaceStops, baseNoise);
     const waterLimit = surfaceStops[1]?.pos ?? 0;
     const specularWaterLimit = THREE.MathUtils.clamp((iceConfig.waterPosition ?? waterLimit) + 0.01, 0, 1);
-    const shouldFreezeWater = iceConfig.freezeWater && baseNoise <= specularWaterLimit && specularWaterLimit > 0;
-    const iceAlpha = shouldFreezeWater
-      ? 1
-      : getIceMaskAlpha(index, width, height, iceMask, baseNoise, waterLimit);
+    const frozenWaterAlpha = iceConfig.freezeWater && specularWaterLimit > 0
+      ? 1 - smoothstep(
+        Math.max(0, specularWaterLimit - FROZEN_WATER_MASK_FEATHER),
+        Math.min(1, specularWaterLimit + FROZEN_WATER_MASK_FEATHER),
+        baseNoise,
+      )
+      : 0;
+    const iceAlpha = Math.max(
+      frozenWaterAlpha,
+      getIceMaskAlpha(index, width, height, iceMask, baseNoise, waterLimit),
+    );
     const iceColor = iceAlpha > 0 ? samplePaletteStops(iceStops, baseNoise) : color;
     const offset = index * 4;
     image.data[offset] = THREE.MathUtils.lerp(color[0], iceColor[0], iceAlpha);
@@ -301,7 +312,7 @@ function renderSurfaceCanvas(canvas, field, surfaceStops, iceStops, iceConfig) {
   context.putImageData(image, 0, 0);
 }
 
-function renderTidalSurfaceCanvas(canvas, field, surfaceStops, iceStops, moltenStops, seed) {
+function renderTidalSurfaceCanvas(canvas, field, surfaceStops, iceStops, moltenStops, seed, options = {}) {
   const width = canvas.width;
   const height = canvas.height;
   const context = canvas.getContext("2d");
@@ -313,20 +324,15 @@ function renderTidalSurfaceCanvas(canvas, field, surfaceStops, iceStops, moltenS
     const y = Math.floor(index / width);
     const u = x / width;
     const v = y / height;
-    const baseColor = samplePaletteStops(surfaceStops, baseNoise);
-    const iceColor = samplePaletteStops(iceStops, baseNoise);
+    const baseColor = options.hasWater
+      ? samplePaletteStops(iceStops, baseNoise)
+      : samplePaletteStops(surfaceStops, baseNoise);
     const moltenColor = samplePaletteStops(moltenStops, baseNoise);
-    const iceAlpha = getTidalCenterMask(u, v, TIDAL_ICE_SPREAD, `${seed}:ice`);
-    const moltenAlpha = getTidalEdgeMask(u, v, TIDAL_MOLTEN_SPREAD, `${seed}:molten`);
+    const moltenAlpha = getTidalMoltenEdgeMask(u, v, TIDAL_MOLTEN_SPREAD, baseNoise, moltenStops, width);
     const offset = index * 4;
-    const iced = [
-      THREE.MathUtils.lerp(baseColor[0], iceColor[0], iceAlpha),
-      THREE.MathUtils.lerp(baseColor[1], iceColor[1], iceAlpha),
-      THREE.MathUtils.lerp(baseColor[2], iceColor[2], iceAlpha),
-    ];
-    image.data[offset] = THREE.MathUtils.lerp(iced[0], moltenColor[0], moltenAlpha);
-    image.data[offset + 1] = THREE.MathUtils.lerp(iced[1], moltenColor[1], moltenAlpha);
-    image.data[offset + 2] = THREE.MathUtils.lerp(iced[2], moltenColor[2], moltenAlpha);
+    image.data[offset] = THREE.MathUtils.lerp(baseColor[0], moltenColor[0], moltenAlpha);
+    image.data[offset + 1] = THREE.MathUtils.lerp(baseColor[1], moltenColor[1], moltenAlpha);
+    image.data[offset + 2] = THREE.MathUtils.lerp(baseColor[2], moltenColor[2], moltenAlpha);
     image.data[offset + 3] = 255;
   }
 
@@ -492,6 +498,65 @@ function getTidalEdgeMask(u, v, percent, seed) {
     1 - smoothstep(leftEdge, leftEdge + TIDAL_EDGE_SOFTNESS, u),
     1 - smoothstep(rightEdge, rightEdge + TIDAL_EDGE_SOFTNESS, 1 - u),
   );
+}
+
+function getTidalMoltenEdgeMask(u, v, percent, moltenNoise, moltenStops, textureWidth) {
+  const width = THREE.MathUtils.clamp(percent / 100, 0, 1) * 0.5;
+  if (width <= 0) {
+    return 0;
+  }
+
+  const strength = sampleTidalMoltenEdgeStrength(moltenNoise, moltenStops);
+  const edgeInfluence = (strength - 0.42) * 0.18;
+  const localWidth = THREE.MathUtils.clamp(width + edgeInfluence, 0, 0.49);
+  const distanceFromEdge = Math.min(u, 1 - u);
+  const maskFeather = TIDAL_MOLTEN_MASK_FEATHER_PIXELS / Math.max(1, textureWidth);
+  const signedMaskDistance = localWidth - distanceFromEdge;
+  return smoothstep(-maskFeather, maskFeather, signedMaskDistance);
+}
+
+function sampleTidalMoltenEdgeStrength(value, stops) {
+  if (!stops.length) {
+    return 0.35;
+  }
+  if (value <= stops[0].pos) {
+    return getTidalMoltenStopEdgeStrength(stops[0]);
+  }
+
+  for (let index = 0; index < stops.length - 1; index += 1) {
+    const current = stops[index];
+    const next = stops[index + 1];
+    if (value >= current.pos && value <= next.pos) {
+      const span = next.pos - current.pos || 1;
+      const amount = (value - current.pos) / span;
+      return getTidalMoltenStopEdgeStrength(current)
+        + (getTidalMoltenStopEdgeStrength(next) - getTidalMoltenStopEdgeStrength(current)) * amount;
+    }
+  }
+
+  return getTidalMoltenStopEdgeStrength(stops[stops.length - 1]);
+}
+
+function getTidalMoltenStopEdgeStrength(stop) {
+  if (stop.label === "deep lava") {
+    return 1;
+  }
+  if (stop.label === "lava") {
+    return 0.72;
+  }
+  if (stop.label === "shore") {
+    return 0.34;
+  }
+  if (stop.label === "landmass") {
+    return 0.22;
+  }
+  if (stop.label === "mountains") {
+    return 0.15;
+  }
+  if (stop.label === "highlands") {
+    return 0.1;
+  }
+  return 0.2;
 }
 
 function getTidalEdgeOffset(v, seed) {
