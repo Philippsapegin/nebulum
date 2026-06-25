@@ -201,6 +201,7 @@ const OBJECT_DETAIL_LIGHT_INTENSITY = 3.71;
 const OBJECT_DETAIL_LIGHT_ANGLE_DEGREES = 25;
 const OBJECT_DETAIL_LIGHT_PENUMBRA = 0.2;
 const OBJECT_DETAIL_AMBIENT_INTENSITY = 0.08;
+const OBJECT_DETAIL_AMBIENT_NO_LIGHT_INTENSITY = 1.6;
 const OBJECT_DETAIL_DISPLACEMENT_SCALE = 0.3;
 const OBJECT_DETAIL_CLOUD_HEIGHT = 0.23;
 const OBJECT_DETAIL_HEX_GRID_HEIGHT = OBJECT_DETAIL_CLOUD_HEIGHT - 0.008;
@@ -223,6 +224,7 @@ const OBJECT_DETAIL_CURSOR_LIGHT_ANGLE_DEGREES = 12;
 const OBJECT_DETAIL_CURSOR_LIGHT_PENUMBRA = 0.62;
 const OBJECT_DETAIL_CURSOR_LIGHT_FADE_IN_SPEED = 1.8;
 const OBJECT_DETAIL_CURSOR_LIGHT_FADE_OUT_SPEED = 7.5;
+const OBJECT_DETAIL_OPTION_FADE_SPEED = 3.2;
 const OBJECT_DETAIL_LIGHT_MAX_CHANNEL = 1.08;
 const OBJECT_DETAIL_CURSOR_LIGHT_MIN_PROXIMITY = 0.16;
 const OBJECT_DETAIL_TINT_LIGHT_INTENSITY = 0.46;
@@ -251,6 +253,10 @@ let objectDetailOrbitPlanet = null;
 let isObjectDetailOpen = false;
 let objectDetailToken = 0;
 let objectDetail3D = null;
+const objectDetailOptions = {
+  light: true,
+  clouds: true,
+};
 let isDraggingPlanetWindow = false;
 const planetWindowOffset = { x: 0, y: 0 };
 const planetWindowDragStart = { x: 0, y: 0, offsetX: 0, offsetY: 0 };
@@ -2069,7 +2075,7 @@ async function returnToStarSystemFromPlanet() {
   updateSystemGlow(window.innerWidth / 2, window.innerHeight / 2, 0, 0);
   updateSystemParallax(lastClientPointer.x, lastClientPointer.y, true);
   preloadPlanetScreenRenderer();
-  resetTransitionSurfaces();
+  snapPlanetScreenHidden();
   await revealObjectDetailEntryOverlay(300);
 }
 
@@ -2080,6 +2086,8 @@ async function openObjectDetailFromPlanetView(detail, clientX = window.innerWidt
 
   objectDetailOrbitPlanet = openPlanetData;
   isObjectDetailOpen = true;
+  objectDetailOptions.light = true;
+  objectDetailOptions.clouds = true;
   starWindow.classList.add("object-detail-open");
   const detailToken = ++objectDetailToken;
   cancelPlanetEntryTransition();
@@ -2121,28 +2129,6 @@ async function openObjectDetailFromPlanetView(detail, clientX = window.innerWidt
   objectDetailScreen.style.removeProperty("transition");
   objectDetailScreen.classList.add("visible");
   objectDetailScreen.setAttribute("aria-hidden", "false");
-  if (detail.createTexture) {
-    await nextAnimationFrame();
-    if (!isObjectDetailOpen || detailToken !== objectDetailToken) {
-      return;
-    }
-
-    const texture = detail.createTexture();
-    if (isObjectDetailOpen && detailToken === objectDetailToken && texture) {
-      if (typeof texture === "string") {
-        detail.textureUrl = texture;
-      } else {
-        detail.textureUrl = texture.url ?? detail.textureUrl;
-        detail.textureCanvas = texture.canvas ?? detail.textureCanvas;
-        detail.cloudCanvas = texture.cloudCanvas ?? detail.cloudCanvas;
-        detail.bumpCanvas = texture.bumpCanvas ?? detail.bumpCanvas;
-        detail.emissiveCanvas = detail.kind === "MOON"
-          ? null
-          : texture.emissiveCanvas ?? detail.emissiveCanvas;
-      }
-      renderObjectDetailContent(detail);
-    }
-  }
 
   await nextAnimationFrame();
   if (!isObjectDetailOpen || detailToken !== objectDetailToken) {
@@ -2157,6 +2143,7 @@ async function openObjectDetailFromPlanetView(detail, clientX = window.innerWidt
   }
 
   objectDetailEntryOverlay.classList.remove("active");
+  scheduleObjectDetailTextureUpgrade(detail, detailToken);
 }
 
 function getObjectDetailEntryOrigin(detail, clientX, clientY) {
@@ -2171,6 +2158,43 @@ function getObjectDetailEntryOrigin(detail, clientX, clientY) {
     x: THREE.MathUtils.clamp(clientX, 0, window.innerWidth),
     y: THREE.MathUtils.clamp(clientY, 0, window.innerHeight),
   };
+}
+
+function scheduleObjectDetailTextureUpgrade(detail, detailToken) {
+  if (!detail?.createTexture) {
+    return;
+  }
+
+  const runUpgrade = () => {
+    if (!isObjectDetailOpen || detailToken !== objectDetailToken) {
+      return;
+    }
+
+    const texture = detail.createTexture();
+    if (!isObjectDetailOpen || detailToken !== objectDetailToken || !texture) {
+      return;
+    }
+
+    if (typeof texture === "string") {
+      detail.textureUrl = texture;
+    } else {
+      detail.textureUrl = texture.url ?? detail.textureUrl;
+      detail.textureCanvas = texture.canvas ?? detail.textureCanvas;
+      detail.cloudCanvas = texture.cloudCanvas ?? detail.cloudCanvas;
+      detail.bumpCanvas = texture.bumpCanvas ?? detail.bumpCanvas;
+      detail.emissiveCanvas = detail.kind === "MOON"
+        ? null
+        : texture.emissiveCanvas ?? detail.emissiveCanvas;
+    }
+    renderObjectDetailContent(detail);
+  };
+
+  if ("requestIdleCallback" in window) {
+    window.requestIdleCallback(runUpgrade, { timeout: 900 });
+    return;
+  }
+
+  window.setTimeout(runUpgrade, 360);
 }
 
 function renderObjectDetailContent(detail) {
@@ -2216,10 +2240,133 @@ function renderObjectDetailFrame(detail) {
   const title = document.createElement("div");
   title.className = "object-detail-screen__body-title";
   title.textContent = detail.name ?? "";
+  const info = createObjectDetailInfo(detail);
+  const controls = createObjectDetailOptionControls();
 
-  frame.append(topLine, markerLayer, bottomLine, title);
+  frame.append(topLine, markerLayer, bottomLine, title, info, controls);
   objectDetailTexture.append(frame);
   updateObjectDetailFrame();
+}
+
+function createObjectDetailOptionControls() {
+  const controls = document.createElement("div");
+  controls.className = "object-detail-screen__options";
+  controls.append(
+    createObjectDetailOptionControl("LIGHT", "light"),
+    createObjectDetailOptionControl("CLOUDS", "clouds"),
+  );
+  return controls;
+}
+
+function createObjectDetailOptionControl(labelText, optionKey) {
+  const row = document.createElement("label");
+  row.className = "object-detail-screen__option";
+  const label = document.createElement("span");
+  label.className = "object-detail-screen__option-label";
+  label.textContent = labelText;
+  const button = document.createElement("button");
+  button.className = "object-detail-screen__option-button";
+  button.type = "button";
+  button.dataset.option = optionKey;
+  button.setAttribute("aria-label", labelText);
+  button.setAttribute("aria-pressed", String(Boolean(objectDetailOptions[optionKey])));
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setObjectDetailOption(optionKey, !objectDetailOptions[optionKey]);
+  });
+  row.append(label, button);
+  return row;
+}
+
+function setObjectDetailOption(optionKey, isEnabled) {
+  objectDetailOptions[optionKey] = Boolean(isEnabled);
+  objectDetailTexture
+    .querySelectorAll(`.object-detail-screen__option-button[data-option="${optionKey}"]`)
+    .forEach((button) => {
+      button.setAttribute("aria-pressed", String(Boolean(isEnabled)));
+    });
+  if (objectDetail3D) {
+    objectDetail3D.targetLightMix = objectDetailOptions.light ? 1 : 0;
+    objectDetail3D.targetCloudMix = objectDetailOptions.clouds ? 1 : 0;
+  }
+}
+
+function createObjectDetailInfo(detail) {
+  const info = document.createElement("div");
+  info.className = "object-detail-screen__info";
+
+  const columns = [
+    [
+      ["ATMO", formatObjectDetailAtmosphere(detail.atmosphere)],
+      ["WATER", formatObjectDetailWater(detail.waterPosition)],
+      ["GRAVITY", formatObjectDetailGravity(detail.gravity)],
+    ],
+    [
+      ["DAY CYCLE", formatObjectDetailDayCycle(detail.dayCycleSeconds)],
+      ["DAY TEMP", formatObjectDetailTemperature(detail.temperature)],
+      ["NIGHT TEMP", formatObjectDetailTemperature(detail.temperature)],
+    ],
+  ];
+
+  for (const rows of columns) {
+    const column = document.createElement("dl");
+    column.className = "object-detail-screen__info-column";
+    for (const [labelText, valueText] of rows) {
+      const row = document.createElement("div");
+      row.className = "object-detail-screen__info-row";
+      const label = document.createElement("dt");
+      label.textContent = labelText;
+      const value = document.createElement("dd");
+      value.textContent = valueText;
+      row.append(label, value);
+      column.append(row);
+    }
+    info.append(column);
+  }
+
+  return info;
+}
+
+function formatObjectDetailAtmosphere(atmosphere) {
+  if (atmosphere === "THIN ATMOSPHERE") {
+    return "THIN";
+  }
+  if (atmosphere === "ATMOSPHERE") {
+    return "STANDART";
+  }
+  if (atmosphere === "DENSE ATMOSPHERE") {
+    return "DENSE";
+  }
+  return "NONE";
+}
+
+function formatObjectDetailWater(waterPosition) {
+  if (!Number.isFinite(waterPosition) || waterPosition <= 0) {
+    return "NONE";
+  }
+  return `${Math.round(waterPosition * 100)}%`;
+}
+
+function formatObjectDetailGravity(gravity) {
+  if (!Number.isFinite(gravity)) {
+    return "NONE";
+  }
+  return `${gravity.toFixed(2).replace(/\.?0+$/, "")}g`;
+}
+
+function formatObjectDetailDayCycle(dayCycleSeconds) {
+  if (!Number.isFinite(dayCycleSeconds)) {
+    return "\u221e";
+  }
+  return `${dayCycleSeconds.toFixed(1).replace(/\.0$/, "")}h`;
+}
+
+function formatObjectDetailTemperature(temperature) {
+  if (!Number.isFinite(temperature)) {
+    return "NONE";
+  }
+  return `${Math.round(temperature)}\u00b0C`;
 }
 
 function updateObjectDetailObservedBounds() {
@@ -2430,6 +2577,7 @@ function renderObjectDetailPlanetSurface(detail) {
     ? new THREE.MeshStandardMaterial({
       map: cloudMap,
       transparent: true,
+      opacity: objectDetailOptions.clouds ? 1 : 0,
       alphaTest: OBJECT_DETAIL_CLOUD_ALPHA_TEST,
       depthWrite: false,
       roughness: 0.9,
@@ -2542,6 +2690,11 @@ function renderObjectDetailPlanetSurface(detail) {
     cursorLightIntensity: 0,
     cursorEffectMix: 0,
     cursorLightUpdatedAt: performance.now(),
+    lightMix: objectDetailOptions.light ? 1 : 0,
+    targetLightMix: objectDetailOptions.light ? 1 : 0,
+    cloudMix: objectDetailOptions.clouds ? 1 : 0,
+    targetCloudMix: objectDetailOptions.clouds ? 1 : 0,
+    optionMixUpdatedAt: performance.now(),
     cursor: {
       active: false,
       uv: new THREE.Vector2(0.5, 0.5),
@@ -2637,8 +2790,9 @@ function updateObjectDetailCursorLight(now = performance.now()) {
   const y = world.y;
   objectDetail3D.cursorLight.position.set(x, y, OBJECT_DETAIL_LIGHT_Z);
   objectDetail3D.cursorTarget.position.set(x, y, 0);
+  const lightMix = THREE.MathUtils.clamp(objectDetail3D.lightMix ?? 1, 0, 1);
   const targetIntensity = active
-    ? OBJECT_DETAIL_CURSOR_LIGHT_INTENSITY * getObjectDetailCursorLightProximityMultiplier(world)
+    ? OBJECT_DETAIL_CURSOR_LIGHT_INTENSITY * getObjectDetailCursorLightProximityMultiplier(world) * lightMix
     : 0;
   const previous = objectDetail3D.cursorLightUpdatedAt ?? now;
   const deltaSeconds = Math.max(0, (now - previous) / 1000);
@@ -2679,6 +2833,7 @@ function updateObjectDetailLightMotion(now) {
     return false;
   }
 
+  updateObjectDetailOptionMixes(now);
   const elapsedSeconds = (now - objectDetail3D.lightStartedAt) / 1000;
   const speed = Number.isFinite(objectDetail3D.lightDaySeconds)
     ? OBJECT_DETAIL_SURFACE_WORLD_WIDTH / objectDetail3D.lightDaySeconds
@@ -2728,6 +2883,46 @@ function updateObjectDetailFrame() {
     marker.style.visibility = relative >= 0 && relative <= 1 ? "visible" : "hidden";
     marker.style.setProperty("--object-detail-day-marker-edge-scale", String(edgeScale));
   });
+}
+
+function updateObjectDetailOptionMixes(now = performance.now()) {
+  if (!objectDetail3D) {
+    return;
+  }
+
+  const previous = objectDetail3D.optionMixUpdatedAt ?? now;
+  const deltaSeconds = Math.max(0, (now - previous) / 1000);
+  const smoothing = 1 - Math.exp(-OBJECT_DETAIL_OPTION_FADE_SPEED * deltaSeconds);
+  objectDetail3D.lightMix = THREE.MathUtils.lerp(
+    objectDetail3D.lightMix ?? 1,
+    objectDetail3D.targetLightMix ?? 1,
+    smoothing,
+  );
+  objectDetail3D.cloudMix = THREE.MathUtils.lerp(
+    objectDetail3D.cloudMix ?? 1,
+    objectDetail3D.targetCloudMix ?? 1,
+    smoothing,
+  );
+  objectDetail3D.optionMixUpdatedAt = now;
+
+  const lightMix = THREE.MathUtils.clamp(objectDetail3D.lightMix, 0, 1);
+  const cloudMix = THREE.MathUtils.clamp(objectDetail3D.cloudMix, 0, 1);
+  objectDetail3D.ambientLight.intensity = THREE.MathUtils.lerp(
+    OBJECT_DETAIL_AMBIENT_NO_LIGHT_INTENSITY,
+    OBJECT_DETAIL_AMBIENT_INTENSITY,
+    lightMix,
+  );
+  for (const item of objectDetail3D.spotLights) {
+    item.light.intensity = OBJECT_DETAIL_LIGHT_INTENSITY * lightMix;
+    item.tintLight.intensity = OBJECT_DETAIL_TINT_LIGHT_INTENSITY * lightMix;
+  }
+  if (objectDetail3D.cloudMaterial) {
+    objectDetail3D.cloudMaterial.opacity = cloudMix;
+  }
+  if (objectDetail3D.cloudMesh) {
+    objectDetail3D.cloudMesh.visible = cloudMix > 0.01;
+    objectDetail3D.cloudMesh.castShadow = cloudMix > 0.04;
+  }
 }
 
 function wrapObjectDetailLightX(x) {
@@ -2943,6 +3138,8 @@ function updateObjectDetailSurfaceEffectUniforms() {
   }
 
   shader.uniforms.detailCloudShadowTextureOffset.value.set(objectDetail3D.cloudMap?.offset.x ?? 0, 0);
+  shader.uniforms.detailCloudShadowStrength.value = OBJECT_DETAIL_CLOUD_SHADOW_STRENGTH
+    * THREE.MathUtils.clamp(objectDetail3D.cloudMix ?? 1, 0, 1);
   updateObjectDetailCursorUniforms();
 }
 
@@ -3042,6 +3239,8 @@ async function revealObjectDetailEntryOverlay(duration = 360) {
   objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "0");
   await delay(duration);
   objectDetailEntryOverlay.classList.remove("active");
+  planetScreen.style.removeProperty("opacity");
+  planetScreen.style.removeProperty("transition");
   objectDetailScreen.style.removeProperty("opacity");
   objectDetailScreen.style.removeProperty("transition");
 }
@@ -3058,6 +3257,14 @@ function snapObjectDetailHidden() {
   objectDetailScreen.style.opacity = "0";
   objectDetailScreen.classList.remove("visible");
   void objectDetailScreen.offsetWidth;
+}
+
+function snapPlanetScreenHidden() {
+  planetScreen.style.transition = "none";
+  planetScreen.style.opacity = "0";
+  planetScreen.classList.remove("surface-entry-moving");
+  planetScreen.style.setProperty("--surface-entry-scale", "1");
+  void planetScreen.offsetWidth;
 }
 
 function renderSystemStars(node) {
