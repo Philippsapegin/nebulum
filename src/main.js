@@ -203,7 +203,7 @@ const OBJECT_DETAIL_LIGHT_PENUMBRA = 0.2;
 const OBJECT_DETAIL_AMBIENT_INTENSITY = 0.08;
 const OBJECT_DETAIL_AMBIENT_NO_LIGHT_INTENSITY = 1.6;
 const OBJECT_DETAIL_DISPLACEMENT_SCALE = 0.3;
-const OBJECT_DETAIL_CLOUD_HEIGHT = 0.23;
+const OBJECT_DETAIL_CLOUD_HEIGHT = 0.270;
 const OBJECT_DETAIL_HEX_GRID_HEIGHT = OBJECT_DETAIL_CLOUD_HEIGHT - 0.008;
 const OBJECT_DETAIL_HEX_GRID_TEXTURE_WIDTH = 2048;
 const OBJECT_DETAIL_HEX_GRID_TEXTURE_HEIGHT = 1024;
@@ -227,9 +227,13 @@ const OBJECT_DETAIL_CURSOR_LIGHT_FADE_OUT_SPEED = 7.5;
 const OBJECT_DETAIL_OPTION_FADE_SPEED = 3.2;
 const OBJECT_DETAIL_LIGHT_MAX_CHANNEL = 1.08;
 const OBJECT_DETAIL_CURSOR_LIGHT_MIN_PROXIMITY = 0.16;
-const OBJECT_DETAIL_TINT_LIGHT_INTENSITY = 0.46;
-const OBJECT_DETAIL_TINT_LIGHT_ANGLE_DEGREES = 30;
+const OBJECT_DETAIL_TINT_LIGHT_INTENSITY = 0.34;
+const OBJECT_DETAIL_TINT_LIGHT_ANGLE_DEGREES = OBJECT_DETAIL_LIGHT_ANGLE_DEGREES;
 const OBJECT_DETAIL_TINT_LIGHT_PENUMBRA = 0.72;
+const OBJECT_DETAIL_TINT_RING_WIDTH = 0;
+const OBJECT_DETAIL_TINT_RING_SOFTNESS = 0.106;
+const OBJECT_DETAIL_TINT_RING_BLEND = 0.39;
+const OBJECT_DETAIL_TINT_RING_RADIUS_SCALE = 0.695;
 const OBJECT_DETAIL_LIGHT_FALLBACK_DAY_SECONDS = 24;
 const OBJECT_DETAIL_LIGHT_WRAP_MARGIN = 0.9;
 const OBJECT_DETAIL_OBSERVED_DEFAULT_WIDTH_PERCENT = 89;
@@ -2678,7 +2682,7 @@ function renderObjectDetailPlanetSurface(detail) {
     })
     : null;
   if (cloudMaterial) {
-    applyObjectDetailCloudClear(cloudMaterial);
+    applyObjectDetailCloudClear(cloudMaterial, detail.starGlowColor, Boolean(detail.atmosphere));
   }
   const cloudDepthMaterial = cloudMap
     ? new THREE.MeshDepthMaterial({
@@ -2734,7 +2738,7 @@ function renderObjectDetailPlanetSurface(detail) {
 
     const tintLight = new THREE.SpotLight(
       new THREE.Color(detail.starGlowColor ?? "#ffffff"),
-      OBJECT_DETAIL_TINT_LIGHT_INTENSITY,
+      0,
       8,
       THREE.MathUtils.degToRad(OBJECT_DETAIL_TINT_LIGHT_ANGLE_DEGREES),
       OBJECT_DETAIL_TINT_LIGHT_PENUMBRA,
@@ -3248,14 +3252,54 @@ function updateObjectDetailOptionMixes(now = performance.now()) {
   );
   for (const item of objectDetail3D.spotLights) {
     item.light.intensity = OBJECT_DETAIL_LIGHT_INTENSITY * lightMix;
-    item.tintLight.intensity = OBJECT_DETAIL_TINT_LIGHT_INTENSITY * lightMix;
   }
+  updateObjectDetailTintLightProperties(lightMix);
   if (objectDetail3D.cloudMaterial) {
     objectDetail3D.cloudMaterial.opacity = cloudMix;
   }
   if (objectDetail3D.cloudMesh) {
     objectDetail3D.cloudMesh.visible = cloudMix > 0.01;
     objectDetail3D.cloudMesh.castShadow = cloudMix > 0.04;
+  }
+}
+
+function updateObjectDetailTintLightProperties(lightMix = THREE.MathUtils.clamp(objectDetail3D?.lightMix ?? 1, 0, 1)) {
+  if (!objectDetail3D?.spotLights) {
+    return;
+  }
+
+  for (const item of objectDetail3D.spotLights) {
+    item.tintLight.intensity = 0;
+  }
+  updateObjectDetailTintShaderUniforms(lightMix);
+}
+
+function updateObjectDetailTintShaderUniforms(lightMix = THREE.MathUtils.clamp(objectDetail3D?.lightMix ?? 1, 0, 1)) {
+  if (!objectDetail3D?.spotLights?.length) {
+    return;
+  }
+
+  const positions = objectDetail3D.spotLights
+    .slice(0, 2)
+    .map((item) => item.target.position);
+  for (const shader of [
+    objectDetail3D.material?.userData.detailSurfaceEffectShader,
+    objectDetail3D.cloudMaterial?.userData.detailCloudClearShader,
+  ]) {
+    if (!shader?.uniforms?.detailTintLightPositions) {
+      continue;
+    }
+    positions.forEach((position, index) => {
+      shader.uniforms.detailTintLightPositions.value[index].set(position.x, position.y);
+    });
+    shader.uniforms.detailTintLightCount.value = positions.length;
+    shader.uniforms.detailTintRadius.value = OBJECT_DETAIL_LIGHT_Z
+      * Math.tan(THREE.MathUtils.degToRad(OBJECT_DETAIL_LIGHT_ANGLE_DEGREES))
+      * OBJECT_DETAIL_TINT_RING_RADIUS_SCALE;
+    shader.uniforms.detailTintWidth.value = OBJECT_DETAIL_TINT_RING_WIDTH;
+    shader.uniforms.detailTintSoftness.value = OBJECT_DETAIL_TINT_RING_SOFTNESS;
+    shader.uniforms.detailTintIntensity.value = OBJECT_DETAIL_TINT_LIGHT_INTENSITY * lightMix;
+    shader.uniforms.detailTintBlend.value = OBJECT_DETAIL_TINT_RING_BLEND;
   }
 }
 
@@ -3361,6 +3405,64 @@ function isObjectDetailHexFullyVisible(centerX, centerY, radius, halfHeight, wid
     && centerY + halfHeight <= height;
 }
 
+function createObjectDetailTintUniforms(tintColor) {
+  return {
+    detailTintColor: { value: new THREE.Color(tintColor ?? "#ffffff") },
+    detailTintLightPositions: { value: [new THREE.Vector2(-1, 0), new THREE.Vector2(1, 0)] },
+    detailTintLightCount: { value: 0 },
+    detailTintRadius: {
+      value: OBJECT_DETAIL_LIGHT_Z
+        * Math.tan(THREE.MathUtils.degToRad(OBJECT_DETAIL_LIGHT_ANGLE_DEGREES))
+        * OBJECT_DETAIL_TINT_RING_RADIUS_SCALE,
+    },
+    detailTintWidth: { value: OBJECT_DETAIL_TINT_RING_WIDTH },
+    detailTintSoftness: { value: OBJECT_DETAIL_TINT_RING_SOFTNESS },
+    detailTintIntensity: { value: OBJECT_DETAIL_TINT_LIGHT_INTENSITY },
+    detailTintBlend: { value: OBJECT_DETAIL_TINT_RING_BLEND },
+  };
+}
+
+function getObjectDetailTintShaderHeader() {
+  return `
+uniform vec3 detailTintColor;
+uniform vec2 detailTintLightPositions[2];
+uniform float detailTintLightCount;
+uniform float detailTintRadius;
+uniform float detailTintWidth;
+uniform float detailTintSoftness;
+uniform float detailTintIntensity;
+uniform float detailTintBlend;
+
+float getDetailTintRing(vec2 worldPosition) {
+  float ring = 0.0;
+  for (int index = 0; index < 2; index += 1) {
+    if (float(index) >= detailTintLightCount) {
+      break;
+    }
+    float distanceToLight = distance(worldPosition, detailTintLightPositions[index]);
+    float inner = smoothstep(
+      detailTintRadius - detailTintWidth - detailTintSoftness,
+      detailTintRadius - detailTintWidth,
+      distanceToLight
+    );
+    float outer = 1.0 - smoothstep(
+      detailTintRadius,
+      detailTintRadius + detailTintSoftness,
+      distanceToLight
+    );
+    ring = max(ring, inner * outer);
+  }
+  return clamp(ring * detailTintIntensity, 0.0, 1.0);
+}
+
+vec3 applyDetailTintRing(vec3 baseColor, vec2 worldPosition) {
+  float ring = getDetailTintRing(worldPosition);
+  vec3 tinted = mix(baseColor, baseColor + detailTintColor * detailTintBlend, ring);
+  return tinted;
+}
+`;
+}
+
 function applyObjectDetailSurfaceEffects(material, cloudMap, hasCloudShadow) {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.detailCloudShadowMap = { value: cloudMap };
@@ -3425,8 +3527,10 @@ if (detailLightMax > detailLightMaxChannel) {
   };
 }
 
-function applyObjectDetailCloudClear(material) {
+function applyObjectDetailCloudClear(material, tintColor, hasAtmosphereTint) {
   material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, createObjectDetailTintUniforms(tintColor));
+    shader.uniforms.detailHasAtmosphereTint = { value: hasAtmosphereTint ? 1 : 0 };
     shader.uniforms.detailCursorUv = { value: new THREE.Vector2(0.5, 0.5) };
     shader.uniforms.detailCursorActive = { value: 0 };
     shader.uniforms.detailCursorClearRadius = { value: OBJECT_DETAIL_CURSOR_CLEAR_RADIUS };
@@ -3450,7 +3554,9 @@ uniform vec2 detailCursorUv;
 uniform float detailCursorActive;
 uniform float detailCursorClearRadius;
 uniform float detailCursorClearFeather;
-varying vec2 vDetailCursorCloudUv;`,
+uniform float detailHasAtmosphereTint;
+varying vec2 vDetailCursorCloudUv;
+${getObjectDetailTintShaderHeader()}`,
       )
       .replace(
         "#include <alphatest_fragment>",
@@ -3459,6 +3565,12 @@ float detailCursorCloudDistance = length(detailCursorCloudAspectUv);
 float detailCursorCloudKeep = mix(1.0, smoothstep(detailCursorClearRadius, detailCursorClearRadius + detailCursorClearFeather, detailCursorCloudDistance), detailCursorActive);
 diffuseColor.a *= detailCursorCloudKeep;
 #include <alphatest_fragment>`,
+      )
+      .replace(
+        "#include <dithering_fragment>",
+        `vec2 detailTintCloudWorldPosition = vec2((vDetailCursorCloudUv.x - 0.5) * ${OBJECT_DETAIL_SURFACE_WORLD_WIDTH.toFixed(1)}, vDetailCursorCloudUv.y - 0.5);
+gl_FragColor.rgb = mix(gl_FragColor.rgb, applyDetailTintRing(gl_FragColor.rgb, detailTintCloudWorldPosition), detailHasAtmosphereTint);
+#include <dithering_fragment>`,
       );
     material.userData.detailCloudClearShader = shader;
     updateObjectDetailCursorUniforms();
@@ -3474,6 +3586,7 @@ function updateObjectDetailSurfaceEffectUniforms() {
   shader.uniforms.detailCloudShadowTextureOffset.value.set(objectDetail3D.cloudMap?.offset.x ?? 0, 0);
   shader.uniforms.detailCloudShadowStrength.value = OBJECT_DETAIL_CLOUD_SHADOW_STRENGTH
     * THREE.MathUtils.clamp(objectDetail3D.cloudMix ?? 1, 0, 1);
+  updateObjectDetailTintShaderUniforms();
   updateObjectDetailCursorUniforms();
 }
 

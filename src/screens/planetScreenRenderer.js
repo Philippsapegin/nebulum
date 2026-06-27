@@ -49,6 +49,7 @@ const moonMaskedTextureCache = new Map();
 const moonBloomTextureCache = new Map();
 const moonBloomNoiseMaskCache = new Map();
 const moonLavaReliefTextureCache = new Map();
+const moonHighlightMaskCache = new Map();
 
 export function createPlanetScreenRenderer({
   root,
@@ -536,6 +537,65 @@ function createMaskedMoonTextureUrl(seed, textureCanvas, shape, cacheTag = "text
   return url;
 }
 
+function createMoonHighlightMaskTexture(seed, textureCanvas, shape) {
+  if (!textureCanvas || !shape?.boundary?.length) {
+    return null;
+  }
+  const shapeKey = [
+    shape.boundary.length,
+    shape.boundary[0],
+    shape.boundary[Math.floor(shape.boundary.length * 0.25)],
+    shape.boundary[Math.floor(shape.boundary.length * 0.5)],
+    shape.boundary[Math.floor(shape.boundary.length * 0.75)],
+  ].map((value) => Number(value || 0).toFixed(4)).join(":");
+  const cacheKey = `${seed}:${textureCanvas.width}x${textureCanvas.height}:${shapeKey}`;
+  if (moonHighlightMaskCache.has(cacheKey)) {
+    return moonHighlightMaskCache.get(cacheKey);
+  }
+
+  const size = Math.max(1, Math.min(textureCanvas.height, textureCanvas.width / 2));
+  const sourceCanvas = document.createElement("canvas");
+  sourceCanvas.width = size;
+  sourceCanvas.height = size;
+  const sourceContext = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  sourceContext.drawImage(textureCanvas, 0, 0, size, size, 0, 0, size, size);
+  const source = sourceContext.getImageData(0, 0, size, size);
+  let minLuminance = 1;
+  let maxLuminance = 0;
+  for (let offset = 0; offset < source.data.length; offset += 4) {
+    const luminance = (source.data[offset] * 0.2126
+      + source.data[offset + 1] * 0.7152
+      + source.data[offset + 2] * 0.0722) / 255;
+    minLuminance = Math.min(minLuminance, luminance);
+    maxLuminance = Math.max(maxLuminance, luminance);
+  }
+  const span = Math.max(0.0001, maxLuminance - minLuminance);
+  const mask = sourceContext.createImageData(size, size);
+  for (let offset = 0; offset < source.data.length; offset += 4) {
+    const luminance = (source.data[offset] * 0.2126
+      + source.data[offset + 1] * 0.7152
+      + source.data[offset + 2] * 0.0722) / 255;
+    const relative = THREE.MathUtils.clamp((luminance - minLuminance) / span, 0, 1);
+    const stopMask = THREE.MathUtils.smoothstep(relative, 0.1, 0.9);
+    const alpha = THREE.MathUtils.clamp(Math.pow(stopMask, 1.2) * 255, 0, 255);
+    mask.data[offset] = 255;
+    mask.data[offset + 1] = 255;
+    mask.data[offset + 2] = 255;
+    mask.data[offset + 3] = alpha;
+  }
+
+  const maskCanvas = document.createElement("canvas");
+  maskCanvas.width = size;
+  maskCanvas.height = size;
+  const maskContext = maskCanvas.getContext("2d");
+  maskContext.putImageData(mask, 0, 0);
+  clipCanvasToMoonShape(maskContext, size, shape);
+
+  const url = `url(${maskCanvas.toDataURL("image/png")})`;
+  moonHighlightMaskCache.set(cacheKey, url);
+  return url;
+}
+
 function createMoonLavaReliefTextures(seed, emissiveCanvas, shape) {
   if (!emissiveCanvas || !shape?.boundary?.length) {
     return null;
@@ -781,15 +841,18 @@ function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, st
       moonLavaRelief.className = "planet-screen__moon-lava-relief";
       moonLavaRelief.style.backgroundImage = lavaReliefTextures.reliefUrl;
     }
-    const moonHighlight = lavaReliefTextures
+    const moonHighlightMask = lavaReliefTextures
+      ? lavaReliefTextures.inverseMaskUrl
+      : createMoonHighlightMaskTexture(moonTextureSeed, moonTexture.canvas, silhouetteShape);
+    const moonHighlight = moonHighlightMask
       ? document.createElement("span")
       : null;
     if (moonHighlight) {
       moonHighlight.className = "planet-screen__moon-highlight";
-      moonHighlight.style.setProperty("--moon-lava-inverse-mask", lavaReliefTextures.inverseMaskUrl);
+      moonHighlight.style.setProperty("--moon-highlight-mask", moonHighlightMask);
     }
     const moonShade = document.createElement("span");
-    moonShade.className = lavaReliefTextures
+    moonShade.className = moonHighlight
       ? "planet-screen__moon-shade planet-screen__moon-shade--shadow-only"
       : "planet-screen__moon-shade";
     const moonBloomSoft = moonTexture.emissiveCanvas

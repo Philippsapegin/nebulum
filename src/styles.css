@@ -2208,11 +2208,11 @@ body.system-open .music-player {
       rgba(255, 255, 255, 0.34) 0 10%,
       rgba(255, 255, 255, 0.11) 24%,
       rgba(255, 255, 255, 0) 42%);
-  mask-image: var(--moon-lava-inverse-mask);
+  mask-image: var(--moon-highlight-mask);
   mask-size: 100% 100%;
   mask-position: center;
   mask-repeat: no-repeat;
-  -webkit-mask-image: var(--moon-lava-inverse-mask);
+  -webkit-mask-image: var(--moon-highlight-mask);
   -webkit-mask-size: 100% 100%;
   -webkit-mask-position: center;
   -webkit-mask-repeat: no-repeat;

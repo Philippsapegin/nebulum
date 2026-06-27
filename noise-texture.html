@@ -336,6 +336,11 @@
         font: inherit;
       }
 
+      select option {
+        background: #131317;
+        color: rgba(255, 255, 255, 0.9);
+      }
+
       .status {
         min-height: 16px;
         margin-top: 8px;
@@ -717,6 +722,22 @@
         "deep water",
         "water",
         "shore",
+        "shore",
+        "landmass",
+        "landmass",
+        "flora",
+        "flora",
+        "mountains",
+        "mountains",
+        "highlands",
+        "highlands",
+        "peaks",
+        "peaks",
+      ];
+      const LEGACY_PLANET_STOP_LABELS = [
+        "deep water",
+        "water",
+        "shore",
         "landmass",
         "flora",
         "mountains",
@@ -756,7 +777,7 @@
           palettes: PLANET_PALETTES,
           saveUrl: "/api/planet-palettes",
           saveTarget: "src/planetPalettes.js",
-          maxStops: 8,
+          maxStops: PLANET_STOP_LABELS.length,
           fixedStops: true,
           defaultAspect: 2,
           scale: { min: 1, max: 96, step: 1, value: 7 },
@@ -871,15 +892,16 @@
       const cloudGradientTab = document.getElementById("cloudGradientTab");
       const resLabel = document.getElementById("resLabel");
 
-      let activeMode = "gas";
+      const STORAGE_PREFIX = "tileable-noise-texture:";
+      let activeMode = getStoredMode();
       let aspect = MODES[activeMode].defaultAspect; // 1 => 1x1, 2 => 2x1
       const modeState = Object.fromEntries(Object.entries(MODES).map(([mode, config]) => {
         const palettes = clonePalettes(config.palettes);
         const fallbackStops = mode === "tidal"
-          ? getTidalPlanetPalettes()[0]?.stops ?? createDefaultStops(8)
+          ? getTidalPlanetPalettes()[0]?.stops ?? createDefaultStops(PLANET_STOP_LABELS.length)
           : palettes[0]?.stops ?? createDefaultStops(config.maxStops);
         const stopMode = mode === "tidal" ? "planet" : mode;
-        const stopCount = mode === "tidal" ? 8 : config.maxStops;
+        const stopCount = mode === "tidal" ? PLANET_STOP_LABELS.length : config.maxStops;
         return [mode, {
           palettes,
           activePaletteId: palettes[0]?.id ?? "custom",
@@ -907,6 +929,7 @@
           stretch: 6,
         }];
       }));
+      restoreStoredGradientTabs();
 
       let noiseField = null;
       let noiseW = 0;
@@ -945,7 +968,26 @@
           return cloned;
         }
 
-        return normalizePlanetStops(cloned.length === maxStops ? cloned : createDefaultStops(maxStops));
+        return normalizePlanetStops(normalizePlanetStopCount(cloned, maxStops));
+      }
+
+      function normalizePlanetStopCount(stops, maxStops = PLANET_STOP_LABELS.length) {
+        if (stops.length === maxStops) {
+          return stops;
+        }
+        if (stops.length === LEGACY_PLANET_STOP_LABELS.length && maxStops === PLANET_STOP_LABELS.length) {
+          return expandLegacyPlanetStops(stops);
+        }
+        return createDefaultStops(maxStops);
+      }
+
+      function expandLegacyPlanetStops(stops) {
+        const expanded = stops.slice(0, 2).map((stop) => normalizeStop(stop));
+        for (let index = 2; index < stops.length; index += 1) {
+          const stop = normalizeStop(stops[index]);
+          expanded.push(normalizeStop(stop), normalizeStop(stop));
+        }
+        return expanded;
       }
 
       function cloneCloudStops(stops) {
@@ -954,6 +996,26 @@
       }
 
       function createDefaultStops(count) {
+        if (count === PLANET_STOP_LABELS.length) {
+          const colors = {
+            "deep water": "#08254b",
+            "water": "#1f81bd",
+            "shore": "#b8ad8b",
+            "landmass": "#5f7d45",
+            "flora": "#3e6f42",
+            "mountains": "#675f52",
+            "highlands": "#b9b7ad",
+            "peaks": "#f2f2ef",
+          };
+          const positions = [0, 0.34, 0.39, 0.44, 0.51, 0.58, 0.64, 0.7, 0.76, 0.82, 0.88, 0.94, 0.985, 1];
+          return PLANET_STOP_LABELS.map((label, index) => ({
+            pos: positions[index],
+            color: colors[label] ?? "#7d7d8a",
+            label,
+            hueShift: [-5, 5],
+            brightnessShift: [-5, 5],
+          }));
+        }
         return Array.from({ length: count }, (_, index) => ({
           pos: count === 1 ? 0 : index / (count - 1),
           color: index < 2 ? ["#08254b", "#1f81bd"][index] : "#7d7d8a",
@@ -964,6 +1026,24 @@
       }
 
       function createDefaultIceStops(count) {
+        if (count === PLANET_STOP_LABELS.length) {
+          const colors = {
+            "deep water": "#dff7ff",
+            "water": "#f0fbff",
+            "shore": "#f5f7f3",
+            "landmass": "#d9edf5",
+            "flora": "#c8e6ef",
+            "mountains": "#b7d0de",
+            "highlands": "#e5edf2",
+            "peaks": "#ffffff",
+          };
+          return createDefaultStops(count).map((stop) => ({
+            ...stop,
+            color: colors[stop.label] ?? "#ffffff",
+            hueShift: [-2, 2],
+            brightnessShift: [-3, 3],
+          }));
+        }
         const colors = ["#dff7ff", "#f0fbff", "#f5f7f3", "#d9edf5", "#c8e6ef", "#b7d0de", "#e5edf2", "#ffffff"];
         return Array.from({ length: count }, (_, index) => ({
           pos: count === 1 ? 0 : index / (count - 1),
@@ -1000,6 +1080,41 @@
 
       function currentState() {
         return modeState[activeMode];
+      }
+
+      function readStorageValue(key) {
+        try {
+          return window.localStorage.getItem(STORAGE_PREFIX + key);
+        } catch {
+          return null;
+        }
+      }
+
+      function writeStorageValue(key, value) {
+        try {
+          window.localStorage.setItem(STORAGE_PREFIX + key, value);
+        } catch {
+          // Ignore storage failures; the generator should still work in restricted contexts.
+        }
+      }
+
+      function getStoredMode() {
+        const mode = readStorageValue("activeMode");
+        return Object.prototype.hasOwnProperty.call(MODES, mode) ? mode : "gas";
+      }
+
+      function restoreStoredGradientTabs() {
+        for (const mode of Object.keys(MODES)) {
+          const gradient = readStorageValue(`activeGradient:${mode}`);
+          if (hasGradientSubtabs(mode) && (gradient === "surface" || gradient === "ice" || gradient === "clouds")) {
+            modeState[mode].activeGradient = gradient;
+          }
+        }
+      }
+
+      function persistActiveToolTabs() {
+        writeStorageValue("activeMode", activeMode);
+        writeStorageValue(`activeGradient:${activeMode}`, currentState().activeGradient);
       }
 
       function isPlanetLikeMode(mode = activeMode) {
@@ -1493,6 +1608,16 @@
         return stops.slice().sort((a, b) => a.pos - b.pos);
       }
 
+      function syncIceStopPositions(state = currentState()) {
+        if (!isPlanetLikeMode() || !state?.gradientStops || !state?.iceStops) {
+          return;
+        }
+        const count = Math.min(state.gradientStops.length, state.iceStops.length);
+        for (let index = 0; index < count; index += 1) {
+          state.iceStops[index].pos = state.gradientStops[index].pos;
+        }
+      }
+
       function buildLUT() {
         if (activeMode === "tidal") {
           const state = currentState();
@@ -1500,13 +1625,22 @@
           ensureTidalPlanetPalette(state);
           const planetPalette = getPaletteById(tidalPlanetPalettes, state.planetPaletteId);
           const moltenPalette = getPaletteById(MOLTEN_PALETTES, state.moltenPaletteId);
-          buildGradientLUT(cloneModeStops("planet", planetPalette?.stops ?? createDefaultStops(8), 8), tidalPlanetLUT, "surface");
-          buildGradientLUT(cloneModeStops("planet", planetPalette?.iceStops ?? createDefaultIceStops(8), 8), tidalIceLUT, "ice");
+          buildGradientLUT(
+            cloneModeStops("planet", planetPalette?.stops ?? createDefaultStops(PLANET_STOP_LABELS.length), PLANET_STOP_LABELS.length),
+            tidalPlanetLUT,
+            "surface",
+          );
+          buildGradientLUT(
+            cloneModeStops("planet", planetPalette?.iceStops ?? createDefaultIceStops(PLANET_STOP_LABELS.length), PLANET_STOP_LABELS.length),
+            tidalIceLUT,
+            "ice",
+          );
           buildGradientLUT(cloneModeStops("molten", moltenPalette?.stops ?? createDefaultMoltenStops(), 11), tidalMoltenLUT, "molten");
           return;
         }
         buildGradientLUT(currentState().gradientStops, gradientLUT, "surface");
         if (isPlanetLikeMode()) {
+          syncIceStopPositions();
           buildGradientLUT(currentState().iceStops, iceGradientLUT, "ice");
         }
       }
@@ -2341,6 +2475,7 @@
         currentState().iceStops = cloneModeStops(activeMode, active.iceStops ?? createDefaultIceStops(currentConfig().maxStops), currentConfig().maxStops);
         currentState().cloudStops = cloneCloudStops(active.cloudStops ?? createDefaultCloudStops());
         currentState().iceCaps = Number.isFinite(active.iceCaps) ? active.iceCaps : currentState().iceCaps;
+        syncIceStopPositions();
         renderPaletteSelect();
         refreshGradient();
       }
@@ -2362,23 +2497,29 @@
         return id;
       }
 
-      function syncActivePaletteFromEditor() {
+      function syncActivePaletteFromEditor({ renderSelect = true } = {}) {
         const active = getActivePalette();
         if (!active) {
           return;
         }
         active.name = paletteNameInput.value.trim() || active.name;
+        syncIceStopPositions();
         active.stops = cloneModeStops(activeMode, currentState().gradientStops, currentConfig().maxStops);
         if (hasGradientSubtabs()) {
           active.iceStops = cloneModeStops(activeMode, currentState().iceStops, currentConfig().maxStops);
           active.cloudStops = cloneCloudStops(currentState().cloudStops);
           active.iceCaps = currentState().iceCaps;
         }
-        renderPaletteSelect();
+        if (renderSelect) {
+          renderPaletteSelect();
+        }
       }
 
       async function savePalettesToSource() {
-        syncActivePaletteFromEditor();
+        const savedGradientTab = currentState().activeGradient;
+        syncActivePaletteFromEditor({ renderSelect: false });
+        currentState().activeGradient = savedGradientTab;
+        syncGradientModeTabs();
         saveStatus.textContent = "Saving...";
         try {
           const response = await fetch(currentConfig().saveUrl, {
@@ -2402,6 +2543,7 @@
         const stops = currentEditableStops();
         const usesRelativeScale = usesRelativeStopScale();
         const locksFirstStop = activeMode === "planet" && currentState().activeGradient !== "clouds";
+        const locksIceStopPositions = activeMode === "planet" && currentState().activeGradient === "ice";
         stops.forEach((stop, index) => {
           const row = document.createElement("div");
           row.className = "grad-stop";
@@ -2448,12 +2590,15 @@
           percent.max = "100";
           percent.step = "1";
           percent.value = position.value;
-          percent.disabled = locksFirstStop && index === 0;
-          position.disabled = locksFirstStop && index === 0;
+          percent.disabled = locksIceStopPositions || (locksFirstStop && index === 0);
+          position.disabled = locksIceStopPositions || (locksFirstStop && index === 0);
 
           const updatePosition = (value) => {
             if (usesRelativeScale) {
               setRelativeStopPercent(stops, index, Number(value));
+              if (activeMode === "planet" && currentState().activeGradient === "surface") {
+                syncIceStopPositions();
+              }
               syncPlanetPercentControls();
               updateGradientPreview();
               syncActivePaletteFromEditor();
@@ -2637,11 +2782,13 @@
       function applyMode(mode) {
         saveControlState();
         activeMode = mode;
+        persistActiveToolTabs();
         const config = currentConfig();
         const state = currentState();
         aspect = config.defaultAspect;
         if (!hasGradientSubtabs(mode)) {
           state.activeGradient = "surface";
+          persistActiveToolTabs();
         }
 
         scaleInput.min = String(config.scale.min);
@@ -2846,16 +2993,19 @@
       tidalTab.addEventListener("click", () => applyMode("tidal"));
       surfaceGradientTab.addEventListener("click", () => {
         currentState().activeGradient = "surface";
+        persistActiveToolTabs();
         syncGradientModeTabs();
         refreshGradient();
       });
       iceGradientTab.addEventListener("click", () => {
         currentState().activeGradient = "ice";
+        persistActiveToolTabs();
         syncGradientModeTabs();
         refreshGradient();
       });
       cloudGradientTab.addEventListener("click", () => {
         currentState().activeGradient = "clouds";
+        persistActiveToolTabs();
         syncGradientModeTabs();
         syncLabels();
         refreshGradient();
@@ -2869,7 +3019,7 @@
       });
 
       // --- Init -----------------------------------------------------------
-      applyMode("gas");
+      applyMode(activeMode);
     </script>
   </body>
 </html>
