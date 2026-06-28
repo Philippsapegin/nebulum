@@ -345,6 +345,16 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
     musicTrackCurrent.style.setProperty("--music-progress", `${progress * 100}%`);
   }
 
+  function stop() {
+    isDraggingMusicPlayer = false;
+    setMusicDropdownOpen(false);
+    musicAudio.pause();
+    musicAudio.removeAttribute("src");
+    musicAudio.load();
+    musicTrackCurrent.style.setProperty("--music-progress", "0%");
+    updateMusicPlayButton();
+  }
+
   return {
     init,
     closeDropdown: () => setMusicDropdownOpen(false),
@@ -352,6 +362,7 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
       isDraggingMusicPlayer = false;
     },
     ensureSystemPosition: ensureSystemMusicPlayerPosition,
+    stop,
     updateScrollbar: updateMusicTrackScrollbar,
   };
 }

@@ -60,6 +60,45 @@
       </filter>
     </svg>
     <main id="app">
+      <section id="start-menu" class="start-menu" aria-label="Start menu">
+        <div class="start-menu__inner">
+          <h1 class="start-menu__title">NEBULUM</h1>
+          <div class="start-menu__actions" aria-label="Main actions">
+            <button id="menu-new-game" class="start-menu__button" type="button">NEW GAME</button>
+            <button id="menu-load-game" class="start-menu__button" type="button">LOAD GAME</button>
+            <button id="menu-exit" class="start-menu__button" type="button">EXIT</button>
+          </div>
+          <p id="menu-status" class="start-menu__status" aria-live="polite"></p>
+        </div>
+
+        <div id="seed-dialog" class="menu-dialog" role="dialog" aria-modal="true" aria-labelledby="seed-dialog-title" hidden>
+          <div class="menu-dialog__surface">
+            <div id="seed-dialog-title" class="menu-dialog__title">NEW GAME</div>
+            <label class="menu-dialog__field">
+              <span class="menu-dialog__label">Seed</span>
+              <input id="menu-seed-input" class="menu-dialog__input" type="text" autocomplete="off" />
+            </label>
+            <div class="menu-dialog__actions">
+              <button id="menu-seed-confirm" class="menu-dialog__button" type="button">START</button>
+              <button id="menu-seed-cancel" class="menu-dialog__button" type="button">CANCEL</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="load-dialog" class="menu-dialog" role="dialog" aria-modal="true" aria-labelledby="load-dialog-title" hidden>
+          <div class="menu-dialog__surface menu-dialog__surface--wide">
+            <div id="load-dialog-title" class="menu-dialog__title">LOAD GAME</div>
+            <div id="menu-save-list" class="menu-save-list" role="listbox" aria-label="Saved games">
+              <div class="menu-save-list__empty">NO SAVES</div>
+            </div>
+            <div class="menu-dialog__actions">
+              <button id="menu-load-save" class="menu-dialog__button" type="button" disabled>LOAD SAVE</button>
+              <button id="menu-delete-save" class="menu-dialog__button" type="button" disabled>DELETE SAVE</button>
+              <button id="menu-load-close" class="menu-dialog__button" type="button">CLOSE</button>
+            </div>
+          </div>
+        </div>
+      </section>
       <canvas id="scene"></canvas>
       <div id="star-labels" class="star-labels" aria-hidden="true"></div>
       <div id="hover-name-wrap" class="hover-name-wrap" aria-hidden="true">

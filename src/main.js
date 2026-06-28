@@ -33,6 +33,7 @@ import { hexToRgba, lightenHexColor } from "./utils/color.js";
 import { easeOutCubic, smoothstep } from "./utils/math.js";
 import { createRandom } from "./utils/random.js";
 import {
+  clearTextureRuntimeCache,
   getRetainedCanvasTexture,
   releaseCanvasTexture,
   retainCanvasTexture,
@@ -40,6 +41,9 @@ import {
 
 const params = new URLSearchParams(window.location.search);
 const SEED = params.get("seed") || "nebulum";
+const MENU_DEFAULT_SEED = "nebulum";
+const START_AFTER_SEED_STORAGE_KEY = "nebulum:start-after-seed";
+const DEFAULT_SKY_GRADIENT_COLORS = ["#27648f", "#000000", "#884d26", "#000000"];
 const PLANET_WATER_TAG_CHANCE = 0.5;
 const ATMOSPHERE_TAGS = ["THIN ATMOSPHERE", "ATMOSPHERE", "DENSE ATMOSPHERE"];
 const ATMOSPHERE_TEMPERATURE_MULTIPLIERS = {
@@ -48,18 +52,24 @@ const ATMOSPHERE_TEMPERATURE_MULTIPLIERS = {
   "DENSE ATMOSPHERE": [1.8, 3],
 };
 const TIDAL_COMBINE_MAX_TEMPERATURE = 4000;
-const glowTexture = createNodeGlowTexture();
-const linkPulseTexture = createLinkPulseTexture();
-const blackHoleDiskTexture = createBlackHoleDiskTexture();
-const blackHoleDiskMaterial = new THREE.SpriteMaterial({
-  map: blackHoleDiskTexture,
-  color: 0x000000,
-  transparent: true,
-  opacity: 1,
-  depthWrite: false,
-  depthTest: false,
-  blending: THREE.NormalBlending,
-});
+let glowTexture = null;
+let linkPulseTexture = null;
+let blackHoleDiskTexture = null;
+let blackHoleDiskMaterial = null;
+const startMenu = document.querySelector("#start-menu");
+const menuNewGame = document.querySelector("#menu-new-game");
+const menuLoadGame = document.querySelector("#menu-load-game");
+const menuExit = document.querySelector("#menu-exit");
+const menuStatus = document.querySelector("#menu-status");
+const seedDialog = document.querySelector("#seed-dialog");
+const menuSeedInput = document.querySelector("#menu-seed-input");
+const menuSeedConfirm = document.querySelector("#menu-seed-confirm");
+const menuSeedCancel = document.querySelector("#menu-seed-cancel");
+const loadDialog = document.querySelector("#load-dialog");
+const menuSaveList = document.querySelector("#menu-save-list");
+const menuLoadSave = document.querySelector("#menu-load-save");
+const menuDeleteSave = document.querySelector("#menu-delete-save");
+const menuLoadClose = document.querySelector("#menu-load-close");
 const sceneCanvas = document.querySelector("#scene");
 const starLabels = document.querySelector("#star-labels");
 const hoverNameWrap = document.querySelector("#hover-name-wrap");
@@ -126,6 +136,46 @@ const objectDetailEntryOverlay = document.createElement("div");
 objectDetailEntryOverlay.className = "object-detail-entry-overlay";
 document.querySelector("#app").append(objectDetailEntryOverlay);
 
+let isStartMenuOpen = true;
+let isAppExited = false;
+let isGameRuntimeReady = false;
+let animationFrameId = null;
+let menuAnimationFrameId = null;
+let selectedMenuSaveIndex = -1;
+let shouldStartGameAfterInit = false;
+let menuScene = null;
+let menuCamera = null;
+let menuSky = null;
+let menuGroup = null;
+let menuPlane = null;
+let menuPlaneTexture = null;
+let menuPlaneCanvas = null;
+let menuPlaneContext = null;
+let menuStars = null;
+let menuStarLinks = null;
+let menuStarPoints = [];
+let menuStarTrailIndices = [];
+let menuStarPilots = [];
+let menuStarGlowTexture = null;
+let menuActiveButton = null;
+let menuButtonRects = [];
+let menuRotationTargetX = 0;
+let menuRotationTargetY = 0;
+let menuStarsRotationTargetX = 0;
+let menuStarsRotationTargetY = 0;
+let menuLastFrameTime = performance.now();
+const menuRaycaster = new THREE.Raycaster();
+const menuPointer = new THREE.Vector2();
+const MENU_TEXTURE_WIDTH = 1440;
+const MENU_TEXTURE_HEIGHT = 1020;
+const MENU_PLANE_WIDTH = 7.2;
+const MENU_PLANE_HEIGHT = 5.1;
+const MENU_STAR_LINK_COLOR = 0xbfeaff;
+const MENU_STAR_LINK_MAX_DISTANCE = 5.8;
+const MENU_STAR_LINK_MIN_DISTANCE = 1.35;
+const MENU_STAR_LINK_SPEED_SCALE = 5;
+const MENU_STAR_LINK_TRAIL_DEPTH = 3;
+
 const renderer = new THREE.WebGLRenderer({
   canvas: sceneCanvas,
   antialias: true,
@@ -137,43 +187,34 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.autoClear = false;
 sceneCanvas.addEventListener("webglcontextlost", (event) => {
   event.preventDefault();
+  if (isAppExited) {
+    return;
+  }
   document.body.classList.add("webgl-context-lost");
   window.setTimeout(() => window.location.reload(), 400);
 });
 sceneCanvas.addEventListener("webglcontextrestored", () => {
+  if (isAppExited) {
+    return;
+  }
   window.location.reload();
 });
 
-const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(0x050506, 0.045);
-
-const camera = new THREE.PerspectiveCamera(44, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(0, 0, 12);
-const INITIAL_CAMERA_DISTANCE = camera.position.z;
+let scene = null;
+let camera = null;
+const INITIAL_CAMERA_DISTANCE = 12;
 const MIN_CAMERA_DISTANCE = 7.2;
 const MAX_CAMERA_DISTANCE = 20;
 
-const graphRoot = new THREE.Group();
-scene.add(graphRoot);
-
-const ambient = new THREE.AmbientLight(0xffffff, 0.14);
-scene.add(ambient);
-
-const keyLight = new THREE.PointLight(0xffffff, 1.8, 28);
-keyLight.position.set(4, 5, 8);
-scene.add(keyLight);
-
-const rand = createRandom(SEED);
-const nameRand = createRandom(`${SEED}:names`);
-const planetNameService = createPlanetNameService({ seed: SEED });
-const nodes = createNodes(rand).map((node) => ({
-  ...node,
-  name: createStarName(nameRand),
-}));
-const planetNameAssignments = planetNameService.createPlanetNameAssignments(nodes);
-const links = createLinks(nodes);
-const outerLinks = createOuterLinks(nodes, createRandom(`${SEED}:outer-links`));
-const adjacency = createAdjacency(links, nodes);
+let graphRoot = null;
+let ambient = null;
+let keyLight = null;
+let planetNameService = null;
+let planetNameAssignments = new Map();
+let nodes = [];
+let links = [];
+let outerLinks = [];
+let adjacency = new Map();
 const nodeMeshes = [];
 const labelElements = [];
 const hitTargets = [];
@@ -184,7 +225,7 @@ const pointer = new THREE.Vector2(10, 10);
 const lastClientPointer = new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2);
 const rotationVelocity = new THREE.Vector2(0, 0);
 const targetRotation = new THREE.Euler(-0.18, 0.36, 0, "YXZ");
-const linkPulse = createLinkPulse(createRandom(`${SEED}:link-pulse`));
+let linkPulse = null;
 
 let isDragging = false;
 let activeGraphPointerId = null;
@@ -287,17 +328,17 @@ let systemTooltipTypingToken = 0;
 let lastFrameTime = performance.now();
 let skyRandomVersion = 0;
 let skyMesh = null;
-let targetCameraDistance = camera.position.z;
-const skyGradientColors = ["#27648f", "#000000", "#884d26", "#000000"];
+let targetCameraDistance = INITIAL_CAMERA_DISTANCE;
+const skyGradientColors = [...DEFAULT_SKY_GRADIENT_COLORS];
 const nodeColors = new Map();
 const nodeAnimationProgress = new Map();
 const edgeAnimationProgress = new Map();
 const edgeAnimationOrigins = new Map();
 const nodeExitAnimations = new Map();
 const edgeExitAnimations = new Map();
-const selectionOverlay = createSelectionOverlay();
+let selectionOverlay = null;
 const selectionScreenSize = new THREE.Vector2();
-const systemGlowLayer = createSystemGlowLayer();
+let systemGlowLayer = null;
 const lastSystemParallax = {
   clientX: NaN,
   clientY: NaN,
@@ -324,54 +365,18 @@ const selectionProjectionScratch = {
 };
 let planetScreenRenderer = null;
 let planetScreenRendererPromise = null;
-const systemScreenController = createSystemScreenController({ root: starWindow });
-const musicPlayerController = createMusicPlayer({
-  tracks: MUSIC_TRACKS,
-  canDragInSystem: () => systemScreenController.isOpen() && !systemScreenController.isTransitioning(),
-});
-const planetScreenController = createPlanetScreenController({
-  root: planetScreen,
-  getPointer: () => ({ x: lastClientPointer.x, y: lastClientPointer.y }),
-  onBeforeOpen: () => {
-    setSystemHover(null);
-    closePlanetWindow();
-  },
-  render: (planet) => {
-    if (planetScreenRenderer) {
-      planetScreenRenderer.render(planet);
-      return;
-    }
-    renderPlanetScreenLoadFallback(planet);
-  },
-  renderFallback: (planet) => {
-    if (planetScreenRenderer) {
-      planetScreenRenderer.renderFallback(planet);
-      return;
-    }
-    renderPlanetScreenLoadFallback(planet);
-  },
-  dispose3D: () => {
-    planetScreenRenderer?.dispose3D();
-  },
-  drawStarSurface: drawSystemStarSurface,
-  update3D: (surface, deltaSeconds, now) => {
-    planetScreenRenderer?.update3D(surface, deltaSeconds, now);
-  },
-  setOpenPlanetData: (planet) => {
-    openPlanetData = planet;
-  },
-});
+let systemScreenController = null;
+let musicPlayerController = null;
+let planetScreenController = null;
 
-initPanel();
-musicPlayerController.init();
-buildSky(createRandom(`${SEED}:sky`));
-buildLocalSpaceStars(createRandom(`${SEED}:local-space`));
-buildLinks(links);
-buildOuterLinks(outerLinks);
-buildNodes(nodes);
-graphRoot.add(linkPulse.sprite);
+initStartMenu();
+initStartMenuScene();
 resize();
-animate();
+if (shouldStartGameAfterInit) {
+  startGameFromMenu();
+} else {
+  startMenuAnimationLoop();
+}
 
 window.addEventListener("resize", resize);
 document.addEventListener("pointermove", onPointerMove, { capture: true });
@@ -382,6 +387,991 @@ window.addEventListener("pointercancel", onPointerUp);
 window.addEventListener("blur", cancelGraphDrag);
 sceneCanvas.addEventListener("lostpointercapture", cancelGraphDrag);
 document.addEventListener("pointerdown", releaseStaleGraphCapture, { capture: true });
+
+function initializeNebulumRuntime() {
+  if (isGameRuntimeReady) {
+    return;
+  }
+
+  disposeStartMenuScene();
+  isGameRuntimeReady = true;
+
+  glowTexture = createNodeGlowTexture();
+  linkPulseTexture = createLinkPulseTexture();
+  blackHoleDiskTexture = createBlackHoleDiskTexture();
+  blackHoleDiskMaterial = new THREE.SpriteMaterial({
+    map: blackHoleDiskTexture,
+    color: 0x000000,
+    transparent: true,
+    opacity: 1,
+    depthWrite: false,
+    depthTest: false,
+    blending: THREE.NormalBlending,
+  });
+
+  scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x050506, 0.045);
+
+  camera = new THREE.PerspectiveCamera(44, window.innerWidth / window.innerHeight, 0.1, 100);
+  camera.position.set(0, 0, INITIAL_CAMERA_DISTANCE);
+  targetCameraDistance = camera.position.z;
+
+  graphRoot = new THREE.Group();
+  scene.add(graphRoot);
+
+  ambient = new THREE.AmbientLight(0xffffff, 0.14);
+  scene.add(ambient);
+
+  keyLight = new THREE.PointLight(0xffffff, 1.8, 28);
+  keyLight.position.set(4, 5, 8);
+  scene.add(keyLight);
+
+  const rand = createRandom(SEED);
+  const nameRand = createRandom(`${SEED}:names`);
+  planetNameService = createPlanetNameService({ seed: SEED });
+  nodes = createNodes(rand).map((node) => ({
+    ...node,
+    name: createStarName(nameRand),
+  }));
+  planetNameAssignments = planetNameService.createPlanetNameAssignments(nodes);
+  links = createLinks(nodes);
+  outerLinks = createOuterLinks(nodes, createRandom(`${SEED}:outer-links`));
+  adjacency = createAdjacency(links, nodes);
+  linkPulse = createLinkPulse(createRandom(`${SEED}:link-pulse`));
+  selectionOverlay = createSelectionOverlay();
+  systemGlowLayer = createSystemGlowLayer();
+
+  systemScreenController = createSystemScreenController({ root: starWindow });
+  musicPlayerController = createMusicPlayer({
+    tracks: MUSIC_TRACKS,
+    canDragInSystem: () => systemScreenController.isOpen() && !systemScreenController.isTransitioning(),
+  });
+  planetScreenController = createPlanetScreenController({
+    root: planetScreen,
+    getPointer: () => ({ x: lastClientPointer.x, y: lastClientPointer.y }),
+    onBeforeOpen: () => {
+      setSystemHover(null);
+      closePlanetWindow();
+    },
+    render: (planet) => {
+      if (planetScreenRenderer) {
+        planetScreenRenderer.render(planet);
+        return;
+      }
+      renderPlanetScreenLoadFallback(planet);
+    },
+    renderFallback: (planet) => {
+      if (planetScreenRenderer) {
+        planetScreenRenderer.renderFallback(planet);
+        return;
+      }
+      renderPlanetScreenLoadFallback(planet);
+    },
+    dispose3D: () => {
+      planetScreenRenderer?.dispose3D();
+    },
+    drawStarSurface: drawSystemStarSurface,
+    update3D: (surface, deltaSeconds, now) => {
+      planetScreenRenderer?.update3D(surface, deltaSeconds, now);
+    },
+    setOpenPlanetData: (planet) => {
+      openPlanetData = planet;
+    },
+  });
+
+  initPanel();
+  musicPlayerController.init();
+  buildSky(createRandom(`${SEED}:sky`));
+  buildLocalSpaceStars(createRandom(`${SEED}:local-space`));
+  buildLinks(links);
+  buildOuterLinks(outerLinks);
+  buildNodes(nodes);
+  graphRoot.add(linkPulse.sprite);
+  resize();
+  renderStarmapFrame();
+}
+
+function initStartMenu() {
+  if (!startMenu) {
+    isStartMenuOpen = false;
+    return;
+  }
+
+  document.body.classList.add("start-menu-open");
+  menuSeedInput.value = MENU_DEFAULT_SEED;
+  shouldStartGameAfterInit = consumeStartAfterSeedFlag();
+
+  menuNewGame.addEventListener("click", () => {
+    menuSeedInput.value = MENU_DEFAULT_SEED;
+    openMenuDialog(seedDialog, menuSeedInput);
+  });
+  menuLoadGame.addEventListener("click", openLoadGameDialog);
+  menuExit.addEventListener("click", exitNebulum);
+  startMenu.addEventListener("pointermove", onStartMenuPointerMove);
+  startMenu.addEventListener("pointerleave", clearStartMenuPointer);
+  startMenu.addEventListener("click", onStartMenuClick);
+  menuSeedConfirm.addEventListener("click", confirmNewGameSeed);
+  menuSeedCancel.addEventListener("click", closeMenuDialogs);
+  menuSeedInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      confirmNewGameSeed();
+    }
+  });
+  menuLoadClose.addEventListener("click", closeMenuDialogs);
+  menuLoadSave.addEventListener("click", loadSelectedMenuSave);
+  menuDeleteSave.addEventListener("click", deleteSelectedMenuSave);
+
+  seedDialog.addEventListener("pointerdown", (event) => {
+    if (event.target === seedDialog) {
+      closeMenuDialogs();
+    }
+  });
+  loadDialog.addEventListener("pointerdown", (event) => {
+    if (event.target === loadDialog) {
+      closeMenuDialogs();
+    }
+  });
+  window.addEventListener("keydown", (event) => {
+    if (!isStartMenuOpen || event.key !== "Escape") {
+      return;
+    }
+    closeMenuDialogs();
+  });
+}
+
+function initStartMenuScene() {
+  if (!startMenu) {
+    return;
+  }
+
+  document.body.classList.add("menu-scene-active");
+  menuScene = new THREE.Scene();
+  menuCamera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 0.1, 80);
+  menuCamera.position.set(0, 0, 9);
+
+  menuSky = new THREE.Mesh(
+    new THREE.SphereGeometry(36, 32, 16),
+    createSkyGradientMaterial(
+      createRandom(`${SEED}:menu-sky`),
+      DEFAULT_SKY_GRADIENT_COLORS,
+      createMenuSkyAnchorUniforms(),
+    ),
+  );
+  menuSky.renderOrder = -10;
+  menuScene.add(menuSky);
+
+  menuGroup = new THREE.Group();
+  menuScene.add(menuGroup);
+
+  menuPlaneCanvas = document.createElement("canvas");
+  menuPlaneCanvas.width = MENU_TEXTURE_WIDTH;
+  menuPlaneCanvas.height = MENU_TEXTURE_HEIGHT;
+  menuPlaneContext = menuPlaneCanvas.getContext("2d");
+  menuPlaneTexture = new THREE.CanvasTexture(menuPlaneCanvas);
+  menuPlaneTexture.colorSpace = THREE.SRGBColorSpace;
+  menuPlaneTexture.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 8);
+
+  const menuPlaneMaterial = new THREE.MeshBasicMaterial({
+    map: menuPlaneTexture,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+  });
+  const menuPlaneGeometry = new THREE.PlaneGeometry(MENU_PLANE_WIDTH, MENU_PLANE_HEIGHT);
+  menuPlane = new THREE.Mesh(menuPlaneGeometry, menuPlaneMaterial);
+  menuGroup.add(menuPlane);
+
+  menuStars = createStartMenuStarField();
+  menuStars.renderOrder = 0;
+  menuScene.add(menuStars);
+  menuStarLinks = new THREE.Group();
+  menuStarLinks.renderOrder = 1;
+  menuScene.add(menuStarLinks);
+  menuStarGlowTexture = createNodeGlowTexture();
+  resetStartMenuStarPilots();
+
+  updateMenuPlaneTexture();
+  document.fonts?.ready.then(updateMenuPlaneTexture).catch(() => {});
+}
+
+function createStartMenuStarField() {
+  const random = createRandom("nebulum:start-menu-stars");
+  const starCount = 900;
+  const positions = new Float32Array(starCount * 3);
+  const colors = new Float32Array(starCount * 3);
+  const color = new THREE.Color();
+  const points = [];
+
+  for (let index = 0; index < starCount; index += 1) {
+    const radius = 6 + random() * 14;
+    const angle = random() * Math.PI * 2;
+    const height = (random() - 0.5) * 11;
+    const depth = -2 - random() * 24;
+    positions[index * 3] = Math.cos(angle) * radius;
+    positions[index * 3 + 1] = height + Math.sin(angle * 0.7) * 0.8;
+    positions[index * 3 + 2] = depth;
+    points.push(new THREE.Vector3(
+      positions[index * 3],
+      positions[index * 3 + 1],
+      positions[index * 3 + 2],
+    ));
+
+    const warmth = random();
+    color.setRGB(
+      0.42 + random() * 0.36,
+      0.48 + random() * 0.34,
+      0.58 + random() * 0.36,
+    );
+    color.lerp(new THREE.Color(1, 0.82, 0.58), warmth * 0.16);
+    colors[index * 3] = color.r;
+    colors[index * 3 + 1] = color.g;
+    colors[index * 3 + 2] = color.b;
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+  const material = new THREE.PointsMaterial({
+    size: 0.035,
+    sizeAttenuation: true,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.78,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+
+  menuStarPoints = points;
+  menuStarTrailIndices = points
+    .map((point, index) => ({ index, point }))
+    .filter(({ point }) => Math.abs(point.x) < 8.5 && Math.abs(point.y) < 4.6 && point.z > -20)
+    .map(({ index }) => index);
+  return new THREE.Points(geometry, material);
+}
+
+function resetStartMenuStarPilots() {
+  const source = getStartMenuTrailSource();
+  const starts = [];
+  menuStarPilots = Array.from({ length: 3 }, (_, index) => {
+    const random = createRandom(`nebulum:start-menu-link-trail:${index}`);
+    const currentIndex = chooseStartMenuPilotStart(source, random, starts);
+    starts.push(currentIndex);
+    const glow = createStartMenuPilotGlow();
+    glow.position.copy(menuStarPoints[currentIndex] ?? new THREE.Vector3());
+    menuStarLinks.add(glow);
+    return {
+      currentIndex,
+      glow,
+      previousIndex: null,
+      random,
+      segments: [],
+      sourceIndex: currentIndex,
+      spawnDelay: (0.12 + index * 0.22 + random() * 0.35) * MENU_STAR_LINK_SPEED_SCALE,
+    };
+  });
+}
+
+function getStartMenuTrailSource() {
+  return menuStarTrailIndices.length > 1 ? menuStarTrailIndices : menuStarPoints.map((_, index) => index);
+}
+
+function chooseStartMenuPilotStart(source, random, starts) {
+  let bestIndex = source[Math.floor(random() * Math.max(1, source.length))] ?? 0;
+  let bestDistance = -Infinity;
+
+  for (let attempt = 0; attempt < 90; attempt += 1) {
+    const candidateIndex = source[Math.floor(random() * source.length)] ?? bestIndex;
+    const candidate = menuStarPoints[candidateIndex];
+    const nearestDistance = starts.length === 0
+      ? Infinity
+      : Math.min(...starts.map((index) => candidate.distanceTo(menuStarPoints[index])));
+    if (nearestDistance > 5.2) {
+      return candidateIndex;
+    }
+    if (nearestDistance > bestDistance) {
+      bestDistance = nearestDistance;
+      bestIndex = candidateIndex;
+    }
+  }
+
+  return bestIndex;
+}
+
+function createStartMenuPilotGlow() {
+  const material = new THREE.SpriteMaterial({
+    map: menuStarGlowTexture,
+    color: MENU_STAR_LINK_COLOR,
+    transparent: true,
+    opacity: 0.52,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.AdditiveBlending,
+  });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(0.46, 0.46, 1);
+  sprite.renderOrder = 2;
+  return sprite;
+}
+
+function updateStartMenuStarTrail(deltaSeconds) {
+  if (menuStarPilots.length === 0 || !menuStarLinks || menuStarPoints.length < 2) {
+    return;
+  }
+
+  for (const pilot of menuStarPilots) {
+    pilot.spawnDelay -= deltaSeconds;
+    if (pilot.spawnDelay <= 0) {
+      spawnStartMenuStarLink(pilot);
+      pilot.spawnDelay = (0.48 + pilot.random() * 0.34) * MENU_STAR_LINK_SPEED_SCALE;
+    }
+
+    updateStartMenuPilotGlow(pilot);
+    updateStartMenuPilotSegments(pilot, deltaSeconds);
+  }
+}
+
+function updateStartMenuPilotGlow(pilot) {
+  const glowPoint = menuStarPoints[pilot.sourceIndex ?? pilot.currentIndex];
+  if (!glowPoint || !pilot.glow) {
+    return;
+  }
+
+  pilot.glow.position.copy(glowPoint);
+  const pulse = 0.92 + Math.sin(performance.now() * 0.004 + pilot.currentIndex) * 0.08;
+  pilot.glow.scale.setScalar(0.46 * pulse);
+  pilot.glow.material.opacity = 0.48 + (pulse - 0.92) * 0.8;
+}
+
+function updateStartMenuPilotSegments(pilot, deltaSeconds) {
+  for (let index = pilot.segments.length - 1; index >= 0; index -= 1) {
+    const segment = pilot.segments[index];
+    segment.elapsed += deltaSeconds;
+    const position = segment.line.geometry.attributes.position;
+
+    if (segment.retracting) {
+      segment.retractElapsed += deltaSeconds;
+      const retractProgress = easeOutCubic(Math.min(1, segment.retractElapsed / segment.retractSeconds));
+      segment.scratchStart.copy(segment.retractStart).lerp(segment.retractTo, retractProgress);
+      segment.scratchEnd.copy(segment.retractEnd).lerp(segment.retractTo, retractProgress);
+      position.setXYZ(0, segment.scratchStart.x, segment.scratchStart.y, segment.scratchStart.z);
+      position.setXYZ(1, segment.scratchEnd.x, segment.scratchEnd.y, segment.scratchEnd.z);
+      segment.opacity = Math.max(0, segment.opacity - (deltaSeconds * 0.4) / MENU_STAR_LINK_SPEED_SCALE);
+      if (retractProgress >= 1) {
+        segment.opacity = 0;
+      }
+    } else {
+      const progress = easeOutCubic(Math.min(1, segment.elapsed / segment.growSeconds));
+      segment.scratchEnd.copy(segment.start).lerp(segment.end, progress);
+      position.setXYZ(0, segment.start.x, segment.start.y, segment.start.z);
+      position.setXYZ(1, segment.scratchEnd.x, segment.scratchEnd.y, segment.scratchEnd.z);
+      segment.opacity = THREE.MathUtils.lerp(segment.opacity, 0.52, 0.12);
+    }
+
+    position.needsUpdate = true;
+    segment.line.material.opacity = segment.opacity;
+
+    if (segment.opacity <= 0.01) {
+      disposeStartMenuStarLink(segment);
+      pilot.segments.splice(index, 1);
+    }
+  }
+}
+
+function spawnStartMenuStarLink(pilot) {
+  if (!pilot || menuStarPoints.length < 2) {
+    return;
+  }
+
+  const startIndex = pilot.currentIndex;
+  const start = menuStarPoints[startIndex];
+  const activeSegments = pilot.segments.filter((segment) => !segment.retracting);
+  if (activeSegments.length >= MENU_STAR_LINK_TRAIL_DEPTH) {
+    retractStartMenuStarLink(activeSegments[0], activeSegments[0].end);
+  }
+
+  const endIndex = chooseStartMenuLinkTarget(pilot, startIndex);
+  const end = menuStarPoints[endIndex];
+  pilot.previousIndex = startIndex;
+  pilot.currentIndex = endIndex;
+  pilot.sourceIndex = startIndex;
+
+  const positions = new Float32Array([
+    start.x, start.y, start.z,
+    start.x, start.y, start.z,
+  ]);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  const material = new THREE.LineBasicMaterial({
+    color: MENU_STAR_LINK_COLOR,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.AdditiveBlending,
+  });
+  const line = new THREE.Line(geometry, material);
+  line.frustumCulled = false;
+  line.renderOrder = 1;
+  menuStarLinks.add(line);
+  pilot.segments.push({
+    elapsed: 0,
+    end,
+    growSeconds: 0.42 * MENU_STAR_LINK_SPEED_SCALE,
+    line,
+    opacity: 0,
+    retractElapsed: 0,
+    retractEnd: new THREE.Vector3(),
+    retractSeconds: 0.5 * MENU_STAR_LINK_SPEED_SCALE,
+    retractStart: new THREE.Vector3(),
+    retractTo: new THREE.Vector3(),
+    retracting: false,
+    scratchEnd: new THREE.Vector3(),
+    scratchStart: new THREE.Vector3(),
+    start,
+  });
+}
+
+function retractStartMenuStarLink(segment, target) {
+  if (segment.retracting) {
+    return;
+  }
+
+  const position = segment.line.geometry.attributes.position;
+  segment.retractStart.set(position.getX(0), position.getY(0), position.getZ(0));
+  segment.retractEnd.set(position.getX(1), position.getY(1), position.getZ(1));
+  segment.retractTo.copy(target);
+  segment.retractElapsed = 0;
+  segment.retracting = true;
+}
+
+function chooseStartMenuLinkTarget(pilot, startIndex) {
+  const random = pilot.random;
+  const start = menuStarPoints[startIndex];
+  const source = getStartMenuTrailSource();
+  let bestIndex = startIndex;
+  let bestScore = Infinity;
+
+  for (let attempt = 0; attempt < 96; attempt += 1) {
+    const candidateIndex = source[Math.floor(random() * source.length)];
+    if (candidateIndex === startIndex || candidateIndex === pilot.previousIndex) {
+      continue;
+    }
+
+    const distance = start.distanceTo(menuStarPoints[candidateIndex]);
+    if (distance < MENU_STAR_LINK_MIN_DISTANCE || distance > MENU_STAR_LINK_MAX_DISTANCE) {
+      continue;
+    }
+
+    const score = Math.abs(distance - 2.8) + random() * 0.55;
+    if (score < bestScore) {
+      bestScore = score;
+      bestIndex = candidateIndex;
+    }
+  }
+
+  if (bestIndex !== startIndex) {
+    return bestIndex;
+  }
+
+  const fallback = source.find((index) => index !== startIndex && index !== pilot.previousIndex);
+  return fallback ?? startIndex;
+}
+
+function disposeStartMenuStarLink(segment) {
+  menuStarLinks?.remove(segment.line);
+  segment.line.geometry.dispose();
+  segment.line.material.dispose();
+}
+
+function updateMenuPlaneTexture() {
+  if (!menuPlaneContext || !menuPlaneTexture) {
+    return;
+  }
+
+  const ctx = menuPlaneContext;
+  ctx.clearRect(0, 0, MENU_TEXTURE_WIDTH, MENU_TEXTURE_HEIGHT);
+
+  const centerX = MENU_TEXTURE_WIDTH / 2;
+  const activeId = menuActiveButton?.id ?? null;
+  ctx.save();
+  ctx.shadowColor = "rgba(255, 255, 255, 0.36)";
+  ctx.shadowBlur = 22;
+  ctx.fillStyle = "rgba(255, 255, 255, 0.96)";
+  ctx.font = '212px "Wire One", "League Gothic", sans-serif';
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("NEBULUM", centerX, 268);
+  ctx.restore();
+
+  menuButtonRects = [
+    { id: "new", label: "NEW GAME", x: 555, y: 472, width: 330, height: 42 },
+    { id: "load", label: "LOAD GAME", x: 555, y: 540, width: 330, height: 42 },
+    { id: "exit", label: "EXIT", x: 555, y: 608, width: 330, height: 42 },
+  ];
+
+  for (const button of menuButtonRects) {
+    const isActive = button.id === activeId;
+    ctx.save();
+    ctx.fillStyle = isActive ? "rgba(16, 16, 18, 0.66)" : "rgba(10, 10, 11, 0.48)";
+    ctx.shadowColor = "rgba(0, 0, 0, 0.36)";
+    ctx.shadowBlur = 10;
+    drawMenuButtonRect(ctx, button.x, button.y, button.width, button.height, 5);
+    ctx.fill();
+
+    ctx.shadowBlur = isActive ? 6 : 0;
+    ctx.fillStyle = isActive ? "rgba(255, 255, 255, 0.86)" : "rgba(255, 255, 255, 0.68)";
+    ctx.font = '400 16px "Albert Sans", sans-serif';
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(button.label, centerX, button.y + button.height / 2 + 0.5);
+    ctx.restore();
+  }
+
+  const status = menuStatus.textContent.trim();
+  if (status) {
+    ctx.save();
+    ctx.fillStyle = "rgba(255, 255, 255, 0.46)";
+    ctx.font = '500 18px "Albert Sans", sans-serif';
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(status, centerX, 744);
+    ctx.restore();
+  }
+
+  menuPlaneTexture.needsUpdate = true;
+  renderStartMenuScene();
+}
+
+function drawMenuButtonRect(ctx, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function startMenuAnimationLoop() {
+  if (isAppExited || !isStartMenuOpen || !menuScene || menuAnimationFrameId !== null) {
+    return;
+  }
+
+  menuLastFrameTime = performance.now();
+  menuAnimationFrameId = requestAnimationFrame(animateStartMenu);
+}
+
+function stopMenuAnimationLoop() {
+  if (menuAnimationFrameId === null) {
+    return;
+  }
+
+  cancelAnimationFrame(menuAnimationFrameId);
+  menuAnimationFrameId = null;
+}
+
+function animateStartMenu() {
+  menuAnimationFrameId = null;
+  if (isAppExited || !isStartMenuOpen || !menuScene) {
+    return;
+  }
+
+  const now = performance.now();
+  const deltaSeconds = Math.min(0.05, (now - menuLastFrameTime) / 1000);
+  menuLastFrameTime = now;
+
+  if (menuGroup) {
+    menuGroup.rotation.x = THREE.MathUtils.lerp(menuGroup.rotation.x, menuRotationTargetX, 0.1);
+    menuGroup.rotation.y = THREE.MathUtils.lerp(menuGroup.rotation.y, menuRotationTargetY, 0.1);
+  }
+  if (menuStars) {
+    menuStars.rotation.x = THREE.MathUtils.lerp(menuStars.rotation.x, menuStarsRotationTargetX, 0.08);
+    menuStars.rotation.y = THREE.MathUtils.lerp(menuStars.rotation.y, menuStarsRotationTargetY, 0.08);
+  }
+  if (menuStarLinks) {
+    menuStarLinks.rotation.x = THREE.MathUtils.lerp(menuStarLinks.rotation.x, menuStarsRotationTargetX, 0.08);
+    menuStarLinks.rotation.y = THREE.MathUtils.lerp(menuStarLinks.rotation.y, menuStarsRotationTargetY, 0.08);
+  }
+  updateStartMenuStarTrail(deltaSeconds);
+
+  renderStartMenuScene();
+  menuAnimationFrameId = requestAnimationFrame(animateStartMenu);
+}
+
+function isStartMenuMotionActive() {
+  const epsilon = 0.0006;
+  return (
+    Math.abs((menuGroup?.rotation.x ?? 0) - menuRotationTargetX) > epsilon ||
+    Math.abs((menuGroup?.rotation.y ?? 0) - menuRotationTargetY) > epsilon ||
+    Math.abs((menuStars?.rotation.x ?? 0) - menuStarsRotationTargetX) > epsilon ||
+    Math.abs((menuStars?.rotation.y ?? 0) - menuStarsRotationTargetY) > epsilon
+  );
+}
+
+function renderStartMenuScene() {
+  if (!menuScene || !menuCamera || isGameRuntimeReady || isAppExited) {
+    return;
+  }
+
+  renderer.clear(true, true, true);
+  renderer.render(menuScene, menuCamera);
+}
+
+function resizeStartMenuScene(width = window.innerWidth, height = window.innerHeight) {
+  if (!menuScene || !menuCamera || !menuGroup) {
+    return;
+  }
+
+  const pixelRatio = Math.min(window.devicePixelRatio, 2);
+  renderer.setPixelRatio(pixelRatio);
+  renderer.setSize(width, height, false);
+  menuCamera.aspect = width / height;
+  menuCamera.updateProjectionMatrix();
+
+  const visibleHeight = 2 * menuCamera.position.z * Math.tan(THREE.MathUtils.degToRad(menuCamera.fov / 2));
+  const visibleWidth = visibleHeight * menuCamera.aspect;
+  const targetWidth = Math.min(MENU_PLANE_WIDTH, visibleWidth * 1.42);
+  const targetHeight = Math.min(MENU_PLANE_HEIGHT, visibleHeight * 0.84);
+  const scale = Math.min(targetWidth / MENU_PLANE_WIDTH, targetHeight / MENU_PLANE_HEIGHT);
+  menuGroup.scale.setScalar(scale);
+  renderStartMenuScene();
+}
+
+function onStartMenuPointerMove(event) {
+  if (!isStartMenuOpen || !menuScene || !startMenu.contains(event.target)) {
+    return;
+  }
+
+  if (event.target instanceof Element && event.target.closest(".menu-dialog__surface")) {
+    return;
+  }
+
+  const rect = sceneCanvas.getBoundingClientRect();
+  const pointerX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  const pointerY = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
+  menuRotationTargetY = THREE.MathUtils.clamp(pointerX * 0.11, -0.12, 0.12);
+  menuRotationTargetX = THREE.MathUtils.clamp(-pointerY * 0.075, -0.085, 0.085);
+  menuStarsRotationTargetY = THREE.MathUtils.clamp(pointerX * 0.045, -0.05, 0.05);
+  menuStarsRotationTargetX = THREE.MathUtils.clamp(-pointerY * 0.032, -0.038, 0.038);
+  startMenuAnimationLoop();
+
+  const nextButton = getStartMenuButtonAt(event.clientX, event.clientY);
+  if (nextButton?.id !== menuActiveButton?.id) {
+    menuActiveButton = nextButton;
+    updateMenuPlaneTexture();
+  }
+}
+
+function clearStartMenuPointer() {
+  menuRotationTargetX = 0;
+  menuRotationTargetY = 0;
+  menuStarsRotationTargetX = 0;
+  menuStarsRotationTargetY = 0;
+  startMenuAnimationLoop();
+  if (menuActiveButton) {
+    menuActiveButton = null;
+    updateMenuPlaneTexture();
+  }
+}
+
+function onStartMenuClick(event) {
+  if (!isStartMenuOpen || !menuScene || !seedDialog.hidden || !loadDialog.hidden) {
+    return;
+  }
+
+  if (event.target instanceof Element && event.target.closest(".menu-dialog__surface")) {
+    return;
+  }
+
+  const button = getStartMenuButtonAt(event.clientX, event.clientY);
+  if (!button) {
+    return;
+  }
+
+  event.preventDefault();
+  if (button.id === "new") {
+    menuSeedInput.value = MENU_DEFAULT_SEED;
+    openMenuDialog(seedDialog, menuSeedInput);
+    return;
+  }
+  if (button.id === "load") {
+    openLoadGameDialog();
+    return;
+  }
+  if (button.id === "exit") {
+    exitNebulum();
+  }
+}
+
+function getStartMenuButtonAt(clientX, clientY) {
+  const hit = getStartMenuPlaneHit(clientX, clientY);
+  if (!hit) {
+    return null;
+  }
+
+  return menuButtonRects.find((button) => (
+    hit.x >= button.x &&
+    hit.x <= button.x + button.width &&
+    hit.y >= button.y &&
+    hit.y <= button.y + button.height
+  )) ?? null;
+}
+
+function getStartMenuPlaneHit(clientX, clientY) {
+  if (!menuPlane || !menuCamera) {
+    return null;
+  }
+
+  const rect = sceneCanvas.getBoundingClientRect();
+  menuPointer.set(
+    ((clientX - rect.left) / rect.width) * 2 - 1,
+    -(((clientY - rect.top) / rect.height) * 2 - 1),
+  );
+  menuRaycaster.setFromCamera(menuPointer, menuCamera);
+  const hit = menuRaycaster.intersectObject(menuPlane, false)[0];
+  if (!hit?.uv) {
+    return null;
+  }
+
+  return {
+    x: hit.uv.x * MENU_TEXTURE_WIDTH,
+    y: (1 - hit.uv.y) * MENU_TEXTURE_HEIGHT,
+  };
+}
+
+function setMenuStatus(status) {
+  menuStatus.textContent = status;
+  updateMenuPlaneTexture();
+}
+
+function disposeStartMenuScene() {
+  stopMenuAnimationLoop();
+  document.body.classList.remove("menu-scene-active");
+  menuActiveButton = null;
+  menuButtonRects = [];
+
+  if (menuSky) {
+    menuSky.geometry.dispose();
+    menuSky.material.dispose();
+    menuSky = null;
+  }
+  if (menuPlane) {
+    menuPlane.geometry.dispose();
+    menuPlane.material.map?.dispose();
+    menuPlane.material.dispose();
+    menuPlane = null;
+  }
+  if (menuStars) {
+    menuStars.geometry.dispose();
+    menuStars.material.dispose();
+    menuStars = null;
+  }
+  if (menuStarLinks) {
+    for (const pilot of menuStarPilots) {
+      for (const segment of pilot.segments) {
+        disposeStartMenuStarLink(segment);
+      }
+      if (pilot.glow) {
+        menuStarLinks.remove(pilot.glow);
+        pilot.glow.material.dispose();
+      }
+    }
+    menuStarLinks.clear();
+    menuStarLinks = null;
+  }
+  menuStarGlowTexture?.dispose();
+  menuStarGlowTexture = null;
+  menuStarPoints = [];
+  menuStarTrailIndices = [];
+  menuStarPilots = [];
+  menuScene?.clear();
+  menuScene = null;
+  menuCamera = null;
+  menuGroup = null;
+  menuPlaneTexture = null;
+  menuPlaneCanvas = null;
+  menuPlaneContext = null;
+}
+
+function openMenuDialog(dialog, focusTarget = null) {
+  menuActiveButton = null;
+  updateMenuPlaneTexture();
+  closeMenuDialogs();
+  dialog.hidden = false;
+  window.requestAnimationFrame(() => {
+    focusTarget?.focus();
+    focusTarget?.select?.();
+  });
+}
+
+function closeMenuDialogs() {
+  seedDialog.hidden = true;
+  loadDialog.hidden = true;
+}
+
+function confirmNewGameSeed() {
+  const nextSeed = menuSeedInput.value.trim() || MENU_DEFAULT_SEED;
+  if (nextSeed === SEED) {
+    seedInput.value = nextSeed;
+    startGameFromMenu();
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.set("seed", nextSeed);
+  url.searchParams.delete("multiplier");
+  rememberStartAfterSeed(nextSeed);
+  window.location.href = url.toString();
+}
+
+function rememberStartAfterSeed(seed) {
+  try {
+    sessionStorage.setItem(START_AFTER_SEED_STORAGE_KEY, seed);
+  } catch {}
+}
+
+function consumeStartAfterSeedFlag() {
+  try {
+    const pendingSeed = sessionStorage.getItem(START_AFTER_SEED_STORAGE_KEY);
+    sessionStorage.removeItem(START_AFTER_SEED_STORAGE_KEY);
+    return pendingSeed === SEED;
+  } catch {
+    return false;
+  }
+}
+
+function startGameFromMenu() {
+  if (!isStartMenuOpen) {
+    return;
+  }
+
+  closeMenuDialogs();
+  setMenuStatus("STARTING");
+  stopMenuAnimationLoop();
+  isStartMenuOpen = false;
+  document.body.classList.remove("start-menu-open");
+  startMenu.classList.add("start-menu--hidden");
+  startMenu.setAttribute("aria-hidden", "true");
+  initializeNebulumRuntime();
+  lastFrameTime = performance.now();
+  renderStarmapFrame();
+  startAnimationLoop();
+}
+
+function openLoadGameDialog() {
+  renderLoadGameDialog();
+  openMenuDialog(loadDialog);
+}
+
+function renderLoadGameDialog() {
+  const saves = readMenuSaves();
+  selectedMenuSaveIndex = -1;
+  menuSaveList.replaceChildren();
+
+  if (saves.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "menu-save-list__empty";
+    empty.textContent = "NO SAVES";
+    menuSaveList.append(empty);
+    updateMenuSaveActions();
+    return;
+  }
+
+  saves.forEach((save, index) => {
+    const button = document.createElement("button");
+    button.className = "menu-save-list__item";
+    button.type = "button";
+    button.role = "option";
+    button.textContent = save.name || save.seed || `SAVE ${index + 1}`;
+    button.addEventListener("click", () => {
+      selectedMenuSaveIndex = index;
+      updateMenuSaveSelection();
+    });
+    menuSaveList.append(button);
+  });
+  updateMenuSaveActions();
+}
+
+function updateMenuSaveSelection() {
+  const items = menuSaveList.querySelectorAll(".menu-save-list__item");
+  items.forEach((item, index) => {
+    item.classList.toggle("selected", index === selectedMenuSaveIndex);
+    item.setAttribute("aria-selected", String(index === selectedMenuSaveIndex));
+  });
+  updateMenuSaveActions();
+}
+
+function updateMenuSaveActions() {
+  const hasSelection = selectedMenuSaveIndex >= 0;
+  menuLoadSave.disabled = !hasSelection;
+  menuDeleteSave.disabled = !hasSelection;
+}
+
+function readMenuSaves() {
+  try {
+    const saves = JSON.parse(localStorage.getItem("nebulum:saves") || "[]");
+    return Array.isArray(saves) ? saves : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeMenuSaves(saves) {
+  localStorage.setItem("nebulum:saves", JSON.stringify(saves));
+}
+
+function loadSelectedMenuSave() {
+  const save = readMenuSaves()[selectedMenuSaveIndex];
+  if (!save?.seed) {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.set("seed", save.seed);
+  url.searchParams.delete("multiplier");
+  window.location.href = url.toString();
+}
+
+function deleteSelectedMenuSave() {
+  const saves = readMenuSaves();
+  if (selectedMenuSaveIndex < 0 || selectedMenuSaveIndex >= saves.length) {
+    return;
+  }
+
+  saves.splice(selectedMenuSaveIndex, 1);
+  writeMenuSaves(saves);
+  renderLoadGameDialog();
+}
+
+async function exitNebulum() {
+  if (isAppExited) {
+    return;
+  }
+
+  isAppExited = true;
+  isStartMenuOpen = true;
+  stopAnimationLoop();
+  closeMenuDialogs();
+  startMenu.classList.remove("start-menu--hidden");
+  startMenu.classList.add("start-menu--shutdown");
+  startMenu.setAttribute("aria-hidden", "false");
+  document.body.classList.add("start-menu-open");
+  setMenuStatus("CLOSING");
+
+  disposeNebulumRuntime();
+  await clearTextureRuntimeCache();
+
+  menuStatus.textContent = "PROCESS CLOSED";
+  window.setTimeout(() => {
+    window.close();
+  }, 0);
+}
 
 function initPanel() {
   seedInput.value = SEED;
@@ -872,13 +1862,16 @@ function buildSky(random) {
   graphRoot.add(pixelStars);
 }
 
-function createSkyGradientMaterial(random) {
-  const activeSkyColors = getActiveSkyGradientColors();
+function createSkyGradientMaterial(
+  random,
+  activeSkyColors = getActiveSkyGradientColors(),
+  skyAnchors = createSkyAnchorUniforms(random),
+) {
   const material = new THREE.ShaderMaterial({
     uniforms: {
       skyColors: { value: createSkyColorUniforms(activeSkyColors) },
       skyColorCount: { value: activeSkyColors.length },
-      skyAnchors: { value: createSkyAnchorUniforms(random) },
+      skyAnchors: { value: skyAnchors },
     },
     vertexShader: `
       varying vec3 vDirection;
@@ -949,6 +1942,19 @@ function createSkyAnchorUniforms(random) {
     const radius = Math.sqrt(Math.max(0, 1 - z * z));
     return new THREE.Vector3(Math.cos(theta) * radius, z, Math.sin(theta) * radius);
   });
+}
+
+function createMenuSkyAnchorUniforms() {
+  return [
+    new THREE.Vector3(-0.82, 0.62, -1),
+    new THREE.Vector3(-0.58, 0.88, -1),
+    new THREE.Vector3(-0.05, 0.05, -1),
+    new THREE.Vector3(0.18, -0.16, -1),
+    new THREE.Vector3(0.82, -0.62, -1),
+    new THREE.Vector3(0.58, -0.88, -1),
+    new THREE.Vector3(0.72, 0.48, -1),
+    new THREE.Vector3(-0.72, -0.48, -1),
+  ].map((anchor) => anchor.normalize());
 }
 
 function updateSkyTexture() {
@@ -1457,7 +2463,9 @@ function createSystemGlowLayer() {
     blending: THREE.AdditiveBlending,
   });
   glowMaterial.toneMapped = false;
-  glowScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), glowMaterial));
+  const glowGeometry = new THREE.PlaneGeometry(2, 2);
+  const glowQuad = new THREE.Mesh(glowGeometry, glowMaterial);
+  glowScene.add(glowQuad);
 
   return {
     renderer: glowRenderer,
@@ -1478,11 +2486,25 @@ function createSystemGlowLayer() {
       glowMaterial.uniforms.intensity.value = intensity;
       glowRenderer.render(glowScene, glowCamera);
     },
+    dispose() {
+      glowGeometry.dispose();
+      glowMaterial.dispose();
+      glowScene.remove(glowQuad);
+      glowRenderer.dispose();
+      glowRenderer.forceContextLoss();
+    },
   };
 }
 
 function onPointerDown(event) {
-  if (event.button !== 0 || systemScreenController.isOpen() || systemScreenController.isGraphEntering()) {
+  if (
+    isAppExited ||
+    isStartMenuOpen ||
+    !isGameRuntimeReady ||
+    event.button !== 0 ||
+    systemScreenController.isOpen() ||
+    systemScreenController.isGraphEntering()
+  ) {
     return;
   }
 
@@ -1515,6 +2537,10 @@ function onPointerUp(event) {
 }
 
 function releaseStaleGraphCapture(event) {
+  if (!isGameRuntimeReady) {
+    return;
+  }
+
   if (event.target === sceneCanvas) {
     return;
   }
@@ -1539,6 +2565,19 @@ function cancelGraphDrag(event) {
 }
 
 function onPointerMove(event) {
+  if (isAppExited) {
+    return;
+  }
+
+  if (isStartMenuOpen) {
+    lastClientPointer.set(event.clientX, event.clientY);
+    return;
+  }
+
+  if (!isGameRuntimeReady) {
+    return;
+  }
+
   if (isDragging && event.buttons !== undefined && (event.buttons & 1) === 0) {
     cancelGraphDrag(event);
   }
@@ -1579,7 +2618,7 @@ function forceCloseViewOverlays() {
 }
 
 function onWheel(event) {
-  if (systemScreenController.isOpen()) {
+  if (isAppExited || isStartMenuOpen || !isGameRuntimeReady || systemScreenController.isOpen()) {
     return;
   }
 
@@ -2039,6 +3078,95 @@ function closeStarWindow() {
   systemStarLayer.replaceChildren();
   systemParticles.replaceChildren();
   pointer.set(10, 10);
+}
+
+function disposeNebulumRuntime() {
+  disposeStartMenuScene();
+  if (!isGameRuntimeReady) {
+    renderer.dispose();
+    renderer.forceContextLoss();
+    sceneCanvas.width = 1;
+    sceneCanvas.height = 1;
+    return;
+  }
+
+  cancelGraphDrag();
+  cancelPlanetEntryTransition();
+  closeStarWindow();
+  planetScreenController.close();
+  closeObjectDetailScreen({ preserveTransitionOverlay: true });
+  closePlanetWindow();
+  planetScreenRenderer?.dispose3D();
+  planetScreenRenderer = null;
+  planetScreenRendererPromise = null;
+  disposeObjectDetail3D();
+  musicPlayerController.stop();
+
+  starLabels.replaceChildren();
+  systemStars.replaceChildren();
+  starSystem.replaceChildren();
+  systemStarLayer.replaceChildren();
+  systemParticles.replaceChildren();
+  labelElements.length = 0;
+  nodeMeshes.length = 0;
+  hitTargets.length = 0;
+
+  disposeThreeObjectTree(scene);
+  disposeThreeObjectTree(selectionOverlay.scene);
+  scene.clear();
+  selectionOverlay.scene.clear();
+  systemGlowLayer.dispose();
+  renderer.dispose();
+  renderer.forceContextLoss();
+  glowTexture?.dispose();
+  linkPulseTexture?.dispose();
+  blackHoleDiskTexture?.dispose();
+  blackHoleDiskMaterial?.dispose();
+  sceneCanvas.width = 1;
+  sceneCanvas.height = 1;
+  systemGlow.width = 1;
+  systemGlow.height = 1;
+  isGameRuntimeReady = false;
+}
+
+function disposeThreeObjectTree(root) {
+  const geometries = new Set();
+  const materials = new Set();
+  const textures = new Set();
+
+  root.traverse((object) => {
+    if (object.geometry && !geometries.has(object.geometry)) {
+      geometries.add(object.geometry);
+      object.geometry.dispose();
+    }
+    disposeThreeMaterial(object.material, materials, textures);
+  });
+}
+
+function disposeThreeMaterial(material, materials, textures) {
+  if (!material) {
+    return;
+  }
+
+  if (Array.isArray(material)) {
+    for (const item of material) {
+      disposeThreeMaterial(item, materials, textures);
+    }
+    return;
+  }
+
+  if (materials.has(material)) {
+    return;
+  }
+
+  materials.add(material);
+  for (const value of Object.values(material)) {
+    if (value?.isTexture && !textures.has(value)) {
+      textures.add(value);
+      value.dispose();
+    }
+  }
+  material.dispose();
 }
 
 function cancelPlanetEntryTransition() {
@@ -3867,7 +4995,7 @@ function renderSystemParticles(node) {
 }
 
 function updateSystemParallax(clientX, clientY, force = false) {
-  if (!systemScreenController.isOpen()) {
+  if (!isGameRuntimeReady || !systemScreenController?.isOpen()) {
     return;
   }
 
@@ -6677,13 +7805,22 @@ function positionHoverElements(clientX, clientY, nameElement, panelElement, vert
 }
 
 function resize() {
+  if (isAppExited) {
+    return;
+  }
+
   const width = window.innerWidth;
   const height = window.innerHeight;
+  if (!isGameRuntimeReady) {
+    resizeStartMenuScene(width, height);
+    return;
+  }
+
   const pixelRatio = Math.min(window.devicePixelRatio, 2);
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
   renderer.setSize(width, height, false);
-  systemGlowLayer.resize(width, height);
+  systemGlowLayer?.resize(width, height);
   const didResizePlanetScreen = planetScreenController.resize();
   if (
     !didResizePlanetScreen &&
@@ -6707,10 +7844,53 @@ function resize() {
   resizeObjectDetail3D();
   renderObjectDetail3D();
   musicPlayerController.updateScrollbar();
+  if (isStartMenuOpen && !systemScreenController.isOpen()) {
+    renderStarmapFrame();
+  }
+}
+
+function startAnimationLoop() {
+  if (isAppExited || isStartMenuOpen || !isGameRuntimeReady || animationFrameId !== null) {
+    return;
+  }
+
+  lastFrameTime = performance.now();
+  animationFrameId = requestAnimationFrame(animate);
+}
+
+function stopAnimationLoop() {
+  if (animationFrameId === null) {
+    return;
+  }
+
+  cancelAnimationFrame(animationFrameId);
+  animationFrameId = null;
+}
+
+function renderStarmapFrame() {
+  if (isAppExited || !isGameRuntimeReady || systemScreenController.isOpen()) {
+    return;
+  }
+
+  renderer.clear(true, true, true);
+  renderer.render(scene, camera);
+  renderer.clearDepth();
+
+  if (hasSelectionOverlayActivity()) {
+    for (const [color, group] of getSelectionGroups()) {
+      updateSelectionOverlay(color, group.nodes, group.edges, group.fadingEdges);
+      renderer.render(selectionOverlay.scene, selectionOverlay.camera);
+    }
+  }
 }
 
 function animate() {
-  requestAnimationFrame(animate);
+  animationFrameId = null;
+  if (isAppExited || isStartMenuOpen || !isGameRuntimeReady) {
+    return;
+  }
+
+  animationFrameId = requestAnimationFrame(animate);
   const now = performance.now();
   const deltaSeconds = Math.min(0.05, (now - lastFrameTime) / 1000);
   lastFrameTime = now;
@@ -6753,16 +7933,5 @@ function animate() {
     updatePlanetLink();
   }
 
-  if (!systemScreenController.isOpen()) {
-    renderer.clear(true, true, true);
-    renderer.render(scene, camera);
-    renderer.clearDepth();
-
-    if (hasSelectionOverlayActivity()) {
-      for (const [color, group] of getSelectionGroups()) {
-        updateSelectionOverlay(color, group.nodes, group.edges, group.fadingEdges);
-        renderer.render(selectionOverlay.scene, selectionOverlay.camera);
-      }
-    }
-  }
+  renderStarmapFrame();
 }

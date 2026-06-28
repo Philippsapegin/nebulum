@@ -4,6 +4,7 @@ const CANVAS_CSS_URL_CACHE_NAME = "nebulum-generated-textures-v1";
 const MAX_IDLE_CANVAS_TEXTURES = 48;
 const cssUrlsByCanvas = new WeakMap();
 const cssUrlsByKey = new Map();
+const cssUrlEntries = new Set();
 const textureEntriesByCanvas = new WeakMap();
 const textureEntries = new Set();
 
@@ -34,6 +35,7 @@ export function createCanvasCssUrl(canvas, cacheKey = null) {
   };
 
   cssUrlsByCanvas.set(canvas, entry);
+  cssUrlEntries.add(entry);
   if (cacheKey) {
     cssUrlsByKey.set(cacheKey, entry);
     persistCanvasBlob(cacheKey, blob);
@@ -95,6 +97,28 @@ export function releaseCanvasTexture(entry) {
 
 export function getRetainedCanvasTexture(entry) {
   return entry?.texture ?? null;
+}
+
+export async function clearTextureRuntimeCache() {
+  for (const entry of Array.from(textureEntries)) {
+    disposeCanvasTextureEntry(entry);
+  }
+
+  for (const entry of cssUrlEntries) {
+    URL.revokeObjectURL(entry.objectUrl);
+  }
+  cssUrlEntries.clear();
+  cssUrlsByKey.clear();
+
+  if (!("caches" in window)) {
+    return false;
+  }
+
+  try {
+    return await window.caches.delete(CANVAS_CSS_URL_CACHE_NAME);
+  } catch {
+    return false;
+  }
 }
 
 function configureCanvasTexture(texture, renderer, options) {
