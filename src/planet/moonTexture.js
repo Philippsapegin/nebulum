@@ -2,6 +2,7 @@ import { MOON_PALETTES } from "../moonPalettes.js";
 import { createPlanetTexture } from "./planetTexture.js";
 import { hexToRgb, hslToRgb, rgbToHex, rgbToHsl } from "../utils/color.js";
 import { createRandom } from "../utils/random.js";
+import { createCanvasCssUrl } from "../utils/textureCache.js";
 
 export const MOON_WINDOW_TEXTURE_HEIGHT = 256;
 
@@ -57,7 +58,7 @@ export function createMoonTexture(seed, textureHeight = MOON_WINDOW_TEXTURE_HEIG
   renderMoonCanvas(canvas, field, stops);
 
   const texture = {
-    url: `url(${canvas.toDataURL("image/png")})`,
+    url: createCanvasCssUrl(canvas, `${cacheKey}:surface`),
     canvas,
     width,
     height,

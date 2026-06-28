@@ -3,6 +3,7 @@ import { MOLTEN_PALETTES } from "../moltenPalettes.js";
 import { PLANET_PALETTES } from "../planetPalettes.js";
 import { hexToRgb, hslToRgb, rgbToHex, rgbToHsl } from "../utils/color.js";
 import { createRandom } from "../utils/random.js";
+import { createCanvasCssUrl } from "../utils/textureCache.js";
 
 export const PLANET_SYSTEM_TEXTURE_HEIGHT = 32;
 export const PLANET_WINDOW_TEXTURE_HEIGHT = 1024;
@@ -115,8 +116,10 @@ export function createPlanetTexture(seed, textureHeight = PLANET_SYSTEM_TEXTURE_
   }
 
   const texture = {
-    url: createUrls ? `url(${surfaceCanvas.toDataURL("image/png")})` : null,
-    cloudUrl: createUrls && cloudCanvas ? `url(${cloudCanvas.toDataURL("image/png")})` : null,
+    url: createUrls ? createCanvasCssUrl(surfaceCanvas, `${cacheKey}:surface`) : null,
+    cloudUrl: createUrls && cloudCanvas
+      ? createCanvasCssUrl(cloudCanvas, `${cacheKey}:clouds`)
+      : null,
     canvas: surfaceCanvas,
     cloudCanvas,
     specularCanvas,

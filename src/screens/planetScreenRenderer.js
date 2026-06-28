@@ -4,6 +4,12 @@ import { createMoonTexture } from "../planet/moonTexture.js";
 import { PLANET_WINDOW_TEXTURE_HEIGHT, createPlanetTexture } from "../planet/planetTexture.js";
 import { createPlanetRotationState, getPlanetRotationPhase } from "../planet/rotation.js";
 import { createRandom } from "../utils/random.js";
+import {
+  createCanvasCssUrl,
+  getRetainedCanvasTexture,
+  releaseCanvasTexture,
+  retainCanvasTexture,
+} from "../utils/textureCache.js";
 
 const PLANET_SCREEN_DISK_INNER_RADIUS_SCALE = 1.62;
 const PLANET_SCREEN_DISK_THICKNESS_SCALE = 1.22;
@@ -319,7 +325,7 @@ function createMoonSilhouetteShape(seed, textureCanvas, strength = 1) {
   const shape = {
     boundary: smoothedBoundary,
     clipPath,
-    maskUrl: `url(${canvas.toDataURL("image/png")})`,
+    maskUrl: createCanvasCssUrl(canvas, `${cacheKey}:mask`),
   };
   moonSilhouetteMaskCache.set(cacheKey, shape);
   return shape;
@@ -461,7 +467,7 @@ function createMoonBloomTexture(seed, emissiveCanvas, shape, options = {}) {
   bloomContext.filter = "none";
 
   const bloom = {
-    url: `url(${bloomCanvas.toDataURL("image/png")})`,
+    url: createCanvasCssUrl(bloomCanvas, `${cacheKey}:bloom`),
     insetPercent: (padding / baseSize) * 100,
   };
   moonBloomTextureCache.set(cacheKey, bloom);
@@ -495,7 +501,7 @@ function createMoonBloomNoiseMask(seed) {
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = "high";
   context.drawImage(sourceCanvas, 0, 0, canvas.width, canvas.height);
-  const url = `url(${canvas.toDataURL("image/png")})`;
+  const url = createCanvasCssUrl(canvas, `${seed}:moon-bloom-noise-mask`);
   moonBloomNoiseMaskCache.set(seed, url);
   return url;
 }
@@ -532,7 +538,7 @@ function createMaskedMoonTextureUrl(seed, textureCanvas, shape, cacheTag = "text
   context.fill();
   context.globalCompositeOperation = "source-over";
 
-  const url = `url(${canvas.toDataURL("image/png")})`;
+  const url = createCanvasCssUrl(canvas, `${cacheKey}:masked-texture`);
   moonMaskedTextureCache.set(cacheKey, url);
   return url;
 }
@@ -591,7 +597,7 @@ function createMoonHighlightMaskTexture(seed, textureCanvas, shape) {
   maskContext.putImageData(mask, 0, 0);
   clipCanvasToMoonShape(maskContext, size, shape);
 
-  const url = `url(${maskCanvas.toDataURL("image/png")})`;
+  const url = createCanvasCssUrl(maskCanvas, `${cacheKey}:highlight-mask`);
   moonHighlightMaskCache.set(cacheKey, url);
   return url;
 }
@@ -676,8 +682,8 @@ function createMoonLavaReliefTextures(seed, emissiveCanvas, shape) {
   clipCanvasToMoonShape(blurredContext, size, shape);
 
   const textures = {
-    inverseMaskUrl: `url(${maskCanvas.toDataURL("image/png")})`,
-    reliefUrl: `url(${blurredCanvas.toDataURL("image/png")})`,
+    inverseMaskUrl: createCanvasCssUrl(maskCanvas, `${cacheKey}:inverse-mask`),
+    reliefUrl: createCanvasCssUrl(blurredCanvas, `${cacheKey}:relief`),
   };
   moonLavaReliefTextureCache.set(cacheKey, textures);
   return textures;
@@ -730,7 +736,7 @@ function getPlanetScreenTextureUrl(texture) {
   }
 
   return texture?.canvas
-    ? `url(${texture.canvas.toDataURL("image/png")})`
+    ? createCanvasCssUrl(texture.canvas)
     : null;
 }
 
@@ -1004,28 +1010,28 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
   camera3D.lookAt(renderWidth / 2, renderHeight / 2, 0);
 
   const sourceCanvas = texture?.canvas ?? createFallbackPlanetTextureCanvas(planet.background);
-  const map = new THREE.CanvasTexture(sourceCanvas);
-  map.colorSpace = THREE.SRGBColorSpace;
-  map.wrapS = THREE.RepeatWrapping;
-  map.wrapT = THREE.ClampToEdgeWrapping;
-  map.anisotropy = Math.min(8, renderer3D.capabilities.getMaxAnisotropy());
-  map.needsUpdate = true;
+  const mapRef = retainPlanetScreenCanvasTexture(sourceCanvas, renderer3D, true, Boolean(texture?.canvas));
+  const map = getRetainedCanvasTexture(mapRef);
   const isPlanetTexture = planet.kind === "PLANET" && Boolean(texture?.canvas);
   const isGasGiantTexture = planet.kind === "GAS GIANT" && Boolean(texture?.canvas);
-  const bumpMap = texture?.bumpCanvas && isPlanetTexture
-    ? createPlanetScreenCanvasTexture(texture.bumpCanvas, renderer3D, false)
+  const bumpMapRef = texture?.bumpCanvas && isPlanetTexture
+    ? retainPlanetScreenCanvasTexture(texture.bumpCanvas, renderer3D, false)
     : null;
-  const specularMap = texture?.specularCanvas && isPlanetTexture
-    ? createPlanetScreenCanvasTexture(texture.specularCanvas, renderer3D, false)
+  const bumpMap = getRetainedCanvasTexture(bumpMapRef);
+  const specularMapRef = texture?.specularCanvas && isPlanetTexture
+    ? retainPlanetScreenCanvasTexture(texture.specularCanvas, renderer3D, false)
     : null;
-  const emissiveMap = texture?.emissiveCanvas && isPlanetTexture
-    ? createPlanetScreenCanvasTexture(texture.emissiveCanvas, renderer3D, true)
+  const specularMap = getRetainedCanvasTexture(specularMapRef);
+  const emissiveMapRef = texture?.emissiveCanvas && isPlanetTexture
+    ? retainPlanetScreenCanvasTexture(texture.emissiveCanvas, renderer3D, true)
     : null;
-  const cloudMap = texture?.cloudCanvas && isPlanetTexture
-    ? createPlanetScreenCanvasTexture(texture.cloudCanvas, renderer3D, true)
+  const emissiveMap = getRetainedCanvasTexture(emissiveMapRef);
+  const cloudMapRef = texture?.cloudCanvas && isPlanetTexture
+    ? retainPlanetScreenCanvasTexture(texture.cloudCanvas, renderer3D, true)
     : texture?.cloudCanvas && isGasGiantTexture
-      ? createPlanetScreenCanvasTexture(texture.cloudCanvas, renderer3D, true)
+      ? retainPlanetScreenCanvasTexture(texture.cloudCanvas, renderer3D, true)
     : null;
+  const cloudMap = getRetainedCanvasTexture(cloudMapRef);
   const rotation = createPlanetRotationState({
     seed: SEED,
     systemId: planet.systemId,
@@ -1420,13 +1426,18 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
     camera: camera3D,
     mesh,
     texture: map,
+    textureRef: mapRef,
     textureRotation: rotation,
     manualTextureOffset,
     isTidallyLocked: planet.tidallyLocked,
     bumpTexture: bumpMap,
+    bumpTextureRef: bumpMapRef,
     specularTexture: specularMap,
+    specularTextureRef: specularMapRef,
     emissiveTexture: emissiveMap,
+    emissiveTextureRef: emissiveMapRef,
     cloudTexture: cloudMap,
+    cloudTextureRef: cloudMapRef,
     cloudTextureRotation: cloudRotation,
     cloudSpeedMultiplier,
     cloudMesh,
@@ -1456,14 +1467,13 @@ function getPlanetScreenManualTextureOffset(isTidallyLocked) {
   return isTidallyLocked ? PLANET_SCREEN_TIDAL_LOCKED_TEXTURE_OFFSET : 0;
 }
 
-function createPlanetScreenCanvasTexture(canvas, renderer3D, srgb = true) {
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.ClampToEdgeWrapping;
-  texture.anisotropy = Math.min(8, renderer3D.capabilities.getMaxAnisotropy());
-  texture.needsUpdate = true;
-  return texture;
+function retainPlanetScreenCanvasTexture(canvas, renderer3D, srgb = true, keepIdle = true) {
+  return retainCanvasTexture(canvas, renderer3D, {
+    keepIdle,
+    srgb,
+    wrapS: THREE.RepeatWrapping,
+    wrapT: THREE.ClampToEdgeWrapping,
+  });
 }
 
 function createPlanetScreenEmissiveBloomMaterial({ emissiveMap, offset }) {
@@ -2093,11 +2103,11 @@ function disposePlanetScreen3D() {
     return;
   }
 
-  activePlanetScreen3D.texture.dispose();
-  activePlanetScreen3D.bumpTexture?.dispose();
-  activePlanetScreen3D.specularTexture?.dispose();
-  activePlanetScreen3D.emissiveTexture?.dispose();
-  activePlanetScreen3D.cloudTexture?.dispose();
+  releaseCanvasTexture(activePlanetScreen3D.textureRef);
+  releaseCanvasTexture(activePlanetScreen3D.bumpTextureRef);
+  releaseCanvasTexture(activePlanetScreen3D.specularTextureRef);
+  releaseCanvasTexture(activePlanetScreen3D.emissiveTextureRef);
+  releaseCanvasTexture(activePlanetScreen3D.cloudTextureRef);
   activePlanetScreen3D.geometry.dispose();
   activePlanetScreen3D.material.dispose();
   activePlanetScreen3D.cloudGeometry?.dispose();

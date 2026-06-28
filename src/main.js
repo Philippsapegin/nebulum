@@ -24,7 +24,7 @@ import {
 import { createPlanetNameService } from "./planet/names.js";
 import { GAS_GIANT_WINDOW_TEXTURE_HEIGHT, createGasGiantTexture } from "./planet/gasGiantTexture.js";
 import { createPlanetTexture } from "./planet/planetTexture.js";
-import { createPlanetRotationState, getPlanetRotationPhase } from "./planet/rotation.js";
+import { createPlanetRotationState } from "./planet/rotation.js";
 import { createPlanetScreenController } from "./screens/planetScreen.js";
 import { createSystemScreenController } from "./screens/systemScreen.js";
 import { openColorPicker } from "./ui/colorPicker.js";
@@ -32,6 +32,11 @@ import { createMusicPlayer } from "./ui/musicPlayer.js";
 import { hexToRgba, lightenHexColor } from "./utils/color.js";
 import { easeOutCubic, smoothstep } from "./utils/math.js";
 import { createRandom } from "./utils/random.js";
+import {
+  getRetainedCanvasTexture,
+  releaseCanvasTexture,
+  retainCanvasTexture,
+} from "./utils/textureCache.js";
 
 const params = new URLSearchParams(window.location.search);
 const SEED = params.get("seed") || "nebulum";
@@ -173,6 +178,8 @@ const nodeMeshes = [];
 const labelElements = [];
 const hitTargets = [];
 const raycaster = new THREE.Raycaster();
+const screenHitProjection = new THREE.Vector3();
+const starLabelProjection = new THREE.Vector3();
 const pointer = new THREE.Vector2(10, 10);
 const lastClientPointer = new THREE.Vector2(window.innerWidth / 2, window.innerHeight / 2);
 const rotationVelocity = new THREE.Vector2(0, 0);
@@ -225,6 +232,7 @@ const OBJECT_DETAIL_CURSOR_LIGHT_PENUMBRA = 0.62;
 const OBJECT_DETAIL_CURSOR_LIGHT_FADE_IN_SPEED = 1.8;
 const OBJECT_DETAIL_CURSOR_LIGHT_FADE_OUT_SPEED = 7.5;
 const OBJECT_DETAIL_OPTION_FADE_SPEED = 3.2;
+const OBJECT_DETAIL_RENDER_EPSILON = 0.0005;
 const OBJECT_DETAIL_LIGHT_MAX_CHANNEL = 1.08;
 const OBJECT_DETAIL_CURSOR_LIGHT_MIN_PROXIMITY = 0.16;
 const OBJECT_DETAIL_TINT_LIGHT_INTENSITY = 0.34;
@@ -264,6 +272,7 @@ let objectDetailOrbitPlanet = null;
 let isObjectDetailOpen = false;
 let objectDetailToken = 0;
 let objectDetail3D = null;
+let objectDetailDayMarkers = [];
 const objectDetailOptions = {
   light: true,
   clouds: true,
@@ -289,6 +298,30 @@ const edgeExitAnimations = new Map();
 const selectionOverlay = createSelectionOverlay();
 const selectionScreenSize = new THREE.Vector2();
 const systemGlowLayer = createSystemGlowLayer();
+const lastSystemParallax = {
+  clientX: NaN,
+  clientY: NaN,
+  systemOffsetX: NaN,
+  systemOffsetY: NaN,
+};
+const lastSystemGlow = {
+  centerX: NaN,
+  centerY: NaN,
+  radius: NaN,
+  color: "",
+  intensity: NaN,
+};
+const selectionProjectionScratch = {
+  vector: new THREE.Vector3(),
+  startWorld: new THREE.Vector3(),
+  endWorld: new THREE.Vector3(),
+  startCamera: new THREE.Vector3(),
+  endCamera: new THREE.Vector3(),
+  clipped: new THREE.Vector3(),
+  projected: new THREE.Vector4(),
+  startScreen: new THREE.Vector2(),
+  endScreen: new THREE.Vector2(),
+};
 let planetScreenRenderer = null;
 let planetScreenRendererPromise = null;
 const systemScreenController = createSystemScreenController({ root: starWindow });
@@ -401,10 +434,7 @@ function initPanel() {
     closeObjectDetailScreen();
     closeStarWindow();
   });
-  objectDetailBackSystem.addEventListener("click", () => {
-    closeObjectDetailScreen();
-    returnToStarSystemFromPlanet();
-  });
+  objectDetailBackSystem.addEventListener("click", returnToStarSystemFromObjectDetail);
   objectDetailBackStarmap.addEventListener("click", () => {
     closeObjectDetailScreen();
     planetScreenController.close();
@@ -1474,7 +1504,10 @@ function onPointerUp(event) {
     return;
   }
 
-  const clickDistance = pointerDownPosition.distanceTo(new THREE.Vector2(event.clientX, event.clientY));
+  const clickDistance = Math.hypot(
+    event.clientX - pointerDownPosition.x,
+    event.clientY - pointerDownPosition.y,
+  );
   cancelGraphDrag(event);
   if (clickDistance < 5) {
     selectNodeAt(event.clientX, event.clientY);
@@ -1560,7 +1593,6 @@ function onWheel(event) {
 }
 
 function updateHover() {
-  raycaster.setFromCamera(pointer, camera);
   const nextHover = getNodeHit()?.userData.visual ?? null;
 
   if (hoveredNode === nextHover) {
@@ -2105,6 +2137,7 @@ async function openObjectDetailFromPlanetView(detail, clientX = window.innerWidt
   closePlanetWindow();
   disposeObjectDetail3D();
   objectDetailTexture.replaceChildren();
+  objectDetailDayMarkers = [];
   objectDetailTexture.style.backgroundImage = "none";
 
   const origin = getObjectDetailEntryOrigin(detail, clientX, clientY);
@@ -2215,6 +2248,7 @@ function renderObjectDetailContent(detail) {
   const runtimeState = captureObjectDetailRuntimeState();
   disposeObjectDetail3D();
   objectDetailTexture.replaceChildren();
+  objectDetailDayMarkers = [];
   objectDetailTexture.style.backgroundImage = "none";
   if (runtimeState) {
     detail.objectDetailRuntimeState = runtimeState;
@@ -2268,6 +2302,7 @@ function renderObjectDetailFrame(detail) {
       </svg>
     `;
     markerLayer.append(marker);
+    objectDetailDayMarkers.push(marker);
   }
 
   const bottomLine = document.createElement("div");
@@ -2280,6 +2315,7 @@ function renderObjectDetailFrame(detail) {
 
   frame.append(topLine, markerLayer, bottomLine, title, info, controls);
   objectDetailTexture.append(frame);
+  updateObjectDetailObservedBounds();
   updateObjectDetailFrame();
 }
 
@@ -2423,8 +2459,7 @@ function updateObjectDetailObservedBounds() {
   return bounds;
 }
 
-function updateObjectDetailHoverBounds() {
-  const rect = objectDetailTexture.getBoundingClientRect();
+function updateObjectDetailHoverBounds(rect = objectDetailTexture.getBoundingClientRect()) {
   if (rect.width <= 0 || rect.height <= 0) {
     return null;
   }
@@ -2514,6 +2549,7 @@ function closeObjectDetailScreen({ preserveTransitionOverlay = false, keepSystem
   objectDetailScreen.classList.remove("visible");
   objectDetailScreen.setAttribute("aria-hidden", "true");
   objectDetailTexture.replaceChildren();
+  objectDetailDayMarkers = [];
   objectDetailTexture.style.backgroundImage = "none";
 }
 
@@ -2608,43 +2644,27 @@ function renderObjectDetailPlanetSurface(detail) {
   const ambientLight = new THREE.AmbientLight(0xffffff, OBJECT_DETAIL_AMBIENT_INTENSITY);
   scene3D.add(ambientLight);
 
-  const colorMap = new THREE.CanvasTexture(detail.textureCanvas);
-  colorMap.colorSpace = THREE.SRGBColorSpace;
-  colorMap.wrapS = THREE.RepeatWrapping;
-  colorMap.wrapT = THREE.ClampToEdgeWrapping;
-  colorMap.anisotropy = Math.min(8, renderer3D.capabilities.getMaxAnisotropy());
-  colorMap.needsUpdate = true;
+  const colorMapRef = retainObjectDetailCanvasTexture(detail.textureCanvas, renderer3D, true);
+  const colorMap = getRetainedCanvasTexture(colorMapRef);
 
-  const heightMap = detail.bumpCanvas
-    ? new THREE.CanvasTexture(detail.bumpCanvas)
+  const heightMapRef = detail.bumpCanvas
+    ? retainObjectDetailCanvasTexture(detail.bumpCanvas, renderer3D, false)
     : null;
-  if (heightMap) {
-    heightMap.colorSpace = THREE.NoColorSpace;
-    heightMap.wrapS = THREE.RepeatWrapping;
-    heightMap.wrapT = THREE.ClampToEdgeWrapping;
-    heightMap.needsUpdate = true;
-  }
+  const heightMap = getRetainedCanvasTexture(heightMapRef);
   const objectDetailEmissiveCanvas = getObjectDetailEmissiveCanvas(detail);
-  const emissiveMap = objectDetailEmissiveCanvas
-    ? new THREE.CanvasTexture(objectDetailEmissiveCanvas)
+  const emissiveMapRef = objectDetailEmissiveCanvas
+    ? retainObjectDetailCanvasTexture(
+      objectDetailEmissiveCanvas,
+      renderer3D,
+      true,
+      objectDetailEmissiveCanvas === detail.emissiveCanvas,
+    )
     : null;
-  if (emissiveMap) {
-    emissiveMap.colorSpace = THREE.SRGBColorSpace;
-    emissiveMap.wrapS = THREE.RepeatWrapping;
-    emissiveMap.wrapT = THREE.ClampToEdgeWrapping;
-    emissiveMap.anisotropy = Math.min(8, renderer3D.capabilities.getMaxAnisotropy());
-    emissiveMap.needsUpdate = true;
-  }
-  const cloudMap = detail.cloudCanvas
-    ? new THREE.CanvasTexture(detail.cloudCanvas)
+  const emissiveMap = getRetainedCanvasTexture(emissiveMapRef);
+  const cloudMapRef = detail.cloudCanvas
+    ? retainObjectDetailCanvasTexture(detail.cloudCanvas, renderer3D, true)
     : null;
-  if (cloudMap) {
-    cloudMap.colorSpace = THREE.SRGBColorSpace;
-    cloudMap.wrapS = THREE.RepeatWrapping;
-    cloudMap.wrapT = THREE.ClampToEdgeWrapping;
-    cloudMap.anisotropy = Math.min(8, renderer3D.capabilities.getMaxAnisotropy());
-    cloudMap.needsUpdate = true;
-  }
+  const cloudMap = getRetainedCanvasTexture(cloudMapRef);
 
   const hasDisplacement = Boolean(heightMap);
   const geometry = hasDisplacement
@@ -2774,11 +2794,15 @@ function renderObjectDetailPlanetSurface(detail) {
     geometry,
     material,
     colorMap,
+    colorMapRef,
     heightMap,
+    heightMapRef,
     emissiveMap,
+    emissiveMapRef,
     isGasGiant: detail.kind === "GAS GIANT",
     hexGrid,
     cloudMap,
+    cloudMapRef,
     cloudGeometry,
     cloudMaterial,
     cloudDepthMaterial,
@@ -2796,6 +2820,8 @@ function renderObjectDetailPlanetSurface(detail) {
     cloudMix: runtimeState.cloudMix ?? (objectDetailOptions.clouds ? 1 : 0),
     targetCloudMix: runtimeState.targetCloudMix ?? (objectDetailOptions.clouds ? 1 : 0),
     optionMixUpdatedAt: runtimeState.optionMixUpdatedAt ?? now,
+    optionMixApplied: false,
+    lightMotionApplied: false,
     cursor: {
       active: false,
       uv: new THREE.Vector2(0.5, 0.5),
@@ -2816,6 +2842,15 @@ function renderObjectDetailPlanetSurface(detail) {
   resizeObjectDetail3D();
   updateObjectDetailLightMotion(performance.now());
   renderObjectDetail3D();
+}
+
+function retainObjectDetailCanvasTexture(canvas, renderer3D, srgb = true, keepIdle = true) {
+  return retainCanvasTexture(canvas, renderer3D, {
+    keepIdle,
+    srgb,
+    wrapS: THREE.RepeatWrapping,
+    wrapT: THREE.ClampToEdgeWrapping,
+  });
 }
 
 function resizeObjectDetail3D() {
@@ -3083,7 +3118,7 @@ function updateObjectDetailCursorInteraction(event) {
   }
 
   const rect = objectDetailTexture.getBoundingClientRect();
-  const bounds = updateObjectDetailHoverBounds();
+  const bounds = updateObjectDetailHoverBounds(rect);
   if (rect.width <= 0 || rect.height <= 0 || !bounds) {
     return;
   }
@@ -3120,7 +3155,7 @@ function clearObjectDetailCursorInteraction() {
 
 function updateObjectDetailCursorLight(now = performance.now()) {
   if (!objectDetail3D?.cursorLight || !objectDetail3D?.cursorTarget || !objectDetail3D?.cursor) {
-    return;
+    return false;
   }
 
   const { active, world } = objectDetail3D.cursor;
@@ -3138,18 +3173,24 @@ function updateObjectDetailCursorLight(now = performance.now()) {
     ? OBJECT_DETAIL_CURSOR_LIGHT_FADE_IN_SPEED
     : OBJECT_DETAIL_CURSOR_LIGHT_FADE_OUT_SPEED;
   const smoothing = 1 - Math.exp(-fadeSpeed * deltaSeconds);
+  const previousIntensity = objectDetail3D.cursorLightIntensity ?? 0;
+  const previousEffectMix = objectDetail3D.cursorEffectMix ?? 0;
   objectDetail3D.cursorLightIntensity = THREE.MathUtils.lerp(
-    objectDetail3D.cursorLightIntensity ?? 0,
+    previousIntensity,
     targetIntensity,
     smoothing,
   );
   objectDetail3D.cursorEffectMix = THREE.MathUtils.lerp(
-    objectDetail3D.cursorEffectMix ?? 0,
+    previousEffectMix,
     active ? 1 : 0,
     smoothing,
   );
   objectDetail3D.cursorLight.intensity = objectDetail3D.cursorLightIntensity;
   objectDetail3D.cursorLightUpdatedAt = now;
+  return (
+    Math.abs(objectDetail3D.cursorLightIntensity - previousIntensity) > OBJECT_DETAIL_RENDER_EPSILON ||
+    Math.abs(objectDetail3D.cursorEffectMix - previousEffectMix) > OBJECT_DETAIL_RENDER_EPSILON
+  );
 }
 
 function getObjectDetailCursorLightProximityMultiplier(world) {
@@ -3171,38 +3212,57 @@ function updateObjectDetailLightMotion(now) {
     return false;
   }
 
-  updateObjectDetailOptionMixes(now);
+  const optionChanged = updateObjectDetailOptionMixes(now);
   const elapsedSeconds = (now - objectDetail3D.lightStartedAt) / 1000;
   const speed = Number.isFinite(objectDetail3D.lightDaySeconds)
     ? OBJECT_DETAIL_SURFACE_WORLD_WIDTH / objectDetail3D.lightDaySeconds
     : 0;
-  for (const item of objectDetail3D.spotLights) {
-    const x = wrapObjectDetailLightX(item.startX + elapsedSeconds * speed);
-    item.light.position.set(x, 0, OBJECT_DETAIL_LIGHT_Z);
-    item.tintLight.position.set(x, 0, OBJECT_DETAIL_LIGHT_Z);
-    item.target.position.set(x, 0, 0);
+  const hasMovingLight = speed !== 0;
+  const shouldUpdateLightPositions = hasMovingLight || !objectDetail3D.lightMotionApplied;
+  if (shouldUpdateLightPositions) {
+    for (const item of objectDetail3D.spotLights) {
+      const x = wrapObjectDetailLightX(item.startX + elapsedSeconds * speed);
+      item.light.position.set(x, 0, OBJECT_DETAIL_LIGHT_Z);
+      item.tintLight.position.set(x, 0, OBJECT_DETAIL_LIGHT_Z);
+      item.target.position.set(x, 0, 0);
+    }
+    objectDetail3D.lightMotionApplied = true;
   }
-  updateObjectDetailCursorLight(now);
-  if (Number.isFinite(objectDetail3D.bodyTextureCycleSeconds)) {
+  const cursorChanged = updateObjectDetailCursorLight(now);
+  const hasBodyTextureMotion = Number.isFinite(objectDetail3D.bodyTextureCycleSeconds);
+  const hasCloudTextureMotion = Boolean(objectDetail3D.cloudMap);
+  if (hasBodyTextureMotion) {
     const bodyPhase = elapsedSeconds / objectDetail3D.bodyTextureCycleSeconds;
     objectDetail3D.colorMap.offset.x = ((bodyPhase % 1) + 1) % 1;
   }
-  if (objectDetail3D.cloudMap) {
+  if (hasCloudTextureMotion) {
     const cloudCycleSeconds = Number.isFinite(objectDetail3D.cloudCycleSeconds)
       ? objectDetail3D.cloudCycleSeconds
       : OBJECT_DETAIL_CLOUD_CYCLE_SECONDS;
     const cloudPhase = elapsedSeconds / cloudCycleSeconds;
     objectDetail3D.cloudMap.offset.x = ((cloudPhase % 1) + 1) % 1;
   }
+  const needsRender =
+    optionChanged ||
+    cursorChanged ||
+    shouldUpdateLightPositions ||
+    hasBodyTextureMotion ||
+    hasCloudTextureMotion ||
+    Boolean(objectDetail3D.bloomResources);
+
+  if (!needsRender) {
+    return false;
+  }
+
   updateObjectDetailSurfaceEffectUniforms();
-  updateObjectDetailFrame();
+  if (shouldUpdateLightPositions) {
+    updateObjectDetailFrame();
+  }
   return true;
 }
 
 function updateObjectDetailFrame() {
-  updateObjectDetailObservedBounds();
-  updateObjectDetailHoverBounds();
-  const markers = objectDetailTexture.querySelectorAll(".object-detail-screen__day-marker");
+  const markers = objectDetailDayMarkers;
   if (!markers.length || !objectDetail3D?.spotLights?.length) {
     return;
   }
@@ -3225,19 +3285,21 @@ function updateObjectDetailFrame() {
 
 function updateObjectDetailOptionMixes(now = performance.now()) {
   if (!objectDetail3D) {
-    return;
+    return false;
   }
 
   const previous = objectDetail3D.optionMixUpdatedAt ?? now;
   const deltaSeconds = Math.max(0, (now - previous) / 1000);
   const smoothing = 1 - Math.exp(-OBJECT_DETAIL_OPTION_FADE_SPEED * deltaSeconds);
+  const previousLightMix = objectDetail3D.lightMix ?? 1;
+  const previousCloudMix = objectDetail3D.cloudMix ?? 1;
   objectDetail3D.lightMix = THREE.MathUtils.lerp(
-    objectDetail3D.lightMix ?? 1,
+    previousLightMix,
     objectDetail3D.targetLightMix ?? 1,
     smoothing,
   );
   objectDetail3D.cloudMix = THREE.MathUtils.lerp(
-    objectDetail3D.cloudMix ?? 1,
+    previousCloudMix,
     objectDetail3D.targetCloudMix ?? 1,
     smoothing,
   );
@@ -3261,6 +3323,15 @@ function updateObjectDetailOptionMixes(now = performance.now()) {
     objectDetail3D.cloudMesh.visible = cloudMix > 0.01;
     objectDetail3D.cloudMesh.castShadow = cloudMix > 0.04;
   }
+
+  const changed =
+    !objectDetail3D.optionMixApplied ||
+    Math.abs(objectDetail3D.lightMix - previousLightMix) > OBJECT_DETAIL_RENDER_EPSILON ||
+    Math.abs(objectDetail3D.cloudMix - previousCloudMix) > OBJECT_DETAIL_RENDER_EPSILON ||
+    Math.abs(objectDetail3D.lightMix - (objectDetail3D.targetLightMix ?? 1)) > OBJECT_DETAIL_RENDER_EPSILON ||
+    Math.abs(objectDetail3D.cloudMix - (objectDetail3D.targetCloudMix ?? 1)) > OBJECT_DETAIL_RENDER_EPSILON;
+  objectDetail3D.optionMixApplied = true;
+  return changed;
 }
 
 function updateObjectDetailTintLightProperties(lightMix = THREE.MathUtils.clamp(objectDetail3D?.lightMix ?? 1, 0, 1)) {
@@ -3618,13 +3689,13 @@ function disposeObjectDetail3D() {
 
   objectDetail3D.geometry.dispose();
   objectDetail3D.material.dispose();
-  objectDetail3D.colorMap.dispose();
-  objectDetail3D.heightMap?.dispose();
-  objectDetail3D.emissiveMap?.dispose();
+  releaseCanvasTexture(objectDetail3D.colorMapRef);
+  releaseCanvasTexture(objectDetail3D.heightMapRef);
+  releaseCanvasTexture(objectDetail3D.emissiveMapRef);
   objectDetail3D.hexGrid?.texture.dispose();
   objectDetail3D.hexGrid?.geometry.dispose();
   objectDetail3D.hexGrid?.material.dispose();
-  objectDetail3D.cloudMap?.dispose();
+  releaseCanvasTexture(objectDetail3D.cloudMapRef);
   objectDetail3D.cloudGeometry?.dispose();
   objectDetail3D.cloudMaterial?.dispose();
   objectDetail3D.cloudDepthMaterial?.dispose();
@@ -3660,6 +3731,35 @@ async function returnToOrbitFromObjectDetail() {
   planetScreenController.updateParallax(lastClientPointer.x, lastClientPointer.y);
   resetTransitionSurfaces();
   snapObjectDetailHidden();
+  await revealObjectDetailEntryOverlay(260);
+}
+
+async function returnToStarSystemFromObjectDetail() {
+  const activeNode = systemScreenController.state.activeNode;
+  if (!activeNode) {
+    closeObjectDetailScreen();
+    closeStarWindow();
+    return;
+  }
+
+  cancelPlanetEntryTransition();
+  await runObjectDetailZoomOutTransition();
+  closeObjectDetailScreen({ preserveTransitionOverlay: true });
+  planetScreenController.close();
+  closePlanetWindow();
+  systemScreenController.open(activeNode);
+  musicPlayerController.ensureSystemPosition();
+  setSystemTransitionOffset(0, 0);
+  setSystemTransitionOverlay(0);
+  renderStarSystem(activeNode);
+  renderSystemStars(activeNode);
+  renderSystemParticles(activeNode);
+  updateSystemGlow(window.innerWidth / 2, window.innerHeight / 2, 0, 0);
+  updateSystemParallax(lastClientPointer.x, lastClientPointer.y, true);
+  preloadPlanetScreenRenderer();
+  resetTransitionSurfaces();
+  snapObjectDetailHidden();
+  snapPlanetScreenHidden();
   await revealObjectDetailEntryOverlay(260);
 }
 
@@ -3784,13 +3884,32 @@ function updateSystemParallax(clientX, clientY, force = false) {
     return;
   }
 
-  positionSystemTooltip(clientX, clientY);
   const offsetX = (clientX / window.innerWidth - 0.5) * -30;
   const offsetY = (clientY / window.innerHeight - 0.5) * -20;
   const systemOffsetX = (clientX / window.innerWidth - 0.5) * -34;
   const systemOffsetY = (clientY / window.innerHeight - 0.5) * -20;
   const particleOffsetX = (clientX / window.innerWidth - 0.5) * 42;
   const particleOffsetY = (clientY / window.innerHeight - 0.5) * 28;
+
+  if (
+    !force &&
+    lastSystemParallax.clientX === clientX &&
+    lastSystemParallax.clientY === clientY &&
+    lastSystemParallax.systemOffsetX === systemOffsetX &&
+    lastSystemParallax.systemOffsetY === systemOffsetY
+  ) {
+    if (hoveredSystemBody) {
+      positionSystemTooltip(clientX, clientY);
+    }
+    return;
+  }
+
+  lastSystemParallax.clientX = clientX;
+  lastSystemParallax.clientY = clientY;
+  lastSystemParallax.systemOffsetX = systemOffsetX;
+  lastSystemParallax.systemOffsetY = systemOffsetY;
+
+  positionSystemTooltip(clientX, clientY);
   systemStars.style.setProperty("--parallax-x", `${offsetX}px`);
   systemStars.style.setProperty("--parallax-y", `${offsetY}px`);
   systemParticles.style.setProperty("--particle-parallax-x", `${particleOffsetX}px`);
@@ -3800,6 +3919,13 @@ function updateSystemParallax(clientX, clientY, force = false) {
   systemStarLayer.style.setProperty("--system-parallax-x", `${systemOffsetX}px`);
   systemStarLayer.style.setProperty("--system-parallax-y", `${systemOffsetY}px`);
   updateSystemGlow(clientX, clientY, systemOffsetX, systemOffsetY);
+}
+
+function resetSystemParallaxCache() {
+  lastSystemParallax.clientX = NaN;
+  lastSystemParallax.clientY = NaN;
+  lastSystemParallax.systemOffsetX = NaN;
+  lastSystemParallax.systemOffsetY = NaN;
 }
 
 function updateSystemGlow(clientX, clientY, systemOffsetX = 0, systemOffsetY = 0) {
@@ -3814,18 +3940,46 @@ function updateSystemGlow(clientX, clientY, systemOffsetX = 0, systemOffsetY = 0
   const rightEdgeX = glowX + activeSystemStar.radius;
   const falloffRadius = Math.max(260, window.innerWidth * 0.75 - rightEdgeX);
   const proximity = 1 - THREE.MathUtils.clamp(distanceToEdge / falloffRadius, 0, 1);
+  const intensity = proximity * 1.72;
+
+  if (
+    lastSystemGlow.centerX === glowX &&
+    lastSystemGlow.centerY === glowY &&
+    lastSystemGlow.radius === activeSystemStar.radius &&
+    lastSystemGlow.color === activeSystemStar.glowColor &&
+    lastSystemGlow.intensity === intensity
+  ) {
+    return;
+  }
+
+  lastSystemGlow.centerX = glowX;
+  lastSystemGlow.centerY = glowY;
+  lastSystemGlow.radius = activeSystemStar.radius;
+  lastSystemGlow.color = activeSystemStar.glowColor;
+  lastSystemGlow.intensity = intensity;
+
   systemGlowLayer.render({
     centerX: glowX,
     centerY: glowY,
     radius: activeSystemStar.radius,
     color: activeSystemStar.glowColor,
-    intensity: proximity * 1.72,
+    intensity,
   });
+}
+
+function resetSystemGlowCache() {
+  lastSystemGlow.centerX = NaN;
+  lastSystemGlow.centerY = NaN;
+  lastSystemGlow.radius = NaN;
+  lastSystemGlow.color = "";
+  lastSystemGlow.intensity = NaN;
 }
 
 function renderStarSystem(node) {
   starSystem.replaceChildren();
   systemStarLayer.replaceChildren();
+  resetSystemParallaxCache();
+  resetSystemGlowCache();
   gasGiantTextureLayers.clear();
   planetSurfaceRotationLayers.clear();
   clearSystemHover();
@@ -5160,7 +5314,7 @@ function updateSystemPlanetRotationLayers(deltaSeconds, now) {
     return;
   }
 
-  for (const layer of Array.from(gasGiantTextureLayers)) {
+  for (const layer of gasGiantTextureLayers) {
     if (!layer.isConnected || layer.dataset.staticTexture === "true") {
       gasGiantTextureLayers.delete(layer);
       continue;
@@ -5177,7 +5331,7 @@ function updateSystemPlanetRotationLayers(deltaSeconds, now) {
     layer.style.transform = `translate3d(-50%, -50%, 0) rotate(${angle}rad)`;
   }
 
-  for (const layer of Array.from(planetSurfaceRotationLayers)) {
+  for (const layer of planetSurfaceRotationLayers) {
     if (!layer.isConnected) {
       planetSurfaceRotationLayers.delete(layer);
       continue;
@@ -5189,25 +5343,24 @@ function updateSystemPlanetRotationLayers(deltaSeconds, now) {
 }
 
 function getSystemPlanetRotationDisplayPhase(rotation, elapsedSeconds) {
-  if (!rotation || rotation.turnsPerSecond === 0) {
-    return rotation?.initialOffset ?? 0;
-  }
-
-  return getPlanetRotationPhase({
-    ...rotation,
-    turnsPerSecond: rotation.turnsPerSecond * SYSTEM_PLANET_ROTATION_DISPLAY_SCALE,
-  }, elapsedSeconds);
+  return getScaledPlanetRotationPhase(rotation, elapsedSeconds, SYSTEM_PLANET_ROTATION_DISPLAY_SCALE);
 }
 
 function getSystemTextureDriftPhase(rotation, elapsedSeconds, speedMultiplier = 1) {
+  return getScaledPlanetRotationPhase(
+    rotation,
+    elapsedSeconds,
+    SYSTEM_PLANET_ROTATION_DISPLAY_SCALE * speedMultiplier,
+  );
+}
+
+function getScaledPlanetRotationPhase(rotation, elapsedSeconds, scale = 1) {
   if (!rotation || rotation.turnsPerSecond === 0) {
     return rotation?.initialOffset ?? 0;
   }
 
-  return getPlanetRotationPhase({
-    ...rotation,
-    turnsPerSecond: rotation.turnsPerSecond * SYSTEM_PLANET_ROTATION_DISPLAY_SCALE * speedMultiplier,
-  }, elapsedSeconds);
+  const phase = rotation.initialOffset + elapsedSeconds * rotation.turnsPerSecond * scale;
+  return ((phase % 1) + 1) % 1;
 }
 
 function getSystemPlanetRadius(sizeIndex) {
@@ -5219,6 +5372,8 @@ function createSystemStarSurface(node, starRadius, options = {}) {
   const displaySize = starRadius * 2;
   const overscan = 12;
   const canvasSize = displaySize + overscan * 2;
+  const edgeScale = options.edgeScale ?? 1;
+  const noise = createSystemStarSurfaceNoise(`${SEED}:system-surface:${node.id}`, starRadius, edgeScale);
   const canvas = document.createElement("canvas");
   canvas.className = "system-star__surface";
   canvas.width = Math.ceil(canvasSize * pixelRatio);
@@ -5237,8 +5392,9 @@ function createSystemStarSurface(node, starRadius, options = {}) {
     pixelRatio,
     coreColor: node.coreColor,
     glowColor: node.glowColor,
-    edgeScale: options.edgeScale ?? 1,
-    noise: createSystemStarSurfaceNoise(`${SEED}:system-surface:${node.id}`, starRadius, options.edgeScale ?? 1),
+    edgeScale,
+    noise,
+    renderCache: createSystemStarSurfaceRenderCache(starRadius, edgeScale, noise),
   };
 }
 
@@ -5252,6 +5408,53 @@ function createSystemStarSurfaceNoise(seed, radius, edgeScale = 1) {
   ];
 
   return { layers };
+}
+
+function createSystemStarSurfaceRenderCache(radius, edgeScale, noise) {
+  const pointCount = Math.max(1800, Math.min(7200, Math.ceil(radius * 7.5)));
+  const sampleCount = pointCount + 1;
+  const cosines = new Float32Array(sampleCount);
+  const sines = new Float32Array(sampleCount);
+  const layerSamples = noise.layers.map((layer) => ({
+    spatialBase: new Uint32Array(sampleCount),
+    spatialNext: new Uint32Array(sampleCount),
+    spatialBlend: new Float32Array(sampleCount),
+    layer,
+  }));
+
+  for (let index = 0; index < sampleCount; index += 1) {
+    const angleRatio = index / pointCount;
+    const angle = angleRatio * Math.PI * 2;
+    cosines[index] = Math.cos(angle);
+    sines[index] = Math.sin(angle);
+
+    for (const sample of layerSamples) {
+      const spatialPosition = angleRatio * sample.layer.spatialCells;
+      const spatialBase = Math.floor(spatialPosition) % sample.layer.spatialCells;
+      sample.spatialBase[index] = spatialBase;
+      sample.spatialNext[index] = (spatialBase + 1) % sample.layer.spatialCells;
+      sample.spatialBlend[index] = smoothNoiseStep(spatialPosition - Math.floor(spatialPosition));
+    }
+  }
+
+  return {
+    pointCount,
+    sampleCount,
+    cosines,
+    sines,
+    layerSamples,
+    timeSamples: layerSamples.map((sample) => ({
+      sample,
+      row: 0,
+      nextRow: 0,
+      timeBlend: 0,
+      timeBase: -1,
+      timeNext: -1,
+      topValues: new Float32Array(sampleCount),
+      bottomValues: new Float32Array(sampleCount),
+    })),
+    weightTotal: noise.layers.reduce((total, layer) => total + layer.weight, 0),
+  };
 }
 
 function createLoopingNoiseLayer(random, circumference, cellPx, timeCells, weight) {
@@ -5269,34 +5472,52 @@ function smoothNoiseStep(value) {
   return value * value * (3 - 2 * value);
 }
 
-function sampleLoopingNoiseLayer(layer, spatialPosition, timePosition) {
-  const { spatialCells, timeCells, values } = layer;
-  const spatialBase = Math.floor(spatialPosition) % spatialCells;
-  const timeBase = Math.floor(timePosition) % timeCells;
-  const spatialNext = (spatialBase + 1) % spatialCells;
-  const timeNext = (timeBase + 1) % timeCells;
-  const spatialBlend = smoothNoiseStep(spatialPosition - Math.floor(spatialPosition));
-  const timeBlend = smoothNoiseStep(timePosition - Math.floor(timePosition));
-  const row = timeBase * spatialCells;
-  const nextRow = timeNext * spatialCells;
-  const top = THREE.MathUtils.lerp(values[row + spatialBase], values[row + spatialNext], spatialBlend);
-  const bottom = THREE.MathUtils.lerp(values[nextRow + spatialBase], values[nextRow + spatialNext], spatialBlend);
+function updateSystemStarSurfaceTimeSamples(cache, timeRatio) {
+  for (const timeSample of cache.timeSamples) {
+    const { layer } = timeSample.sample;
+    const timePosition = timeRatio * layer.timeCells;
+    const timeBase = Math.floor(timePosition) % layer.timeCells;
+    const timeNext = (timeBase + 1) % layer.timeCells;
+    timeSample.row = timeBase * layer.spatialCells;
+    timeSample.nextRow = timeNext * layer.spatialCells;
+    timeSample.timeBlend = smoothNoiseStep(timePosition - Math.floor(timePosition));
+    if (timeSample.timeBase === timeBase && timeSample.timeNext === timeNext) {
+      continue;
+    }
 
-  return THREE.MathUtils.lerp(top, bottom, timeBlend);
+    timeSample.timeBase = timeBase;
+    timeSample.timeNext = timeNext;
+    updateSystemStarSurfaceSpatialCache(timeSample);
+  }
 }
 
-function sampleSystemStarSurfaceNoise(noise, angleRatio, timeRatio) {
+function updateSystemStarSurfaceSpatialCache(timeSample) {
+  const { sample, row, nextRow, topValues, bottomValues } = timeSample;
+  const { layer, spatialBase, spatialNext, spatialBlend } = sample;
+
+  for (let index = 0; index < topValues.length; index += 1) {
+    const baseIndex = spatialBase[index];
+    const nextIndex = spatialNext[index];
+    const blend = spatialBlend[index];
+    const topStart = layer.values[row + baseIndex];
+    const topEnd = layer.values[row + nextIndex];
+    const bottomStart = layer.values[nextRow + baseIndex];
+    const bottomEnd = layer.values[nextRow + nextIndex];
+    topValues[index] = (topStart + (topEnd - topStart) * blend) * layer.weight;
+    bottomValues[index] = (bottomStart + (bottomEnd - bottomStart) * blend) * layer.weight;
+  }
+}
+
+function sampleCachedSystemStarSurfaceNoise(cache, index) {
   let value = 0;
-  let weightTotal = 0;
 
-  noise.layers.forEach((layer) => {
-    const spatialPosition = angleRatio * layer.spatialCells;
-    const timePosition = timeRatio * layer.timeCells;
-    value += sampleLoopingNoiseLayer(layer, spatialPosition, timePosition) * layer.weight;
-    weightTotal += layer.weight;
-  });
+  for (const timeSample of cache.timeSamples) {
+    const top = timeSample.topValues[index];
+    const bottom = timeSample.bottomValues[index];
+    value += top + (bottom - top) * timeSample.timeBlend;
+  }
 
-  return value / weightTotal;
+  return value / cache.weightTotal;
 }
 
 function drawSystemStarSurface(surface, now) {
@@ -5304,7 +5525,7 @@ function drawSystemStarSurface(surface, now) {
   const center = canvasSize / 2;
   const radius = displaySize / 2;
   const timeRatio = (now % 34200) / 34200;
-  const points = Math.max(1800, Math.min(7200, Math.ceil(radius * 7.5)));
+  const renderCache = surface.renderCache;
   const edgeScale = surface.edgeScale ?? 1;
   const amplitude = THREE.MathUtils.clamp(2.5 * edgeScale, 0.28, 6);
   const innerBlend = THREE.MathUtils.clamp(60 * edgeScale, 1, 110);
@@ -5316,14 +5537,13 @@ function drawSystemStarSurface(surface, now) {
   context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
   context.clearRect(0, 0, canvasSize, canvasSize);
   context.beginPath();
+  updateSystemStarSurfaceTimeSamples(renderCache, timeRatio);
 
-  for (let index = 0; index <= points; index += 1) {
-    const angleRatio = index / points;
-    const angle = angleRatio * Math.PI * 2;
-    const wave = sampleSystemStarSurfaceNoise(surface.noise, angleRatio, timeRatio);
+  for (let index = 0; index < renderCache.sampleCount; index += 1) {
+    const wave = sampleCachedSystemStarSurfaceNoise(renderCache, index);
     const pointRadius = radius + outerReach + wave * amplitude;
-    const x = center + Math.cos(angle) * pointRadius;
-    const y = center + Math.sin(angle) * pointRadius;
+    const x = center + renderCache.cosines[index] * pointRadius;
+    const y = center + renderCache.sines[index] * pointRadius;
 
     if (index === 0) {
       context.moveTo(x, y);
@@ -6142,21 +6362,19 @@ function getScreenNodeHit(clientX, clientY) {
   graphRoot.updateMatrixWorld(true);
   camera.updateMatrixWorld(true);
 
-  const target = new THREE.Vector2(clientX, clientY);
-  const projected = new THREE.Vector3();
   let bestIndex = -1;
   let bestDistance = Infinity;
 
   for (let index = 0; index < nodes.length; index += 1) {
-    projected.copy(nodes[index].position).applyMatrix4(graphRoot.matrixWorld).project(camera);
+    screenHitProjection.copy(nodes[index].position).applyMatrix4(graphRoot.matrixWorld).project(camera);
 
-    if (projected.z < -1 || projected.z > 1) {
+    if (screenHitProjection.z < -1 || screenHitProjection.z > 1) {
       continue;
     }
 
-    const screenX = (projected.x * 0.5 + 0.5) * window.innerWidth;
-    const screenY = (-projected.y * 0.5 + 0.5) * window.innerHeight;
-    const distance = target.distanceTo(new THREE.Vector2(screenX, screenY));
+    const screenX = (screenHitProjection.x * 0.5 + 0.5) * window.innerWidth;
+    const screenY = (-screenHitProjection.y * 0.5 + 0.5) * window.innerHeight;
+    const distance = Math.hypot(clientX - screenX, clientY - screenY);
 
     if (distance < bestDistance) {
       bestDistance = distance;
@@ -6202,8 +6420,7 @@ function updateSelectionOverlay(color, selectedNodeItems, visibleEdges, fadingEd
   for (let index = 0; index < MAX_SELECTION_POINTS; index += 1) {
     if (index < pointCount) {
       const nodeItem = selectedNodeItems[index];
-      const screenPoint = projectNodeToScreen(nodeItem.id);
-      selectionOverlay.points[index].copy(screenPoint);
+      projectNodeToScreen(nodeItem.id, selectionOverlay.points[index]);
       selectionOverlay.pointRadii[index] =
         material.uniforms.nodeRadius.value * easeOutCubic(nodeItem.progress);
     } else {
@@ -6217,8 +6434,8 @@ function updateSelectionOverlay(color, selectedNodeItems, visibleEdges, fadingEd
       const edge = visibleEdges[index];
       const origin = edge.origin;
       const progress = easeOutCubic(edge.progress);
-      const startPoint = projectNodeToScreen(edge.a);
-      const endPoint = projectNodeToScreen(edge.b);
+      const startPoint = projectNodeToScreen(edge.a, selectionProjectionScratch.startScreen);
+      const endPoint = projectNodeToScreen(edge.b, selectionProjectionScratch.endScreen);
 
       if (origin === edge.a) {
         selectionOverlay.segmentStarts[index].copy(startPoint);
@@ -6239,17 +6456,18 @@ function updateSelectionOverlay(color, selectedNodeItems, visibleEdges, fadingEd
   for (let index = 0; index < MAX_SELECTION_FADING_SEGMENTS; index += 1) {
     if (index < fadingSegmentCount) {
       const edge = fadingEdges[index];
-      const clippedSegment = projectSegmentToScreen(edge.start, edge.end);
-
-      if (!clippedSegment) {
+      if (!projectSegmentToScreen(
+        edge.start,
+        edge.end,
+        selectionOverlay.fadingSegmentStarts[index],
+        selectionOverlay.fadingSegmentEnds[index],
+      )) {
         selectionOverlay.fadingSegmentStarts[index].set(-10000, -10000);
         selectionOverlay.fadingSegmentEnds[index].set(-10000, -10000);
         selectionOverlay.fadingSegmentProgresses[index] = 0;
         continue;
       }
 
-      selectionOverlay.fadingSegmentStarts[index].copy(clippedSegment.start);
-      selectionOverlay.fadingSegmentEnds[index].copy(clippedSegment.end);
       selectionOverlay.fadingSegmentProgresses[index] = easeOutCubic(edge.progress);
     } else {
       selectionOverlay.fadingSegmentStarts[index].set(-10000, -10000);
@@ -6333,34 +6551,48 @@ function getSelectionGroups() {
   return groups;
 }
 
-function projectNodeToScreen(nodeId) {
-  return projectVectorToScreen(nodes[nodeId].position);
+function hasSelectionOverlayActivity() {
+  return (
+    nodeColors.size > 0 ||
+    nodeAnimationProgress.size > 0 ||
+    edgeAnimationProgress.size > 0 ||
+    nodeExitAnimations.size > 0 ||
+    edgeExitAnimations.size > 0
+  );
 }
 
-function projectVectorToScreen(vector) {
-  const projected = vector.clone().applyMatrix4(graphRoot.matrixWorld).project(camera);
-  return new THREE.Vector2(
+function projectNodeToScreen(nodeId, target) {
+  return projectVectorToScreen(nodes[nodeId].position, target);
+}
+
+function projectVectorToScreen(vector, target) {
+  const projected = selectionProjectionScratch.vector
+    .copy(vector)
+    .applyMatrix4(graphRoot.matrixWorld)
+    .project(camera);
+  return target.set(
     (projected.x * 0.5 + 0.5) * selectionScreenSize.x,
     (projected.y * 0.5 + 0.5) * selectionScreenSize.y,
   );
 }
 
-function projectSegmentToScreen(start, end) {
-  const startWorld = start.clone().applyMatrix4(graphRoot.matrixWorld);
-  const endWorld = end.clone().applyMatrix4(graphRoot.matrixWorld);
-  const startCamera = startWorld.clone().applyMatrix4(camera.matrixWorldInverse);
-  const endCamera = endWorld.clone().applyMatrix4(camera.matrixWorldInverse);
+function projectSegmentToScreen(start, end, targetStart, targetEnd) {
+  const { startWorld, endWorld, startCamera, endCamera, clipped } = selectionProjectionScratch;
+  startWorld.copy(start).applyMatrix4(graphRoot.matrixWorld);
+  endWorld.copy(end).applyMatrix4(graphRoot.matrixWorld);
+  startCamera.copy(startWorld).applyMatrix4(camera.matrixWorldInverse);
+  endCamera.copy(endWorld).applyMatrix4(camera.matrixWorldInverse);
   const nearZ = -camera.near;
   const startVisible = startCamera.z <= nearZ;
   const endVisible = endCamera.z <= nearZ;
 
   if (!startVisible && !endVisible) {
-    return null;
+    return false;
   }
 
   if (startVisible !== endVisible) {
     const t = (nearZ - startCamera.z) / (endCamera.z - startCamera.z);
-    const clipped = startCamera.clone().lerp(endCamera, THREE.MathUtils.clamp(t, 0, 1));
+    clipped.copy(startCamera).lerp(endCamera, THREE.MathUtils.clamp(t, 0, 1));
 
     if (startVisible) {
       endCamera.copy(clipped);
@@ -6369,14 +6601,13 @@ function projectSegmentToScreen(start, end) {
     }
   }
 
-  return {
-    start: projectCameraSpaceToScreen(startCamera),
-    end: projectCameraSpaceToScreen(endCamera),
-  };
+  projectCameraSpaceToScreen(startCamera, targetStart);
+  projectCameraSpaceToScreen(endCamera, targetEnd);
+  return true;
 }
 
-function projectCameraSpaceToScreen(cameraSpacePoint) {
-  const projected = new THREE.Vector4(
+function projectCameraSpaceToScreen(cameraSpacePoint, target) {
+  const projected = selectionProjectionScratch.projected.set(
     cameraSpacePoint.x,
     cameraSpacePoint.y,
     cameraSpacePoint.z,
@@ -6386,7 +6617,7 @@ function projectCameraSpaceToScreen(cameraSpacePoint) {
   const x = projected.x * inverseW;
   const y = projected.y * inverseW;
 
-  return new THREE.Vector2(
+  return target.set(
     (x * 0.5 + 0.5) * selectionScreenSize.x,
     (y * 0.5 + 0.5) * selectionScreenSize.y,
   );
@@ -6398,7 +6629,7 @@ function updateStarLabels() {
 
   const width = window.innerWidth;
   const height = window.innerHeight;
-  const projected = new THREE.Vector3();
+  const projected = starLabelProjection;
 
   for (let index = 0; index < nodes.length; index += 1) {
     const node = nodes[index];
@@ -6522,12 +6753,16 @@ function animate() {
     updatePlanetLink();
   }
 
-  renderer.clear(true, true, true);
-  renderer.render(scene, camera);
-  renderer.clearDepth();
+  if (!systemScreenController.isOpen()) {
+    renderer.clear(true, true, true);
+    renderer.render(scene, camera);
+    renderer.clearDepth();
 
-  for (const [color, group] of getSelectionGroups()) {
-    updateSelectionOverlay(color, group.nodes, group.edges, group.fadingEdges);
-    renderer.render(selectionOverlay.scene, selectionOverlay.camera);
+    if (hasSelectionOverlayActivity()) {
+      for (const [color, group] of getSelectionGroups()) {
+        updateSelectionOverlay(color, group.nodes, group.edges, group.fadingEdges);
+        renderer.render(selectionOverlay.scene, selectionOverlay.camera);
+      }
+    }
   }
 }

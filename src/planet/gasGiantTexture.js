@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { GAS_GIANT_PALETTES } from "../gasGiantPalettes.js";
 import { hexToRgb, hslToRgb, rgbToHex, rgbToHsl } from "../utils/color.js";
 import { createRandom } from "../utils/random.js";
+import { createCanvasCssUrl } from "../utils/textureCache.js";
 
 export const GAS_GIANT_SYSTEM_TEXTURE_HEIGHT = 32;
 export const GAS_GIANT_WINDOW_TEXTURE_HEIGHT = 1024;
@@ -46,7 +47,7 @@ export function createGasGiantTexture(seed, textureHeight = GAS_GIANT_SYSTEM_TEX
   renderGasGiantCloudCanvas(cloudCanvas, field, colors);
 
   const texture = {
-    url: `url(${canvas.toDataURL("image/png")})`,
+    url: createCanvasCssUrl(canvas, `${cacheKey}:surface`),
     canvas,
     cloudCanvas,
     width,
