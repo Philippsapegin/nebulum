@@ -44,6 +44,7 @@ const params = new URLSearchParams(window.location.search);
 const SEED = params.get("seed") || "nebulum";
 const MENU_DEFAULT_SEED = "nebulum";
 const START_AFTER_SEED_STORAGE_KEY = "nebulum:start-after-seed";
+const AUDIO_SETTINGS_STORAGE_KEY = "nebulum:audio-settings";
 const DEFAULT_SKY_GRADIENT_COLORS = ["#27648f", "#000000", "#884d26", "#000000"];
 const PLANET_WATER_TAG_CHANCE = 0.5;
 const ATMOSPHERE_TAGS = ["THIN ATMOSPHERE", "ATMOSPHERE", "DENSE ATMOSPHERE"];
@@ -60,6 +61,7 @@ let blackHoleDiskMaterial = null;
 const startMenu = document.querySelector("#start-menu");
 const menuNewGame = document.querySelector("#menu-new-game");
 const menuLoadGame = document.querySelector("#menu-load-game");
+const menuSettings = document.querySelector("#menu-settings");
 const menuExit = document.querySelector("#menu-exit");
 const menuStatus = document.querySelector("#menu-status");
 const seedDialog = document.querySelector("#seed-dialog");
@@ -71,6 +73,10 @@ const menuSaveList = document.querySelector("#menu-save-list");
 const menuLoadSave = document.querySelector("#menu-load-save");
 const menuDeleteSave = document.querySelector("#menu-delete-save");
 const menuLoadClose = document.querySelector("#menu-load-close");
+const settingsDialog = document.querySelector("#settings-dialog");
+const menuMasterVolume = document.querySelector("#menu-master-volume");
+const menuMusicEnabled = document.querySelector("#menu-music-enabled");
+const menuSettingsClose = document.querySelector("#menu-settings-close");
 const gameMenuButton = document.querySelector("#game-menu-button");
 const sceneCanvas = document.querySelector("#scene");
 const starLabels = document.querySelector("#star-labels");
@@ -145,6 +151,7 @@ let animationFrameId = null;
 let menuAnimationFrameId = null;
 let menuMusicFadeFrame = null;
 let isReturningToMainMenu = false;
+let audioSettings = readAudioSettings();
 let selectedMenuSaveIndex = -1;
 let shouldStartGameAfterInit = false;
 let menuScene = null;
@@ -155,6 +162,11 @@ let menuPlane = null;
 let menuPlaneTexture = null;
 let menuPlaneCanvas = null;
 let menuPlaneContext = null;
+let menuBackgroundTarget = null;
+let menuCompositeScene = null;
+let menuCompositeCamera = null;
+let menuCompositeMaterial = null;
+let menuCompositeQuad = null;
 let menuStars = null;
 let menuStarLinks = null;
 let menuStarPoints = [];
@@ -185,6 +197,7 @@ const MENU_STAR_PILOT_MIN_COUNT = 5;
 const MENU_STAR_PILOT_MAX_COUNT = 10;
 const MENU_STAR_PILOT_BRANCH_CHANCE = 0.32;
 const MENU_STAR_PILOT_STOP_CHANCE = 0.13;
+const MENU_BUTTON_BLUR_MAX_RECTS = 8;
 
 const renderer = new THREE.WebGLRenderer({
   canvas: sceneCanvas,
@@ -194,7 +207,7 @@ const renderer = new THREE.WebGLRenderer({
 const menuMusicAudio = new Audio(`/Music/${encodeURIComponent(MENU_MUSIC_TRACK)}`);
 menuMusicAudio.loop = true;
 menuMusicAudio.preload = "auto";
-menuMusicAudio.volume = 0.62;
+menuMusicAudio.volume = getMenuMusicVolume();
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setClearColor(0x000000, 0);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -495,6 +508,7 @@ function initializeNebulumRuntime() {
 
   initPanel();
   musicPlayerController.init();
+  musicPlayerController.setMasterVolume(audioSettings.masterVolume);
   musicPlayerController.play();
   buildSky(createRandom(`${SEED}:sky`));
   buildLocalSpaceStars(createRandom(`${SEED}:local-space`));
@@ -521,6 +535,7 @@ function initStartMenu() {
     openMenuDialog(seedDialog, menuSeedInput);
   });
   menuLoadGame.addEventListener("click", openLoadGameDialog);
+  menuSettings.addEventListener("click", openSettingsDialog);
   menuExit.addEventListener("click", exitNebulum);
   gameMenuButton.addEventListener("click", returnToMainMenu);
   startMenu.addEventListener("pointermove", onStartMenuPointerMove);
@@ -537,6 +552,9 @@ function initStartMenu() {
   menuLoadClose.addEventListener("click", closeMenuDialogs);
   menuLoadSave.addEventListener("click", loadSelectedMenuSave);
   menuDeleteSave.addEventListener("click", deleteSelectedMenuSave);
+  menuSettingsClose.addEventListener("click", closeMenuDialogs);
+  menuMasterVolume.addEventListener("input", updateAudioSettingsFromMenu);
+  menuMusicEnabled.addEventListener("change", updateAudioSettingsFromMenu);
 
   seedDialog.addEventListener("pointerdown", (event) => {
     if (event.target === seedDialog) {
@@ -548,6 +566,11 @@ function initStartMenu() {
       closeMenuDialogs();
     }
   });
+  settingsDialog.addEventListener("pointerdown", (event) => {
+    if (event.target === settingsDialog) {
+      closeMenuDialogs();
+    }
+  });
   window.addEventListener("keydown", (event) => {
     if (!isStartMenuOpen || event.key !== "Escape") {
       return;
@@ -555,6 +578,8 @@ function initStartMenu() {
     closeMenuDialogs();
   });
 
+  syncSettingsDialog();
+  applyAudioSettings();
   playMenuMusic();
 }
 
@@ -608,9 +633,96 @@ function initStartMenuScene() {
   menuScene.add(menuStarLinks);
   menuStarGlowTexture = createNodeGlowTexture();
   resetStartMenuStarPilots();
+  initStartMenuComposite();
 
   updateMenuPlaneTexture();
   document.fonts?.ready.then(updateMenuPlaneTexture).catch(() => {});
+}
+
+function initStartMenuComposite() {
+  const pixelRatio = Math.min(window.devicePixelRatio, 2);
+  const width = Math.max(1, Math.floor(window.innerWidth * pixelRatio));
+  const height = Math.max(1, Math.floor(window.innerHeight * pixelRatio));
+  menuBackgroundTarget = new THREE.WebGLRenderTarget(width, height, {
+    depthBuffer: true,
+    stencilBuffer: false,
+  });
+  menuBackgroundTarget.texture.colorSpace = THREE.SRGBColorSpace;
+
+  menuCompositeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  menuCompositeScene = new THREE.Scene();
+  menuCompositeMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      tDiffuse: { value: menuBackgroundTarget.texture },
+      resolution: { value: new THREE.Vector2(width, height) },
+      rectCount: { value: 0 },
+      blurRects: {
+        value: Array.from({ length: MENU_BUTTON_BLUR_MAX_RECTS }, () => new THREE.Vector4()),
+      },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = vec4(position.xy, 0.0, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D tDiffuse;
+      uniform vec2 resolution;
+      uniform int rectCount;
+      uniform vec4 blurRects[${MENU_BUTTON_BLUR_MAX_RECTS}];
+      varying vec2 vUv;
+
+      float rectMask(vec2 uv, vec4 rect) {
+        vec2 feather = vec2(10.0) / resolution;
+        float left = smoothstep(rect.x, rect.x + feather.x, uv.x);
+        float right = 1.0 - smoothstep(rect.z - feather.x, rect.z, uv.x);
+        float bottom = smoothstep(rect.y, rect.y + feather.y, uv.y);
+        float top = 1.0 - smoothstep(rect.w - feather.y, rect.w, uv.y);
+        return left * right * bottom * top;
+      }
+
+      vec4 sampleBlur(vec2 uv) {
+        vec2 texel = 1.0 / resolution;
+        vec4 color = texture2D(tDiffuse, uv) * 0.18;
+        color += texture2D(tDiffuse, uv + texel * vec2(-5.0, 0.0)) * 0.07;
+        color += texture2D(tDiffuse, uv + texel * vec2(5.0, 0.0)) * 0.07;
+        color += texture2D(tDiffuse, uv + texel * vec2(0.0, -5.0)) * 0.07;
+        color += texture2D(tDiffuse, uv + texel * vec2(0.0, 5.0)) * 0.07;
+        color += texture2D(tDiffuse, uv + texel * vec2(-3.0, -3.0)) * 0.09;
+        color += texture2D(tDiffuse, uv + texel * vec2(3.0, -3.0)) * 0.09;
+        color += texture2D(tDiffuse, uv + texel * vec2(-3.0, 3.0)) * 0.09;
+        color += texture2D(tDiffuse, uv + texel * vec2(3.0, 3.0)) * 0.09;
+        color += texture2D(tDiffuse, uv + texel * vec2(-1.5, 0.0)) * 0.085;
+        color += texture2D(tDiffuse, uv + texel * vec2(1.5, 0.0)) * 0.085;
+        color += texture2D(tDiffuse, uv + texel * vec2(0.0, -1.5)) * 0.085;
+        color += texture2D(tDiffuse, uv + texel * vec2(0.0, 1.5)) * 0.085;
+        return color;
+      }
+
+      void main() {
+        vec4 base = texture2D(tDiffuse, vUv);
+        float mask = 0.0;
+        for (int index = 0; index < ${MENU_BUTTON_BLUR_MAX_RECTS}; index += 1) {
+          if (index >= rectCount) {
+            break;
+          }
+          mask = max(mask, rectMask(vUv, blurRects[index]));
+        }
+        if (mask <= 0.001) {
+          discard;
+        }
+        vec4 blurred = sampleBlur(vUv);
+        gl_FragColor = vec4(blurred.rgb, mask);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    depthTest: false,
+  });
+  menuCompositeQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), menuCompositeMaterial);
+  menuCompositeScene.add(menuCompositeQuad);
 }
 
 function createStartMenuStarField() {
@@ -1054,9 +1166,11 @@ function updateMenuPlaneTexture() {
   ctx.restore();
 
   menuButtonRects = [
-    { id: "new", label: "NEW GAME", x: 555, y: 472, width: 330, height: 42 },
-    { id: "load", label: "LOAD GAME", x: 555, y: 540, width: 330, height: 42 },
-    { id: "exit", label: "EXIT", x: 555, y: 608, width: 330, height: 42 },
+    { id: "new", label: "NEW GAME", x: 555, y: 450, width: 330, height: 42 },
+    { id: "load", label: "LOAD GAME", x: 555, y: 508, width: 330, height: 42 },
+    { id: "settings", label: "SETTINGS", x: 555, y: 566, width: 330, height: 42 },
+    { id: "lore", label: "LORE", x: 555, y: 624, width: 330, height: 42 },
+    { id: "exit", label: "EXIT", x: 555, y: 682, width: 330, height: 42 },
   ];
 
   for (const button of menuButtonRects) {
@@ -1069,7 +1183,7 @@ function updateMenuPlaneTexture() {
     ctx.fill();
 
     ctx.shadowBlur = isActive ? 6 : 0;
-    ctx.fillStyle = isActive ? "rgba(255, 255, 255, 0.86)" : "rgba(255, 255, 255, 0.68)";
+    ctx.fillStyle = "#ffffff";
     ctx.font = '400 16px "Albert Sans", sans-serif';
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
@@ -1168,8 +1282,128 @@ function renderStartMenuScene() {
     return;
   }
 
+  if (!menuBackgroundTarget || !menuCompositeScene || !menuCompositeCamera || !menuCompositeMaterial) {
+    renderer.clear(true, true, true);
+    renderer.render(menuScene, menuCamera);
+    return;
+  }
+
+  updateStartMenuBlurRects();
+
+  const previousAutoClear = renderer.autoClear;
+  const previousRenderTarget = renderer.getRenderTarget();
+  const wasMenuGroupVisible = menuGroup?.visible ?? true;
+  const wasMenuSkyVisible = menuSky?.visible ?? true;
+  const wasMenuStarsVisible = menuStars?.visible ?? true;
+  const wasMenuStarLinksVisible = menuStarLinks?.visible ?? true;
+
+  if (menuGroup) {
+    menuGroup.visible = false;
+  }
+  renderer.autoClear = true;
+  renderer.setRenderTarget(menuBackgroundTarget);
   renderer.clear(true, true, true);
   renderer.render(menuScene, menuCamera);
+
+  renderer.setRenderTarget(null);
+  renderer.autoClear = true;
+  renderer.clear(true, true, true);
+  renderer.render(menuScene, menuCamera);
+  renderer.autoClear = false;
+  renderer.render(menuCompositeScene, menuCompositeCamera);
+
+  if (menuGroup) {
+    menuGroup.visible = wasMenuGroupVisible;
+  }
+
+  if (menuSky) {
+    menuSky.visible = false;
+  }
+  if (menuStars) {
+    menuStars.visible = false;
+  }
+  if (menuStarLinks) {
+    menuStarLinks.visible = false;
+  }
+
+  renderer.clearDepth();
+  renderer.render(menuScene, menuCamera);
+
+  if (menuSky) {
+    menuSky.visible = wasMenuSkyVisible;
+  }
+  if (menuStars) {
+    menuStars.visible = wasMenuStarsVisible;
+  }
+  if (menuStarLinks) {
+    menuStarLinks.visible = wasMenuStarLinksVisible;
+  }
+  renderer.autoClear = previousAutoClear;
+  renderer.setRenderTarget(previousRenderTarget);
+}
+
+function updateStartMenuBlurRects() {
+  if (!menuCompositeMaterial || !menuPlane || !menuCamera) {
+    return;
+  }
+
+  const rectUniforms = menuCompositeMaterial.uniforms.blurRects.value;
+  const rects = menuButtonRects.slice(0, MENU_BUTTON_BLUR_MAX_RECTS);
+  menuPlane.updateMatrixWorld(true);
+  menuCamera.updateMatrixWorld(true);
+
+  for (let index = 0; index < rectUniforms.length; index += 1) {
+    if (index >= rects.length) {
+      rectUniforms[index].set(0, 0, 0, 0);
+      continue;
+    }
+
+    const rect = projectMenuButtonRect(rects[index], 14);
+    rectUniforms[index].copy(rect);
+  }
+  menuCompositeMaterial.uniforms.rectCount.value = rects.length;
+}
+
+function projectMenuButtonRect(button, padding = 0) {
+  const left = Math.max(0, button.x - padding);
+  const right = Math.min(MENU_TEXTURE_WIDTH, button.x + button.width + padding);
+  const top = Math.max(0, button.y - padding);
+  const bottom = Math.min(MENU_TEXTURE_HEIGHT, button.y + button.height + padding);
+  const corners = [
+    menuTexturePointToPlaneVector(left, top),
+    menuTexturePointToPlaneVector(right, top),
+    menuTexturePointToPlaneVector(right, bottom),
+    menuTexturePointToPlaneVector(left, bottom),
+  ];
+
+  let minX = 1;
+  let minY = 1;
+  let maxX = 0;
+  let maxY = 0;
+  for (const corner of corners) {
+    corner.applyMatrix4(menuPlane.matrixWorld).project(menuCamera);
+    const x = corner.x * 0.5 + 0.5;
+    const y = corner.y * 0.5 + 0.5;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+
+  return new THREE.Vector4(
+    THREE.MathUtils.clamp(minX, 0, 1),
+    THREE.MathUtils.clamp(minY, 0, 1),
+    THREE.MathUtils.clamp(maxX, 0, 1),
+    THREE.MathUtils.clamp(maxY, 0, 1),
+  );
+}
+
+function menuTexturePointToPlaneVector(x, y) {
+  return new THREE.Vector3(
+    (x / MENU_TEXTURE_WIDTH - 0.5) * MENU_PLANE_WIDTH,
+    (0.5 - y / MENU_TEXTURE_HEIGHT) * MENU_PLANE_HEIGHT,
+    0,
+  );
 }
 
 function resizeStartMenuScene(width = window.innerWidth, height = window.innerHeight) {
@@ -1189,7 +1423,19 @@ function resizeStartMenuScene(width = window.innerWidth, height = window.innerHe
   const targetHeight = Math.min(MENU_PLANE_HEIGHT, visibleHeight * 0.84);
   const scale = Math.min(targetWidth / MENU_PLANE_WIDTH, targetHeight / MENU_PLANE_HEIGHT);
   menuGroup.scale.setScalar(scale);
+  resizeStartMenuComposite(width, height, pixelRatio);
   renderStartMenuScene();
+}
+
+function resizeStartMenuComposite(width, height, pixelRatio = Math.min(window.devicePixelRatio, 2)) {
+  if (!menuBackgroundTarget || !menuCompositeMaterial) {
+    return;
+  }
+
+  const targetWidth = Math.max(1, Math.floor(width * pixelRatio));
+  const targetHeight = Math.max(1, Math.floor(height * pixelRatio));
+  menuBackgroundTarget.setSize(targetWidth, targetHeight);
+  menuCompositeMaterial.uniforms.resolution.value.set(targetWidth, targetHeight);
 }
 
 function onStartMenuPointerMove(event) {
@@ -1251,6 +1497,13 @@ function onStartMenuClick(event) {
   }
   if (button.id === "load") {
     openLoadGameDialog();
+    return;
+  }
+  if (button.id === "settings") {
+    openSettingsDialog();
+    return;
+  }
+  if (button.id === "lore") {
     return;
   }
   if (button.id === "exit") {
@@ -1316,6 +1569,21 @@ function disposeStartMenuScene() {
     menuPlane.material.dispose();
     menuPlane = null;
   }
+  if (menuCompositeQuad) {
+    menuCompositeQuad.geometry.dispose();
+    menuCompositeScene?.remove(menuCompositeQuad);
+    menuCompositeQuad = null;
+  }
+  if (menuCompositeMaterial) {
+    menuCompositeMaterial.dispose();
+    menuCompositeMaterial = null;
+  }
+  if (menuBackgroundTarget) {
+    menuBackgroundTarget.dispose();
+    menuBackgroundTarget = null;
+  }
+  menuCompositeScene = null;
+  menuCompositeCamera = null;
   if (menuStars) {
     menuStars.geometry.dispose();
     menuStars.material.dispose();
@@ -1364,6 +1632,61 @@ function openMenuDialog(dialog, focusTarget = null) {
 function closeMenuDialogs() {
   seedDialog.hidden = true;
   loadDialog.hidden = true;
+  settingsDialog.hidden = true;
+}
+
+function openSettingsDialog() {
+  syncSettingsDialog();
+  openMenuDialog(settingsDialog, menuMasterVolume);
+}
+
+function readAudioSettings() {
+  try {
+    const settings = JSON.parse(localStorage.getItem(AUDIO_SETTINGS_STORAGE_KEY) || "{}");
+    return {
+      masterVolume: THREE.MathUtils.clamp(Number(settings.masterVolume ?? 1), 0, 1),
+      menuMusicEnabled: settings.menuMusicEnabled !== false,
+    };
+  } catch {
+    return {
+      masterVolume: 1,
+      menuMusicEnabled: true,
+    };
+  }
+}
+
+function writeAudioSettings() {
+  localStorage.setItem(AUDIO_SETTINGS_STORAGE_KEY, JSON.stringify(audioSettings));
+}
+
+function syncSettingsDialog() {
+  menuMasterVolume.value = String(audioSettings.masterVolume);
+  menuMusicEnabled.checked = audioSettings.menuMusicEnabled;
+}
+
+function updateAudioSettingsFromMenu() {
+  audioSettings = {
+    masterVolume: THREE.MathUtils.clamp(Number(menuMasterVolume.value), 0, 1),
+    menuMusicEnabled: menuMusicEnabled.checked,
+  };
+  writeAudioSettings();
+  applyAudioSettings();
+}
+
+function applyAudioSettings() {
+  menuMusicAudio.volume = getMenuMusicVolume();
+  musicPlayerController?.setMasterVolume(audioSettings.masterVolume);
+  if (!audioSettings.menuMusicEnabled) {
+    menuMusicAudio.pause();
+    return;
+  }
+  if (isStartMenuOpen && !isAppExited) {
+    playMenuMusic();
+  }
+}
+
+function getMenuMusicVolume() {
+  return 0.62 * audioSettings.masterVolume;
 }
 
 function confirmNewGameSeed() {
@@ -1398,7 +1721,7 @@ function consumeStartAfterSeedFlag() {
 }
 
 function playMenuMusic() {
-  if (isAppExited || !isStartMenuOpen) {
+  if (isAppExited || !isStartMenuOpen || !audioSettings.menuMusicEnabled) {
     return;
   }
 
@@ -1406,7 +1729,7 @@ function playMenuMusic() {
     cancelAnimationFrame(menuMusicFadeFrame);
     menuMusicFadeFrame = null;
   }
-  menuMusicAudio.volume = 0.62;
+  menuMusicAudio.volume = getMenuMusicVolume();
   menuMusicAudio.play().catch(() => {});
 }
 
@@ -1434,7 +1757,7 @@ function fadeOutMenuMusic(durationMs = 900) {
       menuMusicFadeFrame = null;
       menuMusicAudio.pause();
       menuMusicAudio.currentTime = 0;
-      menuMusicAudio.volume = 0.62;
+      menuMusicAudio.volume = getMenuMusicVolume();
       resolve();
     };
     menuMusicFadeFrame = requestAnimationFrame(tick);

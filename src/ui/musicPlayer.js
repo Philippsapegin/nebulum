@@ -21,6 +21,7 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
   let systemMusicPlayerPosition = null;
   let isDraggingMusicPlayer = false;
   let musicFadeFrame = null;
+  let masterVolume = 1;
   const musicPlayerDragOffset = new THREE.Vector2();
   const musicAudio = new Audio();
   musicAudio.preload = "metadata";
@@ -42,7 +43,7 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
       musicTrackList.append(item);
     });
 
-    musicAudio.volume = Number(musicVolume.value);
+    updateEffectiveMusicVolume();
     musicVolume.style.setProperty("--vol-frac", musicVolume.value);
     setMusicTrack(0, false);
 
@@ -59,7 +60,7 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
       setMusicDropdownOpen(musicTrackList.hidden);
     });
     musicVolume.addEventListener("input", () => {
-      musicAudio.volume = Number(musicVolume.value);
+      updateEffectiveMusicVolume();
       musicVolume.style.setProperty("--vol-frac", musicVolume.value);
     });
     musicTrackCurrent.addEventListener("pointerdown", (event) => {
@@ -121,8 +122,19 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
       cancelAnimationFrame(musicFadeFrame);
       musicFadeFrame = null;
     }
-    musicAudio.volume = Number(musicVolume.value);
+    updateEffectiveMusicVolume();
     return musicAudio.play().catch(() => {});
+  }
+
+  function updateEffectiveMusicVolume() {
+    musicAudio.volume = THREE.MathUtils.clamp(Number(musicVolume.value) * masterVolume, 0, 1);
+  }
+
+  function setMasterVolume(value) {
+    masterVolume = THREE.MathUtils.clamp(Number(value), 0, 1);
+    if (musicFadeFrame === null) {
+      updateEffectiveMusicVolume();
+    }
   }
 
   function playAdjacentTrack(direction) {
@@ -392,7 +404,7 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
         }
         musicFadeFrame = null;
         stop();
-        musicAudio.volume = Number(musicVolume.value);
+        updateEffectiveMusicVolume();
         resolve();
       };
       musicFadeFrame = requestAnimationFrame(tick);
@@ -408,6 +420,7 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
     ensureSystemPosition: ensureSystemMusicPlayerPosition,
     fadeOutStop,
     play,
+    setMasterVolume,
     stop,
     updateScrollbar: updateMusicTrackScrollbar,
   };
