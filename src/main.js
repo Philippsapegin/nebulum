@@ -160,6 +160,7 @@ let menuStarLinks = null;
 let menuStarPoints = [];
 let menuStarTrailIndices = [];
 let menuStarPilots = [];
+let menuStarPilotSerial = 0;
 let menuStarGlowTexture = null;
 let menuActiveButton = null;
 let menuButtonRects = [];
@@ -178,7 +179,12 @@ const MENU_STAR_LINK_COLOR = 0xbfeaff;
 const MENU_STAR_LINK_MAX_DISTANCE = 5.8;
 const MENU_STAR_LINK_MIN_DISTANCE = 1.35;
 const MENU_STAR_LINK_SPEED_SCALE = 5;
-const MENU_STAR_LINK_TRAIL_DEPTH = 3;
+const MENU_STAR_LINK_TRAIL_DEPTH = 5;
+const MENU_STAR_PILOT_INITIAL_COUNT = 3;
+const MENU_STAR_PILOT_MIN_COUNT = 5;
+const MENU_STAR_PILOT_MAX_COUNT = 10;
+const MENU_STAR_PILOT_BRANCH_CHANCE = 0.32;
+const MENU_STAR_PILOT_STOP_CHANCE = 0.13;
 
 const renderer = new THREE.WebGLRenderer({
   canvas: sceneCanvas,
@@ -666,23 +672,35 @@ function createStartMenuStarField() {
 function resetStartMenuStarPilots() {
   const source = getStartMenuTrailSource();
   const starts = [];
-  menuStarPilots = Array.from({ length: 3 }, (_, index) => {
+  menuStarPilotSerial = 0;
+  menuStarPilots = Array.from({ length: MENU_STAR_PILOT_INITIAL_COUNT }, (_, index) => {
     const random = createRandom(`nebulum:start-menu-link-trail:${index}`);
     const currentIndex = chooseStartMenuPilotStart(source, random, starts);
     starts.push(currentIndex);
-    const glow = createStartMenuPilotGlow();
-    glow.position.copy(menuStarPoints[currentIndex] ?? new THREE.Vector3());
-    menuStarLinks.add(glow);
-    return {
+    return createStartMenuPilot({
       currentIndex,
-      glow,
-      previousIndex: null,
       random,
-      segments: [],
-      sourceIndex: currentIndex,
       spawnDelay: (0.12 + index * 0.22 + random() * 0.35) * MENU_STAR_LINK_SPEED_SCALE,
-    };
+    });
   });
+}
+
+function createStartMenuPilot({ currentIndex, previousIndex = null, random, spawnDelay }) {
+  menuStarPilotSerial += 1;
+  const glow = createStartMenuPilotGlow();
+  glow.position.copy(menuStarPoints[currentIndex] ?? new THREE.Vector3());
+  menuStarLinks.add(glow);
+  return {
+    active: true,
+    currentIndex,
+    glow,
+    id: menuStarPilotSerial,
+    previousIndex,
+    random,
+    segments: [],
+    sourceIndex: currentIndex,
+    spawnDelay,
+  };
 }
 
 function getStartMenuTrailSource() {
@@ -728,13 +746,17 @@ function createStartMenuPilotGlow() {
 }
 
 function updateStartMenuStarTrail(deltaSeconds) {
-  if (menuStarPilots.length === 0 || !menuStarLinks || menuStarPoints.length < 2) {
+  if (!menuStarLinks || menuStarPoints.length < 2) {
     return;
   }
 
-  for (const pilot of menuStarPilots) {
-    pilot.spawnDelay -= deltaSeconds;
-    if (pilot.spawnDelay <= 0) {
+  const pilotCount = menuStarPilots.length;
+  for (let index = 0; index < pilotCount; index += 1) {
+    const pilot = menuStarPilots[index];
+    if (pilot.active) {
+      pilot.spawnDelay -= deltaSeconds;
+    }
+    if (pilot.active && pilot.spawnDelay <= 0) {
       spawnStartMenuStarLink(pilot);
       pilot.spawnDelay = (0.48 + pilot.random() * 0.34) * MENU_STAR_LINK_SPEED_SCALE;
     }
@@ -742,9 +764,45 @@ function updateStartMenuStarTrail(deltaSeconds) {
     updateStartMenuPilotGlow(pilot);
     updateStartMenuPilotSegments(pilot, deltaSeconds);
   }
+
+  for (let index = menuStarPilots.length - 1; index >= 0; index -= 1) {
+    const pilot = menuStarPilots[index];
+    if (!pilot.active && pilot.segments.length === 0) {
+      menuStarPilots.splice(index, 1);
+    }
+  }
+
+  while (
+    countActiveStartMenuPilots() < MENU_STAR_PILOT_MIN_COUNT
+    && countActiveStartMenuPilots() < MENU_STAR_PILOT_MAX_COUNT
+  ) {
+    spawnStartMenuPilotAtRandom();
+  }
+}
+
+function countActiveStartMenuPilots() {
+  return menuStarPilots.reduce((count, pilot) => count + (pilot.active ? 1 : 0), 0);
+}
+
+function spawnStartMenuPilotAtRandom() {
+  const source = getStartMenuTrailSource();
+  const random = createRandom(`nebulum:start-menu-link-trail:${menuStarPilotSerial + 1}`);
+  const starts = menuStarPilots
+    .filter((pilot) => pilot.active)
+    .map((pilot) => pilot.currentIndex);
+  const currentIndex = chooseStartMenuPilotStart(source, random, starts);
+  menuStarPilots.push(createStartMenuPilot({
+    currentIndex,
+    random,
+    spawnDelay: (0.24 + random() * 0.56) * MENU_STAR_LINK_SPEED_SCALE,
+  }));
 }
 
 function updateStartMenuPilotGlow(pilot) {
+  if (!pilot.active) {
+    return;
+  }
+
   const glowPoint = menuStarPoints[pilot.sourceIndex ?? pilot.currentIndex];
   if (!glowPoint || !pilot.glow) {
     return;
@@ -757,6 +815,8 @@ function updateStartMenuPilotGlow(pilot) {
 }
 
 function updateStartMenuPilotSegments(pilot, deltaSeconds) {
+  scheduleInactiveStartMenuPilotRetraction(pilot);
+
   for (let index = pilot.segments.length - 1; index >= 0; index -= 1) {
     const segment = pilot.segments[index];
     segment.elapsed += deltaSeconds;
@@ -791,8 +851,22 @@ function updateStartMenuPilotSegments(pilot, deltaSeconds) {
   }
 }
 
+function scheduleInactiveStartMenuPilotRetraction(pilot) {
+  if (pilot.active || pilot.segments.some((segment) => segment.retracting)) {
+    return;
+  }
+
+  const oldestReadySegment = pilot.segments.find((segment) => (
+    !segment.retracting
+    && segment.elapsed >= segment.growSeconds + 0.4 * MENU_STAR_LINK_SPEED_SCALE
+  ));
+  if (oldestReadySegment) {
+    retractStartMenuStarLink(oldestReadySegment, oldestReadySegment.end);
+  }
+}
+
 function spawnStartMenuStarLink(pilot) {
-  if (!pilot || menuStarPoints.length < 2) {
+  if (!pilot?.active || menuStarPoints.length < 2) {
     return;
   }
 
@@ -804,6 +878,11 @@ function spawnStartMenuStarLink(pilot) {
   }
 
   const endIndex = chooseStartMenuLinkTarget(pilot, startIndex);
+  if (endIndex === startIndex) {
+    stopStartMenuPilot(pilot);
+    return;
+  }
+  const targetHasOutgoingLink = hasStartMenuOutgoingLink(endIndex);
   const end = menuStarPoints[endIndex];
   pilot.previousIndex = startIndex;
   pilot.currentIndex = endIndex;
@@ -830,6 +909,7 @@ function spawnStartMenuStarLink(pilot) {
   pilot.segments.push({
     elapsed: 0,
     end,
+    endIndex,
     growSeconds: 0.42 * MENU_STAR_LINK_SPEED_SCALE,
     line,
     opacity: 0,
@@ -842,7 +922,42 @@ function spawnStartMenuStarLink(pilot) {
     scratchEnd: new THREE.Vector3(),
     scratchStart: new THREE.Vector3(),
     start,
+    startIndex,
   });
+
+  if (targetHasOutgoingLink || pilot.random() < MENU_STAR_PILOT_STOP_CHANCE) {
+    stopStartMenuPilot(pilot);
+    return;
+  }
+
+  if (countActiveStartMenuPilots() < MENU_STAR_PILOT_MAX_COUNT && pilot.random() < MENU_STAR_PILOT_BRANCH_CHANCE) {
+    const branchRandom = createRandom(`nebulum:start-menu-link-trail:${menuStarPilotSerial + 1}`);
+    menuStarPilots.push(createStartMenuPilot({
+      currentIndex: endIndex,
+      previousIndex: startIndex,
+      random: branchRandom,
+      spawnDelay: (0.5 + branchRandom() * 0.38) * MENU_STAR_LINK_SPEED_SCALE,
+    }));
+  }
+}
+
+function hasStartMenuOutgoingLink(starIndex) {
+  return menuStarPilots.some((pilot) => pilot.segments.some((segment) => (
+    !segment.retracting && segment.startIndex === starIndex
+  )));
+}
+
+function stopStartMenuPilot(pilot) {
+  if (!pilot?.active) {
+    return;
+  }
+
+  pilot.active = false;
+  if (pilot.glow) {
+    menuStarLinks.remove(pilot.glow);
+    pilot.glow.material.dispose();
+    pilot.glow = null;
+  }
 }
 
 function retractStartMenuStarLink(segment, target) {
@@ -862,12 +977,17 @@ function chooseStartMenuLinkTarget(pilot, startIndex) {
   const random = pilot.random;
   const start = menuStarPoints[startIndex];
   const source = getStartMenuTrailSource();
+  const occupiedTargets = getStartMenuOutgoingTargets(startIndex);
   let bestIndex = startIndex;
   let bestScore = Infinity;
 
   for (let attempt = 0; attempt < 96; attempt += 1) {
     const candidateIndex = source[Math.floor(random() * source.length)];
-    if (candidateIndex === startIndex || candidateIndex === pilot.previousIndex) {
+    if (
+      candidateIndex === startIndex
+      || candidateIndex === pilot.previousIndex
+      || occupiedTargets.has(candidateIndex)
+    ) {
       continue;
     }
 
@@ -887,8 +1007,24 @@ function chooseStartMenuLinkTarget(pilot, startIndex) {
     return bestIndex;
   }
 
-  const fallback = source.find((index) => index !== startIndex && index !== pilot.previousIndex);
+  const fallback = source.find((index) => (
+    index !== startIndex
+    && index !== pilot.previousIndex
+    && !occupiedTargets.has(index)
+  ));
   return fallback ?? startIndex;
+}
+
+function getStartMenuOutgoingTargets(startIndex) {
+  const targets = new Set();
+  for (const pilot of menuStarPilots) {
+    for (const segment of pilot.segments) {
+      if (!segment.retracting && segment.startIndex === startIndex) {
+        targets.add(segment.endIndex);
+      }
+    }
+  }
+  return targets;
 }
 
 function disposeStartMenuStarLink(segment) {
@@ -1193,6 +1329,7 @@ function disposeStartMenuScene() {
       if (pilot.glow) {
         menuStarLinks.remove(pilot.glow);
         pilot.glow.material.dispose();
+        pilot.glow = null;
       }
     }
     menuStarLinks.clear();
@@ -1203,6 +1340,7 @@ function disposeStartMenuScene() {
   menuStarPoints = [];
   menuStarTrailIndices = [];
   menuStarPilots = [];
+  menuStarPilotSerial = 0;
   menuScene?.clear();
   menuScene = null;
   menuCamera = null;
