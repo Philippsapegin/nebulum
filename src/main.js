@@ -1661,6 +1661,7 @@ function writeAudioSettings() {
 
 function syncSettingsDialog() {
   menuMasterVolume.value = String(audioSettings.masterVolume);
+  menuMasterVolume.style.setProperty("--settings-vol-frac", String(audioSettings.masterVolume));
   menuMusicEnabled.checked = audioSettings.menuMusicEnabled;
 }
 
@@ -1669,6 +1670,7 @@ function updateAudioSettingsFromMenu() {
     masterVolume: THREE.MathUtils.clamp(Number(menuMasterVolume.value), 0, 1),
     menuMusicEnabled: menuMusicEnabled.checked,
   };
+  menuMasterVolume.style.setProperty("--settings-vol-frac", String(audioSettings.masterVolume));
   writeAudioSettings();
   applyAudioSettings();
 }

@@ -166,7 +166,7 @@ body.start-menu-open .hover-panel {
 .start-menu__button,
 .menu-dialog__button {
   height: 38px;
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  border: 0;
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.045);
   color: rgba(255, 255, 255, 0.88);
@@ -178,14 +178,12 @@ body.start-menu-open .hover-panel {
   cursor: pointer;
   transition:
     background 160ms ease,
-    border-color 160ms ease,
     color 160ms ease,
     transform 160ms ease;
 }
 
 .start-menu__button:hover,
 .menu-dialog__button:hover:not(:disabled) {
-  border-color: rgba(255, 255, 255, 0.44);
   background: rgba(255, 255, 255, 0.095);
   color: rgb(255, 255, 255);
 }
@@ -198,13 +196,11 @@ body.start-menu-open .hover-panel {
 .start-menu__button:focus-visible,
 .menu-dialog__button:focus-visible,
 .menu-dialog__input:focus-visible {
-  outline: 1px solid rgba(255, 255, 255, 0.42);
-  outline-offset: 3px;
+  outline: none;
 }
 
 .menu-dialog__button:disabled {
   color: rgba(255, 255, 255, 0.26);
-  border-color: rgba(255, 255, 255, 0.1);
   cursor: default;
 }
 
@@ -253,13 +249,11 @@ body.start-menu-open .hover-panel {
 
 .menu-dialog__surface {
   width: min(390px, 100%);
-  padding: 24px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  padding: 14px;
+  border: 0;
   border-radius: 3px;
-  background: rgba(7, 7, 8, 0.92);
-  box-shadow:
-    0 24px 80px rgba(0, 0, 0, 0.54),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  background: rgba(10, 10, 11, 0.48);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
   backdrop-filter: blur(18px);
 }
 
@@ -268,18 +262,23 @@ body.start-menu-open .hover-panel {
 }
 
 .menu-dialog__title {
-  color: rgba(255, 255, 255, 0.94);
-  font-family: "League Gothic", "Albert Sans", sans-serif;
-  font-size: 40px;
+  color: rgb(255, 255, 255);
+  font-family: "Wire One", "Albert Sans", sans-serif;
+  font-size: 48px;
+  font-weight: 400;
   line-height: 0.9;
   letter-spacing: 0;
   text-transform: uppercase;
+  text-shadow:
+    0 0 14px rgba(255, 255, 255, 0.14),
+    0 1px 8px rgba(0, 0, 0, 0.44);
+  user-select: none;
 }
 
 .menu-dialog__field {
   display: grid;
-  gap: 8px;
-  margin-top: 24px;
+  gap: 6px;
+  margin-top: 18px;
 }
 
 .menu-dialog__label {
@@ -290,43 +289,92 @@ body.start-menu-open .hover-panel {
 
 .menu-dialog__input {
   width: 100%;
-  height: 34px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  height: 20px;
+  border: 0;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.055);
-  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(255, 255, 255, 0.82);
   font: inherit;
-  font-size: 13px;
+  font-size: 10px;
   outline: none;
-  padding: 0 10px;
+  padding: 0 7px;
+  text-transform: uppercase;
 }
 
 .menu-dialog__range {
   width: 100%;
+  height: 20px;
+  margin: 0;
+  padding: 0 8px;
+  appearance: none;
+  -webkit-appearance: none;
+  border-radius: 3px;
+  background:
+    linear-gradient(
+      to right,
+      rgba(255, 255, 255, 0.74) calc((100% - 8px) * var(--settings-vol-frac, 1) - 1px),
+      transparent calc((100% - 8px) * var(--settings-vol-frac, 1) - 1px),
+      transparent calc((100% - 8px) * var(--settings-vol-frac, 1) + 9px),
+      rgba(255, 255, 255, 0.74) calc((100% - 8px) * var(--settings-vol-frac, 1) + 9px)
+    ) no-repeat center / calc(100% - 16px) 1px,
+    rgba(255, 255, 255, 0.045);
   accent-color: #ffffff;
+  cursor: pointer;
+  outline: none;
+}
+
+.menu-dialog__range::-webkit-slider-runnable-track {
+  height: 1px;
+  background: transparent;
+}
+
+.menu-dialog__range::-webkit-slider-thumb {
+  width: 8px;
+  height: 8px;
+  margin-top: -3.5px;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  border-radius: 50%;
+  background: transparent;
+}
+
+.menu-dialog__range::-moz-range-track {
+  height: 1px;
+  background: transparent;
+}
+
+.menu-dialog__range::-moz-range-thumb {
+  width: 8px;
+  height: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.86);
+  border-radius: 50%;
+  background: transparent;
 }
 
 .menu-dialog__check {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   margin-top: 18px;
-  color: rgba(255, 255, 255, 0.84);
-  font-size: 11px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 10px;
   text-transform: uppercase;
 }
 
 .menu-dialog__check input {
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
+  margin: 0;
   accent-color: #ffffff;
+  outline: none;
 }
 
 .menu-dialog__actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 22px;
+  gap: 8px;
+  margin-top: 18px;
 }
 
 .menu-dialog__surface--wide .menu-dialog__actions {
@@ -336,10 +384,10 @@ body.start-menu-open .hover-panel {
 .menu-save-list {
   display: grid;
   min-height: 160px;
-  margin-top: 22px;
-  border: 1px solid rgba(255, 255, 255, 0.11);
+  margin-top: 18px;
+  border: 0;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.045);
 }
 
 .menu-save-list__empty {
@@ -350,23 +398,23 @@ body.start-menu-open .hover-panel {
 }
 
 .menu-save-list__item {
-  height: 38px;
+  height: 20px;
   border: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   background: transparent;
-  color: rgba(255, 255, 255, 0.72);
+  color: rgba(255, 255, 255, 0.56);
   font: inherit;
-  font-size: 11px;
+  font-size: 10px;
+  line-height: 20px;
   text-align: left;
   text-transform: uppercase;
-  padding: 0 12px;
+  padding: 0 6px;
   cursor: pointer;
 }
 
 .menu-save-list__item:hover,
 .menu-save-list__item.selected {
-  background: rgba(255, 255, 255, 0.075);
-  color: rgba(255, 255, 255, 0.94);
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .menu-save-list__item:last-child {
