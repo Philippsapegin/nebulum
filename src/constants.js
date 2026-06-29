@@ -144,6 +144,8 @@ export const PLANET_STAGE_WIDTH = 292;
 export const PLANET_STAGE_HEIGHT = 380;
 export const PLANET_STAGE_CONTENT_RADIUS = 80;
 
+export const MENU_MUSIC_TRACK = "0. Main menu.mp3";
+
 export const MUSIC_TRACKS = [
   "1. Nebulum.mp3",
   "2. Afar from home.mp3",

@@ -2,6 +2,7 @@ import "./styles.css";
 import * as THREE from "three";
 import {
   GRAVITY_BASE_VALUES,
+  MENU_MUSIC_TRACK,
   MAX_SELECTION_FADING_SEGMENTS,
   MAX_SELECTION_POINTS,
   MAX_SELECTION_SEGMENTS,
@@ -70,6 +71,7 @@ const menuSaveList = document.querySelector("#menu-save-list");
 const menuLoadSave = document.querySelector("#menu-load-save");
 const menuDeleteSave = document.querySelector("#menu-delete-save");
 const menuLoadClose = document.querySelector("#menu-load-close");
+const gameMenuButton = document.querySelector("#game-menu-button");
 const sceneCanvas = document.querySelector("#scene");
 const starLabels = document.querySelector("#star-labels");
 const hoverNameWrap = document.querySelector("#hover-name-wrap");
@@ -141,6 +143,8 @@ let isAppExited = false;
 let isGameRuntimeReady = false;
 let animationFrameId = null;
 let menuAnimationFrameId = null;
+let menuMusicFadeFrame = null;
+let isReturningToMainMenu = false;
 let selectedMenuSaveIndex = -1;
 let shouldStartGameAfterInit = false;
 let menuScene = null;
@@ -181,6 +185,10 @@ const renderer = new THREE.WebGLRenderer({
   antialias: true,
   alpha: true,
 });
+const menuMusicAudio = new Audio(`/Music/${encodeURIComponent(MENU_MUSIC_TRACK)}`);
+menuMusicAudio.loop = true;
+menuMusicAudio.preload = "auto";
+menuMusicAudio.volume = 0.62;
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setClearColor(0x000000, 0);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -481,6 +489,7 @@ function initializeNebulumRuntime() {
 
   initPanel();
   musicPlayerController.init();
+  musicPlayerController.play();
   buildSky(createRandom(`${SEED}:sky`));
   buildLocalSpaceStars(createRandom(`${SEED}:local-space`));
   buildLinks(links);
@@ -507,9 +516,11 @@ function initStartMenu() {
   });
   menuLoadGame.addEventListener("click", openLoadGameDialog);
   menuExit.addEventListener("click", exitNebulum);
+  gameMenuButton.addEventListener("click", returnToMainMenu);
   startMenu.addEventListener("pointermove", onStartMenuPointerMove);
   startMenu.addEventListener("pointerleave", clearStartMenuPointer);
   startMenu.addEventListener("click", onStartMenuClick);
+  startMenu.addEventListener("pointerdown", playMenuMusic, { once: true });
   menuSeedConfirm.addEventListener("click", confirmNewGameSeed);
   menuSeedCancel.addEventListener("click", closeMenuDialogs);
   menuSeedInput.addEventListener("keydown", (event) => {
@@ -537,6 +548,8 @@ function initStartMenu() {
     }
     closeMenuDialogs();
   });
+
+  playMenuMusic();
 }
 
 function initStartMenuScene() {
@@ -1246,6 +1259,68 @@ function consumeStartAfterSeedFlag() {
   }
 }
 
+function playMenuMusic() {
+  if (isAppExited || !isStartMenuOpen) {
+    return;
+  }
+
+  if (menuMusicFadeFrame !== null) {
+    cancelAnimationFrame(menuMusicFadeFrame);
+    menuMusicFadeFrame = null;
+  }
+  menuMusicAudio.volume = 0.62;
+  menuMusicAudio.play().catch(() => {});
+}
+
+function fadeOutMenuMusic(durationMs = 900) {
+  if (menuMusicFadeFrame !== null) {
+    cancelAnimationFrame(menuMusicFadeFrame);
+    menuMusicFadeFrame = null;
+  }
+
+  if (menuMusicAudio.paused) {
+    return Promise.resolve();
+  }
+
+  const startVolume = menuMusicAudio.volume;
+  const startedAt = performance.now();
+  return new Promise((resolve) => {
+    const tick = (now) => {
+      const progress = THREE.MathUtils.clamp((now - startedAt) / durationMs, 0, 1);
+      menuMusicAudio.volume = startVolume * (1 - progress);
+      if (progress < 1) {
+        menuMusicFadeFrame = requestAnimationFrame(tick);
+        return;
+      }
+
+      menuMusicFadeFrame = null;
+      menuMusicAudio.pause();
+      menuMusicAudio.currentTime = 0;
+      menuMusicAudio.volume = 0.62;
+      resolve();
+    };
+    menuMusicFadeFrame = requestAnimationFrame(tick);
+  });
+}
+
+async function returnToMainMenu() {
+  if (isReturningToMainMenu || isStartMenuOpen) {
+    return;
+  }
+
+  isReturningToMainMenu = true;
+  stopAnimationLoop();
+  await musicPlayerController?.fadeOutStop(650);
+  try {
+    sessionStorage.removeItem(START_AFTER_SEED_STORAGE_KEY);
+  } catch {}
+
+  const url = new URL(window.location.href);
+  url.searchParams.delete("seed");
+  url.searchParams.delete("multiplier");
+  window.location.href = url.toString();
+}
+
 function startGameFromMenu() {
   if (!isStartMenuOpen) {
     return;
@@ -1253,9 +1328,11 @@ function startGameFromMenu() {
 
   closeMenuDialogs();
   setMenuStatus("STARTING");
+  fadeOutMenuMusic();
   stopMenuAnimationLoop();
   isStartMenuOpen = false;
   document.body.classList.remove("start-menu-open");
+  document.body.classList.add("game-running");
   startMenu.classList.add("start-menu--hidden");
   startMenu.setAttribute("aria-hidden", "true");
   initializeNebulumRuntime();
@@ -1363,6 +1440,7 @@ async function exitNebulum() {
   startMenu.setAttribute("aria-hidden", "false");
   document.body.classList.add("start-menu-open");
   setMenuStatus("CLOSING");
+  await fadeOutMenuMusic(400);
 
   disposeNebulumRuntime();
   await clearTextureRuntimeCache();
@@ -3082,6 +3160,7 @@ function closeStarWindow() {
 
 function disposeNebulumRuntime() {
   disposeStartMenuScene();
+  document.body.classList.remove("game-running");
   if (!isGameRuntimeReady) {
     renderer.dispose();
     renderer.forceContextLoss();

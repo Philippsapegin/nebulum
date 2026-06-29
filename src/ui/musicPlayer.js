@@ -20,6 +20,7 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
   let musicMode = "order";
   let systemMusicPlayerPosition = null;
   let isDraggingMusicPlayer = false;
+  let musicFadeFrame = null;
   const musicPlayerDragOffset = new THREE.Vector2();
   const musicAudio = new Audio();
   musicAudio.preload = "metadata";
@@ -109,10 +110,19 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
 
   function toggleMusicPlayback() {
     if (musicAudio.paused) {
-      musicAudio.play().catch(() => {});
+      play();
     } else {
       musicAudio.pause();
     }
+  }
+
+  function play() {
+    if (musicFadeFrame !== null) {
+      cancelAnimationFrame(musicFadeFrame);
+      musicFadeFrame = null;
+    }
+    musicAudio.volume = Number(musicVolume.value);
+    return musicAudio.play().catch(() => {});
   }
 
   function playAdjacentTrack(direction) {
@@ -346,6 +356,10 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
   }
 
   function stop() {
+    if (musicFadeFrame !== null) {
+      cancelAnimationFrame(musicFadeFrame);
+      musicFadeFrame = null;
+    }
     isDraggingMusicPlayer = false;
     setMusicDropdownOpen(false);
     musicAudio.pause();
@@ -355,6 +369,36 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
     updateMusicPlayButton();
   }
 
+  function fadeOutStop(durationMs = 700) {
+    if (musicFadeFrame !== null) {
+      cancelAnimationFrame(musicFadeFrame);
+      musicFadeFrame = null;
+    }
+
+    if (musicAudio.paused) {
+      stop();
+      return Promise.resolve();
+    }
+
+    const startVolume = musicAudio.volume;
+    const startedAt = performance.now();
+    return new Promise((resolve) => {
+      const tick = (now) => {
+        const progress = THREE.MathUtils.clamp((now - startedAt) / durationMs, 0, 1);
+        musicAudio.volume = startVolume * (1 - progress);
+        if (progress < 1) {
+          musicFadeFrame = requestAnimationFrame(tick);
+          return;
+        }
+        musicFadeFrame = null;
+        stop();
+        musicAudio.volume = Number(musicVolume.value);
+        resolve();
+      };
+      musicFadeFrame = requestAnimationFrame(tick);
+    });
+  }
+
   return {
     init,
     closeDropdown: () => setMusicDropdownOpen(false),
@@ -362,6 +406,8 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
       isDraggingMusicPlayer = false;
     },
     ensureSystemPosition: ensureSystemMusicPlayerPosition,
+    fadeOutStop,
+    play,
     stop,
     updateScrollbar: updateMusicTrackScrollbar,
   };
