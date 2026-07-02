@@ -46,6 +46,14 @@ Toggle astrophysics-based overlays — the habitable zone and the tidal-lock zon
 
 ## Development
 
+Install and launch on Windows:
+
+```text
+install.bat
+```
+
+This installs dependencies, builds the PWA, creates Nebulum shortcuts on the Desktop and in the Start menu, and launches Nebulum in a standalone browser app window. If a compatible Node.js is not installed, the installer downloads a local portable Node.js runtime into `.nebulum-runtime`.
+
 Install dependencies:
 
 ```bash

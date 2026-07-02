@@ -122,6 +122,42 @@ body.game-running .game-menu-button {
   pointer-events: none;
 }
 
+.install-pwa-button {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  min-width: 114px;
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(10, 10, 11, 0.58);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(18px);
+  color: rgba(255, 255, 255, 0.86);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.install-pwa-button:hover {
+  background: rgba(16, 16, 18, 0.66);
+  color: rgb(255, 255, 255);
+}
+
+.install-pwa-button:focus-visible {
+  outline: none;
+}
+
+.install-pwa-button[hidden] {
+  display: none;
+}
+
 body.start-menu-open .left-stack,
 body.start-menu-open .star-labels,
 body.start-menu-open .hover-name-wrap,
@@ -233,7 +269,8 @@ body.start-menu-open .hover-panel {
   text-transform: uppercase;
 }
 
-.menu-dialog {
+.menu-dialog,
+.game-dialog {
   position: fixed;
   inset: 0;
   z-index: 2;
@@ -243,7 +280,12 @@ body.start-menu-open .hover-panel {
   background: rgba(0, 0, 0, 0.58);
 }
 
-.menu-dialog[hidden] {
+.game-dialog {
+  z-index: 120;
+}
+
+.menu-dialog[hidden],
+.game-dialog[hidden] {
   display: none;
 }
 
@@ -258,7 +300,14 @@ body.start-menu-open .hover-panel {
 }
 
 .menu-dialog__surface--wide {
-  width: min(520px, 100%);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(760px, calc(100vw - 44px));
+  height: min(640px, calc(100vh - 44px));
+}
+
+.game-dialog__surface {
+  width: min(330px, 100%);
 }
 
 .menu-dialog__title {
@@ -381,6 +430,18 @@ body.start-menu-open .hover-panel {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.menu-dialog__actions--stacked {
+  grid-template-columns: 1fr;
+}
+
+.menu-dialog__surface--wide .menu-dialog__actions--save {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.menu-dialog__surface--wide .menu-dialog__actions--save:has(#game-save-confirm:not([hidden])) {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .menu-save-list {
   display: grid;
   min-height: 160px;
@@ -388,6 +449,11 @@ body.start-menu-open .hover-panel {
   border: 0;
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.045);
+}
+
+.menu-dialog__surface--wide .menu-save-list {
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .menu-save-list__empty {
@@ -421,6 +487,28 @@ body.start-menu-open .hover-panel {
   border-bottom: 0;
 }
 
+.menu-save-list__draft {
+  display: grid;
+  align-items: center;
+  height: 24px;
+  padding: 2px 4px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.menu-save-list__input {
+  width: 100%;
+  height: 20px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: rgb(255, 255, 255);
+  font: inherit;
+  font-size: 10px;
+  line-height: 20px;
+  outline: none;
+  text-transform: uppercase;
+}
+
 .start-menu.start-menu--shutdown .start-menu__actions {
   opacity: 0.28;
   pointer-events: none;
@@ -437,7 +525,8 @@ body.start-menu-open .hover-panel {
   }
 
   .menu-dialog__actions,
-  .menu-dialog__surface--wide .menu-dialog__actions {
+  .menu-dialog__surface--wide .menu-dialog__actions,
+  .menu-dialog__surface--wide .menu-dialog__actions--save {
     grid-template-columns: 1fr;
   }
 }

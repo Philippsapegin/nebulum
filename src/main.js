@@ -45,6 +45,8 @@ const SEED = params.get("seed") || "nebulum";
 const MENU_DEFAULT_SEED = "nebulum";
 const START_AFTER_SEED_STORAGE_KEY = "nebulum:start-after-seed";
 const AUDIO_SETTINGS_STORAGE_KEY = "nebulum:audio-settings";
+const WINDOW_SETTINGS_STORAGE_KEY = "nebulum:window-settings";
+const SAVE_STORAGE_KEY = "nebulum:saves";
 const DEFAULT_SKY_GRADIENT_COLORS = ["#27648f", "#000000", "#884d26", "#000000"];
 const PLANET_WATER_TAG_CHANCE = 0.5;
 const ATMOSPHERE_TAGS = ["THIN ATMOSPHERE", "ATMOSPHERE", "DENSE ATMOSPHERE"];
@@ -76,8 +78,25 @@ const menuLoadClose = document.querySelector("#menu-load-close");
 const settingsDialog = document.querySelector("#settings-dialog");
 const menuMasterVolume = document.querySelector("#menu-master-volume");
 const menuMusicEnabled = document.querySelector("#menu-music-enabled");
+const menuBorderlessWindow = document.querySelector("#menu-borderless-window");
 const menuSettingsClose = document.querySelector("#menu-settings-close");
+const installPwaButton = document.querySelector("#install-pwa-button");
 const gameMenuButton = document.querySelector("#game-menu-button");
+const gameMenuDialog = document.querySelector("#game-menu-dialog");
+const gameSaveGame = document.querySelector("#game-save-game");
+const gameMainMenu = document.querySelector("#game-main-menu");
+const gameSettings = document.querySelector("#game-settings");
+const gameSaveDialog = document.querySelector("#game-save-dialog");
+const gameSaveList = document.querySelector("#game-save-list");
+const gameSaveAdd = document.querySelector("#game-save-add");
+const gameSaveConfirm = document.querySelector("#game-save-confirm");
+const gameDeleteSave = document.querySelector("#game-delete-save");
+const gameSaveClose = document.querySelector("#game-save-close");
+const gameSettingsDialog = document.querySelector("#game-settings-dialog");
+const gameMasterVolume = document.querySelector("#game-master-volume");
+const gameMenuMusicEnabled = document.querySelector("#game-menu-music-enabled");
+const gameBorderlessWindow = document.querySelector("#game-borderless-window");
+const gameSettingsClose = document.querySelector("#game-settings-close");
 const sceneCanvas = document.querySelector("#scene");
 const starLabels = document.querySelector("#star-labels");
 const hoverNameWrap = document.querySelector("#hover-name-wrap");
@@ -152,7 +171,14 @@ let menuAnimationFrameId = null;
 let menuMusicFadeFrame = null;
 let isReturningToMainMenu = false;
 let audioSettings = readAudioSettings();
+let windowSettings = readWindowSettings();
+let deferredInstallPrompt = null;
+let borderlessBoundsSyncTimer = null;
+let lastBorderlessBoundsSyncAt = 0;
 let selectedMenuSaveIndex = -1;
+let selectedGameSaveIndex = -1;
+let isAddingGameSave = false;
+let gameSaveDraftName = "";
 let shouldStartGameAfterInit = false;
 let menuScene = null;
 let menuCamera = null;
@@ -405,7 +431,7 @@ if (shouldStartGameAfterInit) {
   startMenuAnimationLoop();
 }
 
-window.addEventListener("resize", resize);
+window.addEventListener("resize", onWindowResize);
 document.addEventListener("pointermove", onPointerMove, { capture: true });
 sceneCanvas.addEventListener("pointerdown", onPointerDown);
 sceneCanvas.addEventListener("wheel", onWheel, { passive: false });
@@ -537,7 +563,15 @@ function initStartMenu() {
   menuLoadGame.addEventListener("click", openLoadGameDialog);
   menuSettings.addEventListener("click", openSettingsDialog);
   menuExit.addEventListener("click", exitNebulum);
-  gameMenuButton.addEventListener("click", returnToMainMenu);
+  gameMenuButton.addEventListener("click", openGameMenuDialog);
+  gameSaveGame.addEventListener("click", openGameSaveDialog);
+  gameMainMenu.addEventListener("click", returnToMainMenu);
+  gameSettings.addEventListener("click", openGameSettingsDialog);
+  gameSaveAdd.addEventListener("click", addGameSaveDraft);
+  gameSaveConfirm.addEventListener("click", saveCurrentGameToSelectedSlot);
+  gameDeleteSave.addEventListener("click", deleteSelectedGameSave);
+  gameSaveClose.addEventListener("click", closeGameDialogs);
+  gameSettingsClose.addEventListener("click", closeGameDialogs);
   startMenu.addEventListener("pointermove", onStartMenuPointerMove);
   startMenu.addEventListener("pointerleave", clearStartMenuPointer);
   startMenu.addEventListener("click", onStartMenuClick);
@@ -555,6 +589,11 @@ function initStartMenu() {
   menuSettingsClose.addEventListener("click", closeMenuDialogs);
   menuMasterVolume.addEventListener("input", updateAudioSettingsFromMenu);
   menuMusicEnabled.addEventListener("change", updateAudioSettingsFromMenu);
+  menuBorderlessWindow.addEventListener("change", updateWindowSettingsFromMenu);
+  gameMasterVolume.addEventListener("input", updateAudioSettingsFromMenu);
+  gameMenuMusicEnabled.addEventListener("change", updateAudioSettingsFromMenu);
+  gameBorderlessWindow.addEventListener("change", updateWindowSettingsFromMenu);
+  initPwaInstallButton();
 
   seedDialog.addEventListener("pointerdown", (event) => {
     if (event.target === seedDialog) {
@@ -571,15 +610,36 @@ function initStartMenu() {
       closeMenuDialogs();
     }
   });
+  gameMenuDialog.addEventListener("pointerdown", (event) => {
+    if (event.target === gameMenuDialog) {
+      closeGameDialogs();
+    }
+  });
+  gameSaveDialog.addEventListener("pointerdown", (event) => {
+    if (event.target === gameSaveDialog) {
+      closeGameDialogs();
+    }
+  });
+  gameSettingsDialog.addEventListener("pointerdown", (event) => {
+    if (event.target === gameSettingsDialog) {
+      closeGameDialogs();
+    }
+  });
   window.addEventListener("keydown", (event) => {
-    if (!isStartMenuOpen || event.key !== "Escape") {
+    if (event.key !== "Escape") {
       return;
     }
-    closeMenuDialogs();
+    if (isStartMenuOpen) {
+      closeMenuDialogs();
+      return;
+    }
+    closeGameDialogs();
   });
 
   syncSettingsDialog();
+  syncWindowSettingsFromServer();
   applyAudioSettings();
+  applyWindowSettings();
   playMenuMusic();
 }
 
@@ -637,6 +697,56 @@ function initStartMenuScene() {
 
   updateMenuPlaneTexture();
   document.fonts?.ready.then(updateMenuPlaneTexture).catch(() => {});
+}
+
+function initPwaInstallButton() {
+  if (!installPwaButton || isPwaStandalone()) {
+    return;
+  }
+
+  installPwaButton.hidden = true;
+  installPwaButton.addEventListener("click", installPwaFromMenu);
+  window.addEventListener("beforeinstallprompt", (event) => {
+    if (isPwaStandalone()) {
+      return;
+    }
+
+    event.preventDefault();
+    deferredInstallPrompt = event;
+    installPwaButton.hidden = false;
+  });
+  window.addEventListener("appinstalled", () => {
+    deferredInstallPrompt = null;
+    installPwaButton.hidden = true;
+  });
+}
+
+function isPwaStandalone() {
+  return (
+    window.matchMedia("(display-mode: standalone)").matches ||
+    window.matchMedia("(display-mode: fullscreen)").matches ||
+    window.navigator.standalone === true
+  );
+}
+
+async function installPwaFromMenu() {
+  if (isPwaStandalone()) {
+    installPwaButton.hidden = true;
+    return;
+  }
+
+  if (!deferredInstallPrompt) {
+    installPwaButton.hidden = true;
+    return;
+  }
+
+  installPwaButton.hidden = true;
+  deferredInstallPrompt.prompt();
+  const choice = await deferredInstallPrompt.userChoice.catch(() => null);
+  if (choice?.outcome !== "accepted" && !isPwaStandalone()) {
+    installPwaButton.hidden = false;
+  }
+  deferredInstallPrompt = null;
 }
 
 function initStartMenuComposite() {
@@ -1476,7 +1586,7 @@ function clearStartMenuPointer() {
 }
 
 function onStartMenuClick(event) {
-  if (!isStartMenuOpen || !menuScene || !seedDialog.hidden || !loadDialog.hidden) {
+  if (!isStartMenuOpen || !menuScene || isStartMenuDialogOpen()) {
     return;
   }
 
@@ -1635,6 +1745,64 @@ function closeMenuDialogs() {
   settingsDialog.hidden = true;
 }
 
+function isStartMenuDialogOpen() {
+  return !seedDialog.hidden || !loadDialog.hidden || !settingsDialog.hidden;
+}
+
+function openGameMenuDialog() {
+  if (isStartMenuOpen || isAppExited) {
+    return;
+  }
+
+  closeGameDialogs();
+  pauseGameInteractions();
+  gameMenuDialog.hidden = false;
+  window.requestAnimationFrame(() => gameSaveGame.focus());
+}
+
+function openGameSaveDialog() {
+  if (isStartMenuOpen || isAppExited) {
+    return;
+  }
+
+  closeGameDialogs();
+  pauseGameInteractions();
+  renderGameSaveDialog();
+  gameSaveDialog.hidden = false;
+  window.requestAnimationFrame(() => gameSaveAdd.focus());
+}
+
+function openGameSettingsDialog() {
+  if (isStartMenuOpen || isAppExited) {
+    return;
+  }
+
+  closeGameDialogs();
+  pauseGameInteractions();
+  syncSettingsDialog();
+  gameSettingsDialog.hidden = false;
+  window.requestAnimationFrame(() => gameMasterVolume.focus());
+}
+
+function closeGameDialogs() {
+  gameMenuDialog.hidden = true;
+  gameSaveDialog.hidden = true;
+  gameSettingsDialog.hidden = true;
+  selectedGameSaveIndex = -1;
+  isAddingGameSave = false;
+  gameSaveDraftName = "";
+}
+
+function isGameDialogOpen() {
+  return !gameMenuDialog.hidden || !gameSaveDialog.hidden || !gameSettingsDialog.hidden;
+}
+
+function pauseGameInteractions() {
+  cancelGraphDrag();
+  clearGraphHover();
+  setSystemHover(null);
+}
+
 function openSettingsDialog() {
   syncSettingsDialog();
   openMenuDialog(settingsDialog, menuMasterVolume);
@@ -1655,22 +1823,55 @@ function readAudioSettings() {
   }
 }
 
+function readWindowSettings() {
+  try {
+    const settings = JSON.parse(localStorage.getItem(WINDOW_SETTINGS_STORAGE_KEY) || "{}");
+    return {
+      borderlessWindow: settings.borderlessWindow !== false,
+    };
+  } catch {
+    return {
+      borderlessWindow: true,
+    };
+  }
+}
+
 function writeAudioSettings() {
   localStorage.setItem(AUDIO_SETTINGS_STORAGE_KEY, JSON.stringify(audioSettings));
 }
 
 function syncSettingsDialog() {
-  menuMasterVolume.value = String(audioSettings.masterVolume);
-  menuMasterVolume.style.setProperty("--settings-vol-frac", String(audioSettings.masterVolume));
-  menuMusicEnabled.checked = audioSettings.menuMusicEnabled;
+  const volume = String(audioSettings.masterVolume);
+  for (const volumeInput of [menuMasterVolume, gameMasterVolume]) {
+    volumeInput.value = volume;
+    volumeInput.style.setProperty("--settings-vol-frac", volume);
+  }
+  for (const musicToggle of [menuMusicEnabled, gameMenuMusicEnabled]) {
+    musicToggle.checked = audioSettings.menuMusicEnabled;
+  }
+  for (const windowToggle of [menuBorderlessWindow, gameBorderlessWindow]) {
+    windowToggle.checked = windowSettings.borderlessWindow;
+  }
 }
 
-function updateAudioSettingsFromMenu() {
+function updateAudioSettingsFromMenu(event) {
+  const source = event?.target;
+  const volume = source === gameMasterVolume
+    ? Number(gameMasterVolume.value)
+    : source === menuMasterVolume
+      ? Number(menuMasterVolume.value)
+      : audioSettings.masterVolume;
+  const menuMusicEnabledValue = source === gameMenuMusicEnabled
+    ? gameMenuMusicEnabled.checked
+    : source === menuMusicEnabled
+      ? menuMusicEnabled.checked
+      : audioSettings.menuMusicEnabled;
+
   audioSettings = {
-    masterVolume: THREE.MathUtils.clamp(Number(menuMasterVolume.value), 0, 1),
-    menuMusicEnabled: menuMusicEnabled.checked,
+    masterVolume: THREE.MathUtils.clamp(volume, 0, 1),
+    menuMusicEnabled: menuMusicEnabledValue,
   };
-  menuMasterVolume.style.setProperty("--settings-vol-frac", String(audioSettings.masterVolume));
+  syncSettingsDialog();
   writeAudioSettings();
   applyAudioSettings();
 }
@@ -1687,12 +1888,127 @@ function applyAudioSettings() {
   }
 }
 
+async function syncWindowSettingsFromServer() {
+  try {
+    const response = await fetch("/api/window-settings", { cache: "no-store" });
+    if (!response.ok) {
+      return;
+    }
+
+    const settings = await response.json();
+    windowSettings = {
+      borderlessWindow: settings.borderlessWindow !== false,
+    };
+    localStorage.setItem(WINDOW_SETTINGS_STORAGE_KEY, JSON.stringify(windowSettings));
+    syncSettingsDialog();
+    applyWindowSettings();
+  } catch {}
+}
+
+function updateWindowSettingsFromMenu(event) {
+  const source = event?.target;
+  const borderlessWindow = source === gameBorderlessWindow
+    ? gameBorderlessWindow.checked
+    : source === menuBorderlessWindow
+      ? menuBorderlessWindow.checked
+      : windowSettings.borderlessWindow;
+
+  windowSettings = { borderlessWindow };
+  syncSettingsDialog();
+  writeWindowSettings({ applyNow: true });
+}
+
+function writeWindowSettings({ applyNow = false } = {}) {
+  localStorage.setItem(WINDOW_SETTINGS_STORAGE_KEY, JSON.stringify(windowSettings));
+  fetch("/api/window-settings", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...windowSettings, applyNow }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
+function applyWindowSettings() {
+  scheduleBorderlessWindowBoundsSync();
+}
+
+function onWindowResize() {
+  resize();
+  scheduleBorderlessWindowBoundsSync();
+}
+
+function scheduleBorderlessWindowBoundsSync() {
+  if (!shouldSyncBorderlessWindowBounds()) {
+    return;
+  }
+
+  if (borderlessBoundsSyncTimer !== null) {
+    clearTimeout(borderlessBoundsSyncTimer);
+  }
+  borderlessBoundsSyncTimer = window.setTimeout(syncBorderlessWindowBounds, 180);
+}
+
+function shouldSyncBorderlessWindowBounds() {
+  if (!isStandaloneWindowShell()) {
+    return false;
+  }
+
+  const screenWidth = window.screen?.width || window.screen?.availWidth || 0;
+  const screenHeight = window.screen?.height || window.screen?.availHeight || 0;
+  if (!screenWidth || !screenHeight) {
+    return false;
+  }
+
+  const outerWidth = window.outerWidth || window.innerWidth;
+  const outerHeight = window.outerHeight || window.innerHeight;
+  return outerWidth < screenWidth - 24 || outerHeight < screenHeight - 48;
+}
+
+function isStandaloneWindowShell() {
+  if (isPwaStandalone()) {
+    return true;
+  }
+
+  const outerWidth = window.outerWidth || 0;
+  const outerHeight = window.outerHeight || 0;
+  const innerWidth = window.innerWidth || 0;
+  const innerHeight = window.innerHeight || 0;
+  if (!outerWidth || !outerHeight || !innerWidth || !innerHeight) {
+    return false;
+  }
+
+  return Math.abs(outerWidth - innerWidth) <= 24 && Math.abs(outerHeight - innerHeight) <= 48;
+}
+
+function syncBorderlessWindowBounds() {
+  borderlessBoundsSyncTimer = null;
+  if (!shouldSyncBorderlessWindowBounds()) {
+    return;
+  }
+
+  const now = performance.now();
+  if (now - lastBorderlessBoundsSyncAt < 900) {
+    scheduleBorderlessWindowBoundsSync();
+    return;
+  }
+  lastBorderlessBoundsSyncAt = now;
+
+  fetch("/api/window-bounds", {
+    method: "POST",
+    keepalive: true,
+  }).catch(() => {});
+}
+
 function getMenuMusicVolume() {
   return 0.62 * audioSettings.masterVolume;
 }
 
 function confirmNewGameSeed() {
   const nextSeed = menuSeedInput.value.trim() || MENU_DEFAULT_SEED;
+  startGameWithSeed(nextSeed);
+}
+
+function startGameWithSeed(nextSeed) {
   if (nextSeed === SEED) {
     seedInput.value = nextSeed;
     startGameFromMenu();
@@ -1772,6 +2088,7 @@ async function returnToMainMenu() {
   }
 
   isReturningToMainMenu = true;
+  closeGameDialogs();
   stopAnimationLoop();
   await musicPlayerController?.fadeOutStop(650);
   try {
@@ -1824,11 +2141,7 @@ function renderLoadGameDialog() {
   }
 
   saves.forEach((save, index) => {
-    const button = document.createElement("button");
-    button.className = "menu-save-list__item";
-    button.type = "button";
-    button.role = "option";
-    button.textContent = save.name || save.seed || `SAVE ${index + 1}`;
+    const button = createSaveListItem(save, index);
     button.addEventListener("click", () => {
       selectedMenuSaveIndex = index;
       updateMenuSaveSelection();
@@ -1855,15 +2168,15 @@ function updateMenuSaveActions() {
 
 function readMenuSaves() {
   try {
-    const saves = JSON.parse(localStorage.getItem("nebulum:saves") || "[]");
-    return Array.isArray(saves) ? saves : [];
+    const saves = JSON.parse(localStorage.getItem(SAVE_STORAGE_KEY) || "[]");
+    return Array.isArray(saves) ? saves.map(normalizeSave).filter(Boolean) : [];
   } catch {
     return [];
   }
 }
 
 function writeMenuSaves(saves) {
-  localStorage.setItem("nebulum:saves", JSON.stringify(saves));
+  localStorage.setItem(SAVE_STORAGE_KEY, JSON.stringify(saves.map(normalizeSave).filter(Boolean)));
 }
 
 function loadSelectedMenuSave() {
@@ -1872,10 +2185,7 @@ function loadSelectedMenuSave() {
     return;
   }
 
-  const url = new URL(window.location.href);
-  url.searchParams.set("seed", save.seed);
-  url.searchParams.delete("multiplier");
-  window.location.href = url.toString();
+  startGameWithSeed(save.seed);
 }
 
 function deleteSelectedMenuSave() {
@@ -1889,6 +2199,182 @@ function deleteSelectedMenuSave() {
   renderLoadGameDialog();
 }
 
+function renderGameSaveDialog() {
+  const saves = readMenuSaves();
+  gameSaveList.replaceChildren();
+
+  if (saves.length === 0 && !isAddingGameSave) {
+    const empty = document.createElement("div");
+    empty.className = "menu-save-list__empty";
+    empty.textContent = "NO SAVES";
+    gameSaveList.append(empty);
+    updateGameSaveActions();
+    return;
+  }
+
+  saves.forEach((save, index) => {
+    const button = createSaveListItem(save, index);
+    button.addEventListener("click", () => {
+      selectedGameSaveIndex = index;
+      isAddingGameSave = false;
+      gameSaveDraftName = "";
+      renderGameSaveDialog();
+    });
+    gameSaveList.append(button);
+  });
+
+  if (isAddingGameSave) {
+    const draft = document.createElement("label");
+    draft.className = "menu-save-list__draft selected";
+
+    const input = document.createElement("input");
+    input.className = "menu-save-list__input";
+    input.type = "text";
+    input.autocomplete = "off";
+    input.value = gameSaveDraftName;
+    input.addEventListener("input", () => {
+      gameSaveDraftName = input.value;
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        saveCurrentGameToSelectedSlot();
+      }
+    });
+
+    draft.append(input);
+    gameSaveList.append(draft);
+    window.requestAnimationFrame(() => {
+      input.focus();
+      input.select();
+    });
+  }
+
+  updateGameSaveSelection();
+}
+
+function addGameSaveDraft() {
+  const saves = readMenuSaves();
+  isAddingGameSave = true;
+  selectedGameSaveIndex = -1;
+  gameSaveDraftName = createDefaultSaveName(saves);
+  renderGameSaveDialog();
+}
+
+function saveCurrentGameToSelectedSlot() {
+  const saves = readMenuSaves();
+  const now = new Date().toISOString();
+
+  if (isAddingGameSave) {
+    const save = createCurrentGameSave(gameSaveDraftName, now);
+    saves.push(save);
+    writeMenuSaves(saves);
+    isAddingGameSave = false;
+    selectedGameSaveIndex = saves.length - 1;
+    gameSaveDraftName = "";
+    renderGameSaveDialog();
+    return;
+  }
+
+  if (selectedGameSaveIndex < 0 || selectedGameSaveIndex >= saves.length) {
+    return;
+  }
+
+  saves[selectedGameSaveIndex] = createCurrentGameSave(saves[selectedGameSaveIndex].name, now, saves[selectedGameSaveIndex]);
+  writeMenuSaves(saves);
+  renderGameSaveDialog();
+}
+
+function deleteSelectedGameSave() {
+  const saves = readMenuSaves();
+  if (selectedGameSaveIndex < 0 || selectedGameSaveIndex >= saves.length) {
+    return;
+  }
+
+  saves.splice(selectedGameSaveIndex, 1);
+  writeMenuSaves(saves);
+  selectedGameSaveIndex = -1;
+  isAddingGameSave = false;
+  gameSaveDraftName = "";
+  renderGameSaveDialog();
+}
+
+function updateGameSaveSelection() {
+  const items = gameSaveList.querySelectorAll(".menu-save-list__item");
+  items.forEach((item, index) => {
+    item.classList.toggle("selected", index === selectedGameSaveIndex);
+    item.setAttribute("aria-selected", String(index === selectedGameSaveIndex));
+  });
+  updateGameSaveActions();
+}
+
+function updateGameSaveActions() {
+  const hasSelection = selectedGameSaveIndex >= 0;
+  gameSaveAdd.hidden = isAddingGameSave;
+  gameSaveConfirm.hidden = !isAddingGameSave && !hasSelection;
+  gameSaveConfirm.disabled = !isAddingGameSave && !hasSelection;
+  gameDeleteSave.disabled = isAddingGameSave || !hasSelection;
+}
+
+function createSaveListItem(save, index) {
+  const button = document.createElement("button");
+  button.className = "menu-save-list__item";
+  button.type = "button";
+  button.role = "option";
+  button.textContent = getSaveDisplayName(save, index);
+  return button;
+}
+
+function getSaveDisplayName(save, index) {
+  return save.name || save.seed || `SAVE ${index + 1}`;
+}
+
+function normalizeSave(save, index = 0) {
+  if (!save || typeof save !== "object") {
+    return null;
+  }
+
+  const seed = String(save.seed ?? "").trim();
+  if (!seed) {
+    return null;
+  }
+
+  const name = String(save.name ?? "").trim() || `SAVE ${index + 1}`;
+  const now = new Date().toISOString();
+  return {
+    id: String(save.id ?? createSaveId()),
+    version: Number(save.version ?? 1),
+    name,
+    seed,
+    createdAt: String(save.createdAt ?? save.updatedAt ?? now),
+    updatedAt: String(save.updatedAt ?? now),
+  };
+}
+
+function createCurrentGameSave(name, timestamp, previousSave = null) {
+  const trimmedName = String(name ?? "").trim() || createDefaultSaveName(readMenuSaves());
+  return {
+    id: previousSave?.id ?? createSaveId(),
+    version: 1,
+    name: trimmedName,
+    seed: SEED,
+    createdAt: previousSave?.createdAt ?? timestamp,
+    updatedAt: timestamp,
+  };
+}
+
+function createDefaultSaveName(saves) {
+  const usedNames = new Set(saves.map((save) => save.name.toUpperCase()));
+  let index = saves.length + 1;
+  while (usedNames.has(`SAVE ${index}`)) {
+    index += 1;
+  }
+  return `SAVE ${index}`;
+}
+
+function createSaveId() {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 async function exitNebulum() {
   if (isAppExited) {
     return;
@@ -1898,6 +2384,7 @@ async function exitNebulum() {
   isStartMenuOpen = true;
   stopAnimationLoop();
   closeMenuDialogs();
+  closeGameDialogs();
   startMenu.classList.remove("start-menu--hidden");
   startMenu.classList.add("start-menu--shutdown");
   startMenu.setAttribute("aria-hidden", "false");
@@ -3119,6 +3606,11 @@ function onPointerMove(event) {
     return;
   }
 
+  if (isGameDialogOpen()) {
+    pauseGameInteractions();
+    return;
+  }
+
   if (isDragging && event.buttons !== undefined && (event.buttons & 1) === 0) {
     cancelGraphDrag(event);
   }
@@ -3159,7 +3651,7 @@ function forceCloseViewOverlays() {
 }
 
 function onWheel(event) {
-  if (isAppExited || isStartMenuOpen || !isGameRuntimeReady || systemScreenController.isOpen()) {
+  if (isAppExited || isStartMenuOpen || !isGameRuntimeReady || isGameDialogOpen() || systemScreenController.isOpen()) {
     return;
   }
 
@@ -3173,6 +3665,11 @@ function onWheel(event) {
 }
 
 function updateHover() {
+  if (isGameDialogOpen()) {
+    clearGraphHover();
+    return;
+  }
+
   const nextHover = getNodeHit()?.userData.visual ?? null;
 
   if (hoveredNode === nextHover) {
@@ -3219,6 +3716,25 @@ function updateHover() {
     hoveredNode.userData.glow.scale.setScalar(hoveredNode.userData.glow.userData.baseScale);
     hoveredNode.userData.glow.material.opacity = 0.96;
   }
+}
+
+function clearGraphHover() {
+  if (!hoveredNode) {
+    return;
+  }
+
+  hoveredNode.material.emissiveIntensity = hoveredNode.userData.node.blackCore
+    ? 0.1
+    : 5.8 * hoveredNode.userData.node.glowBoost;
+  hoveredNode.scale.setScalar(hoveredNode.userData.node.size);
+  hoveredNode.userData.glow.scale.setScalar(hoveredNode.userData.glow.userData.baseScale);
+  hoveredNode.userData.glow.material.opacity = 0.82;
+  hoveredNode = null;
+  hoverNameWrap.classList.remove("visible", "fast-enter");
+  hoverPanel.classList.remove("visible", "fast-enter");
+  hoverNameWrap.setAttribute("aria-hidden", "true");
+  hoverPanel.setAttribute("aria-hidden", "true");
+  scheduleTooltipTypewriter(null);
 }
 
 function scheduleTooltipTypewriter(node, immediate = false) {
@@ -3299,6 +3815,10 @@ function clearTooltipTyping() {
 }
 
 function setSystemHover(body) {
+  if (isGameDialogOpen()) {
+    body = null;
+  }
+
   if (isPlanetWindowOpen) {
     body = null;
   }
@@ -5922,10 +6442,16 @@ function renderStarSystem(node) {
     };
     hitTarget.userData = { label, planet: planetInfo };
     hitTarget.addEventListener("pointerenter", (event) => {
+      if (isGameDialogOpen()) {
+        return;
+      }
       positionSystemTooltip(event.clientX, event.clientY);
       setSystemHover(hitTarget);
     });
     hitTarget.addEventListener("pointermove", (event) => {
+      if (isGameDialogOpen()) {
+        return;
+      }
       positionSystemTooltip(event.clientX, event.clientY);
     });
     hitTarget.addEventListener("pointerleave", () => {
@@ -5934,6 +6460,10 @@ function renderStarSystem(node) {
       }
     });
     hitTarget.addEventListener("click", (event) => {
+      if (isGameDialogOpen()) {
+        event.stopPropagation();
+        return;
+      }
       event.stopPropagation();
       lastClientPointer.set(event.clientX, event.clientY);
       startPlanetEntryTransition(planetInfo, event.clientX, event.clientY);
@@ -6685,6 +7215,9 @@ function createSystemGate({ className, labelText, radius, x, y, stepX, stepY, ec
 
   gate.userData = { label };
   gate.addEventListener("pointerenter", (event) => {
+    if (isGameDialogOpen()) {
+      return;
+    }
     positionSystemTooltip(event.clientX, event.clientY);
     if (gate.classList.contains("system-jump--wormhole")) {
       startWormholeHover(gate, echoCount);
@@ -6694,6 +7227,9 @@ function createSystemGate({ className, labelText, radius, x, y, stepX, stepY, ec
     }
   });
   gate.addEventListener("pointermove", (event) => {
+    if (isGameDialogOpen()) {
+      return;
+    }
     positionSystemTooltip(event.clientX, event.clientY);
   });
   gate.addEventListener("pointerleave", () => {
@@ -8436,6 +8972,11 @@ function animate() {
   const now = performance.now();
   const deltaSeconds = Math.min(0.05, (now - lastFrameTime) / 1000);
   lastFrameTime = now;
+
+  if (isGameDialogOpen()) {
+    pauseGameInteractions();
+    return;
+  }
 
   if (!systemScreenController.isOpen()) {
     updateHover();

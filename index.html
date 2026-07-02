@@ -116,16 +116,65 @@
               <input id="menu-music-enabled" type="checkbox" />
               <span>MENU MUSIC</span>
             </label>
+            <label class="menu-dialog__check">
+              <input id="menu-borderless-window" type="checkbox" />
+              <span>BORDERLESS WINDOW</span>
+            </label>
             <div class="menu-dialog__actions">
               <button id="menu-settings-close" class="menu-dialog__button" type="button">CLOSE</button>
             </div>
           </div>
         </div>
+        <button id="install-pwa-button" class="install-pwa-button" type="button" hidden>INSTALL PWA</button>
       </section>
       <canvas id="scene"></canvas>
       <button id="game-menu-button" class="game-menu-button" type="button" title="Main menu" aria-label="Main menu">
         <span aria-hidden="true">M</span>
       </button>
+      <div id="game-menu-dialog" class="game-dialog" role="dialog" aria-modal="true" aria-labelledby="game-menu-dialog-title" hidden>
+        <div class="menu-dialog__surface game-dialog__surface">
+          <div id="game-menu-dialog-title" class="menu-dialog__title">MENU</div>
+          <div class="menu-dialog__actions menu-dialog__actions--stacked">
+            <button id="game-save-game" class="menu-dialog__button" type="button">SAVE GAME</button>
+            <button id="game-main-menu" class="menu-dialog__button" type="button">MAIN MENU</button>
+            <button id="game-settings" class="menu-dialog__button" type="button">SETTINGS</button>
+          </div>
+        </div>
+      </div>
+      <div id="game-save-dialog" class="game-dialog" role="dialog" aria-modal="true" aria-labelledby="game-save-dialog-title" hidden>
+        <div class="menu-dialog__surface menu-dialog__surface--wide">
+          <div id="game-save-dialog-title" class="menu-dialog__title">SAVE GAME</div>
+          <div id="game-save-list" class="menu-save-list" role="listbox" aria-label="Saved games">
+            <div class="menu-save-list__empty">NO SAVES</div>
+          </div>
+          <div class="menu-dialog__actions menu-dialog__actions--save">
+            <button id="game-save-add" class="menu-dialog__button" type="button">ADD</button>
+            <button id="game-save-confirm" class="menu-dialog__button" type="button" hidden>SAVE</button>
+            <button id="game-delete-save" class="menu-dialog__button" type="button" disabled>DELETE SAVE</button>
+            <button id="game-save-close" class="menu-dialog__button" type="button">CLOSE</button>
+          </div>
+        </div>
+      </div>
+      <div id="game-settings-dialog" class="game-dialog" role="dialog" aria-modal="true" aria-labelledby="game-settings-dialog-title" hidden>
+        <div class="menu-dialog__surface">
+          <div id="game-settings-dialog-title" class="menu-dialog__title">SETTINGS</div>
+          <label class="menu-dialog__field">
+            <span class="menu-dialog__label">Master volume</span>
+            <input id="game-master-volume" class="menu-dialog__range" type="range" min="0" max="1" value="1" step="0.01" />
+          </label>
+          <label class="menu-dialog__check">
+            <input id="game-menu-music-enabled" type="checkbox" />
+            <span>MENU MUSIC</span>
+          </label>
+          <label class="menu-dialog__check">
+            <input id="game-borderless-window" type="checkbox" />
+            <span>BORDERLESS WINDOW</span>
+          </label>
+          <div class="menu-dialog__actions">
+            <button id="game-settings-close" class="menu-dialog__button" type="button">CLOSE</button>
+          </div>
+        </div>
+      </div>
       <div id="star-labels" class="star-labels" aria-hidden="true"></div>
       <div id="hover-name-wrap" class="hover-name-wrap" aria-hidden="true">
         <div id="hover-name" class="hover-name"></div>
