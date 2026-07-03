@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
@@ -17,7 +17,9 @@ const settingsPath = path.resolve(
     process.env.NEBULUM_SETTINGS_PATH ||
     path.join(process.env.LOCALAPPDATA || os.homedir(), "Nebulum", "settings.json"),
 );
-const SERVER_VERSION = 9;
+const SERVER_VERSION = 10;
+const APP_LAUNCH_PARAM = "nebulumApp";
+const NEBULUM_LAUNCH_PATH = "/nebulum-launch.html";
 const MOVE_WINDOW_TYPE_DEFINITION = [
   "using System;",
   "using System.Runtime.InteropServices;",
@@ -114,27 +116,247 @@ function sendWindowFitToScreen() {
   child.unref();
 }
 
-function openPwaWindow() {
+function openPwaWindow(request) {
   if (process.platform !== "win32") {
     return false;
   }
 
-  const candidates = [
-    path.join(path.dirname(root), "scripts", "run-nebulum.ps1"),
-    path.join(process.cwd(), "scripts", "run-nebulum.ps1"),
-  ];
-  const runScript = candidates.find((candidate) => existsSync(candidate));
-  if (!runScript) {
+  const browser = findBrowser();
+  if (!browser) {
     return false;
   }
 
+  const bounds = getNebulumWindowBounds();
+  const profileDir = prepareNebulumBrowserProfile(bounds);
+  startWindowBoundsWatcher();
+  const child = spawn(
+    browser,
+    [
+      `--user-data-dir=${profileDir}`,
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-session-crashed-bubble",
+      `--app=${getLaunchShellUrl(request)}`,
+      "--autoplay-policy=no-user-gesture-required",
+      `--window-size=${bounds.width},${bounds.height}`,
+      `--window-position=${bounds.left},${bounds.top}`,
+    ],
+    { detached: true, stdio: "ignore", windowsHide: false },
+    );
+    child.unref();
+    lockNebulumWindowBounds();
+    return true;
+  }
+
+function getOpenPwaUrl(request) {
+  const host = request.headers.host || `127.0.0.1:${port}`;
+  return `http://${host}/?${APP_LAUNCH_PARAM}=1`;
+}
+
+function getLaunchShellUrl(request) {
+  const host = request.headers.host || `127.0.0.1:${port}`;
+  const target = encodeURIComponent(getOpenPwaUrl(request));
+  return `http://${host}${NEBULUM_LAUNCH_PATH}?target=${target}&nonce=${Date.now()}`;
+}
+
+function findBrowser() {
+  const candidates = [
+    path.join(process.env.ProgramFiles || "", "Google", "Chrome", "Application", "chrome.exe"),
+    path.join(process.env["ProgramFiles(x86)"] || "", "Google", "Chrome", "Application", "chrome.exe"),
+    path.join(process.env.LOCALAPPDATA || "", "Google", "Chrome", "Application", "chrome.exe"),
+    path.join(process.env.ProgramFiles || "", "Microsoft", "Edge", "Application", "msedge.exe"),
+    path.join(process.env["ProgramFiles(x86)"] || "", "Microsoft", "Edge", "Application", "msedge.exe"),
+    path.join(process.env.LOCALAPPDATA || "", "Microsoft", "Edge", "Application", "msedge.exe"),
+  ];
+  return candidates.find((candidate) => candidate && existsSync(candidate)) ?? null;
+}
+
+function getNebulumWindowBounds() {
+  const screen = getPrimaryScreenBounds();
+  const marginX = Math.max(24, Math.floor(screen.width * 0.02));
+  const marginY = Math.max(24, Math.floor(screen.height * 0.025));
+  const width = screen.width - marginX * 2;
+  let height = screen.height - marginY * 2;
+  if (width < Math.floor(height * 1.45)) {
+    height = Math.floor(width / 1.45);
+  }
+  return {
+    left: screen.left + Math.floor((screen.width - width) / 2),
+    top: screen.top + Math.floor((screen.height - height) / 2),
+    width,
+    height,
+  };
+}
+
+function prepareNebulumBrowserProfile(bounds) {
+  const profileDir = getNebulumBrowserProfileDir();
+  const defaultProfileDir = path.join(profileDir, "Default");
+  mkdirSync(defaultProfileDir, { recursive: true });
+  writeProfileWindowPlacement(path.join(defaultProfileDir, "Preferences"), bounds);
+  return profileDir;
+}
+
+function getNebulumBrowserProfileDir() {
+  return path.join(process.env.LOCALAPPDATA || os.homedir(), "Nebulum", "BrowserProfile");
+}
+
+function writeProfileWindowPlacement(preferencesPath, bounds) {
+  const prefs = readJsonFile(preferencesPath);
+  const screen = getPrimaryScreenBounds();
+  prefs.browser = prefs.browser && typeof prefs.browser === "object" ? prefs.browser : {};
+  prefs.browser.window_placement = {
+    bottom: bounds.top + bounds.height,
+    left: bounds.left,
+    maximized: false,
+    right: bounds.left + bounds.width,
+    top: bounds.top,
+    work_area_bottom: screen.top + screen.height,
+    work_area_left: screen.left,
+    work_area_right: screen.left + screen.width,
+    work_area_top: screen.top,
+  };
+  writeFileSync(preferencesPath, JSON.stringify(prefs), "utf8");
+}
+
+function readJsonFile(filePath) {
+  try {
+    return JSON.parse(readFileSync(filePath, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+
+function getPrimaryScreenBounds() {
+  if (process.platform !== "win32") {
+    return { left: 0, top: 0, width: 1600, height: 900 };
+  }
+
+  try {
+    const command = [
+      "Add-Type -AssemblyName System.Windows.Forms",
+      "$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds",
+      "[Console]::WriteLine(($screen.Left.ToString() + ',' + $screen.Top + ',' + $screen.Width + ',' + $screen.Height))",
+    ].join("; ");
+    const output = execFileSync(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+      { encoding: "utf8", windowsHide: true, timeout: 3000 },
+    ).trim();
+    const [left, top, width, height] = output.split(",").map((value) => Number(value));
+    if ([left, top, width, height].every(Number.isFinite) && width > 0 && height > 0) {
+      return { left, top, width, height };
+    }
+  } catch {}
+
+  return { left: 0, top: 0, width: 1600, height: 900 };
+}
+
+function startWindowBoundsWatcher() {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  const candidates = [
+    path.join(path.dirname(root), "scripts", "nebulum-window-bounds-watcher.ps1"),
+    path.join(process.cwd(), "scripts", "nebulum-window-bounds-watcher.ps1"),
+  ];
+  const watcherScript = candidates.find((candidate) => existsSync(candidate));
+  if (!watcherScript) {
+    return;
+  }
+
+  stopWindowBoundsWatchers();
   const child = spawn(
     "powershell.exe",
-    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", runScript],
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", `& '${watcherScript.replaceAll("'", "''")}'`],
     { detached: true, stdio: "ignore", windowsHide: true },
   );
   child.unref();
-  return true;
+}
+
+function stopWindowBoundsWatchers() {
+  try {
+    execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*nebulum-window-bounds-watcher.ps1*' -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
+      ],
+      { stdio: "ignore", windowsHide: true, timeout: 3000 },
+    );
+  } catch {}
+}
+
+function lockNebulumWindowBounds() {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  const command = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+public class NebulumWindowLock {
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+  [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+  [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr hWnd, int X, int Y, int nWidth, int nHeight, bool bRepaint);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+}
+"@
+$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+$marginX = [Math]::Max(24, [Math]::Floor($screen.Width * 0.02))
+$marginY = [Math]::Max(24, [Math]::Floor($screen.Height * 0.025))
+$width = $screen.Width - ($marginX * 2)
+$height = $screen.Height - ($marginY * 2)
+if ($width -lt [Math]::Floor($height * 1.45)) { $height = [Math]::Floor($width / 1.45) }
+$left = $screen.Left + [Math]::Floor(($screen.Width - $width) / 2)
+$top = $screen.Top + [Math]::Floor(($screen.Height - $height) / 2)
+$target = $null
+$profileNeedle = "Nebulum\\BrowserProfile"
+for ($attempt = 0; $attempt -lt 80 -and -not $target; $attempt += 1) {
+  $browserProcesses = Get-CimInstance Win32_Process | Where-Object { ($_.Name -match "chrome|msedge") -and ($_.CommandLine -like "*$profileNeedle*") }
+  foreach ($browserProcess in $browserProcesses) {
+    $candidate = Get-Process -Id $browserProcess.ProcessId -ErrorAction SilentlyContinue
+    if ($candidate -and $candidate.MainWindowHandle -ne 0) {
+      $target = $candidate
+      break
+    }
+  }
+  if (-not $target) {
+    $target = Get-Process chrome, msedge -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq "Nebulum" } | Select-Object -First 1
+  }
+  if (-not $target) { Start-Sleep -Milliseconds 50 }
+}
+if ($target) {
+  $GWL_STYLE = -16
+  $WS_THICKFRAME = 0x00040000
+  $WS_MAXIMIZEBOX = 0x00010000
+  $SWP_NOSIZE = 0x0001
+  $SWP_NOMOVE = 0x0002
+  $SWP_NOZORDER = 0x0004
+  $SWP_NOACTIVATE = 0x0010
+  $SWP_FRAMECHANGED = 0x0020
+  $style = [NebulumWindowLock]::GetWindowLong($target.MainWindowHandle, $GWL_STYLE)
+  $lockedStyle = $style -band (-bnot ($WS_THICKFRAME -bor $WS_MAXIMIZEBOX))
+  [NebulumWindowLock]::SetWindowLong($target.MainWindowHandle, $GWL_STYLE, $lockedStyle) | Out-Null
+  [NebulumWindowLock]::SetWindowPos($target.MainWindowHandle, [IntPtr]::Zero, 0, 0, 0, 0, $SWP_NOSIZE -bor $SWP_NOMOVE -bor $SWP_NOZORDER -bor $SWP_NOACTIVATE -bor $SWP_FRAMECHANGED) | Out-Null
+  [NebulumWindowLock]::MoveWindow($target.MainWindowHandle, $left, $top, $width, $height, $true) | Out-Null
+}
+`;
+
+  try {
+    execFileSync(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+      { stdio: "ignore", windowsHide: true, timeout: 6000 },
+    );
+  } catch {}
 }
 
 async function readRequestJson(request) {
@@ -154,8 +376,42 @@ function sendJson(response, statusCode, body) {
   response.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
     "cache-control": "no-store",
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, POST, HEAD, OPTIONS",
+    "access-control-allow-headers": "content-type",
   });
   response.end(JSON.stringify(body));
+}
+
+function sendLaunchShell(response) {
+  response.writeHead(200, {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  response.end(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nebulum</title>
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #050506;
+    }
+  </style>
+</head>
+<body>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const target = params.get("target") || "/?${APP_LAUNCH_PARAM}=1";
+    location.replace(new URL(target, location.origin).toString());
+  </script>
+</body>
+</html>`);
 }
 
 function withServerMeta(body) {
@@ -223,6 +479,20 @@ function sendStaticFile(request, response, filePath, stat) {
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url, "http://127.0.0.1");
+    if (request.method === "OPTIONS" && url.pathname.startsWith("/api/")) {
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    if (url.pathname === NEBULUM_LAUNCH_PATH) {
+      if (request.method === "GET" || request.method === "HEAD") {
+        sendLaunchShell(response);
+        return;
+      }
+      sendJson(response, 405, { ok: false });
+      return;
+    }
+
     if (url.pathname === "/api/window-settings") {
       if (request.method === "GET") {
         sendJson(response, 200, withServerMeta(await readSettings()));
@@ -253,7 +523,8 @@ const server = createServer(async (request, response) => {
 
     if (url.pathname === "/api/open-pwa") {
       if (request.method === "POST") {
-        sendJson(response, openPwaWindow() ? 200 : 501, withServerMeta({ ok: process.platform === "win32" }));
+        const opened = openPwaWindow(request);
+        sendJson(response, opened ? 200 : 501, withServerMeta({ ok: opened }));
         return;
       }
       sendJson(response, 405, { ok: false });

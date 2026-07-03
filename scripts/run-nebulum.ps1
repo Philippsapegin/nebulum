@@ -38,7 +38,7 @@ function Test-NebulumServer($port) {
       $settingsContent = [System.Text.Encoding]::UTF8.GetString($settingsContent)
     }
     $settings = $settingsContent | ConvertFrom-Json
-    return ($null -ne $settings.borderlessWindow) -and ([int]$settings.serverVersion -ge 9)
+    return ($null -ne $settings.borderlessWindow) -and ([int]$settings.serverVersion -ge 10)
   }
   catch {
     return $false
@@ -121,6 +121,68 @@ function Get-PrimaryScreenBounds {
   }
 }
 
+function Get-NebulumWindowBounds {
+  Add-Type -AssemblyName System.Windows.Forms
+  $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+  $marginX = [Math]::Max(24, [Math]::Floor($screen.Width * 0.02))
+  $marginY = [Math]::Max(24, [Math]::Floor($screen.Height * 0.025))
+  $width = $screen.Width - ($marginX * 2)
+  $height = $screen.Height - ($marginY * 2)
+  $minAspect = 1.45
+
+  if ($width -lt [Math]::Floor($height * $minAspect)) {
+    $height = [Math]::Floor($width / $minAspect)
+  }
+
+  return @{
+    Left = $screen.Left + [Math]::Floor(($screen.Width - $width) / 2)
+    Top = $screen.Top + [Math]::Floor(($screen.Height - $height) / 2)
+    Width = $width
+    Height = $height
+  }
+}
+
+function Update-NebulumBrowserProfile($bounds) {
+  $profileDir = Join-Path $env:LOCALAPPDATA "Nebulum\BrowserProfile"
+  $defaultProfileDir = Join-Path $profileDir "Default"
+  $preferencesPath = Join-Path $defaultProfileDir "Preferences"
+  New-Item -ItemType Directory -Force -Path $defaultProfileDir | Out-Null
+
+  try {
+    $prefs = Get-Content -LiteralPath $preferencesPath -Raw | ConvertFrom-Json
+  }
+  catch {
+    $prefs = [pscustomobject]@{}
+  }
+
+  if (-not $prefs.PSObject.Properties["browser"]) {
+    $prefs | Add-Member -NotePropertyName browser -NotePropertyValue ([pscustomobject]@{})
+  }
+
+  $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+  $placement = [ordered]@{
+    bottom = $bounds.Top + $bounds.Height
+    left = $bounds.Left
+    maximized = $false
+    right = $bounds.Left + $bounds.Width
+    top = $bounds.Top
+    work_area_bottom = $screen.Top + $screen.Height
+    work_area_left = $screen.Left
+    work_area_right = $screen.Left + $screen.Width
+    work_area_top = $screen.Top
+  }
+
+  if ($prefs.browser.PSObject.Properties["window_placement"]) {
+    $prefs.browser.window_placement = $placement
+  }
+  else {
+    $prefs.browser | Add-Member -NotePropertyName window_placement -NotePropertyValue $placement
+  }
+
+  $prefs | ConvertTo-Json -Depth 32 -Compress | Set-Content -LiteralPath $preferencesPath -Encoding UTF8
+  return $profileDir
+}
+
 function Send-FullscreenToggle {
   param(
     [bool]$EnterFullscreen = $true
@@ -143,9 +205,16 @@ for (`$attempt = 0; `$attempt -lt 40 -and -not `$target; `$attempt += 1) {
   if (-not `$target) { Start-Sleep -Milliseconds 150 }
 }
 `$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+`$marginX = [Math]::Max(24, [Math]::Floor(`$screen.Width * 0.02))
+`$marginY = [Math]::Max(24, [Math]::Floor(`$screen.Height * 0.025))
+`$width = `$screen.Width - (`$marginX * 2)
+`$height = `$screen.Height - (`$marginY * 2)
+if (`$width -lt [Math]::Floor(`$height * 1.45)) { `$height = [Math]::Floor(`$width / 1.45) }
+`$left = `$screen.Left + [Math]::Floor((`$screen.Width - `$width) / 2)
+`$top = `$screen.Top + [Math]::Floor((`$screen.Height - `$height) / 2)
 if (`$target) {
   if ('$EnterFullscreen' -eq 'True') {
-    [NebulumWindow]::MoveWindow(`$target.MainWindowHandle, `$screen.Left, `$screen.Top, `$screen.Width, `$screen.Height, `$true) | Out-Null
+    [NebulumWindow]::MoveWindow(`$target.MainWindowHandle, `$left, `$top, `$width, `$height, `$true) | Out-Null
     Start-Sleep -Milliseconds 80
   }
   `$shell.AppActivate(`$target.Id) | Out-Null
@@ -156,7 +225,7 @@ Start-Sleep -Milliseconds 140
 `$shell.SendKeys('{F11}')
 if (`$target -and '$EnterFullscreen' -ne 'True') {
   Start-Sleep -Milliseconds 260
-  [NebulumWindow]::MoveWindow(`$target.MainWindowHandle, `$screen.Left, `$screen.Top, `$screen.Width, `$screen.Height, `$true) | Out-Null
+  [NebulumWindow]::MoveWindow(`$target.MainWindowHandle, `$left, `$top, `$width, `$height, `$true) | Out-Null
 }
 "@
   Start-Process -FilePath "powershell.exe" `
@@ -169,6 +238,10 @@ function Start-WindowBoundsWatcher {
   if (-not (Test-Path $watcherScript)) {
     return
   }
+
+  Get-CimInstance Win32_Process |
+    Where-Object { $_.CommandLine -like "*nebulum-window-bounds-watcher.ps1*" -and $_.ProcessId -ne $PID } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 
   Start-Process -FilePath "powershell.exe" `
     -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$watcherScript`"") `
@@ -227,14 +300,22 @@ if (-not (Test-NebulumServer $port)) {
   Write-LaunchDebug "server ready $port"
 }
 
-$url = "http://127.0.0.1:$port/?nebulumApp=1"
+$appUrl = "http://127.0.0.1:$port/?nebulumApp=1"
+$encodedAppUrl = [System.Uri]::EscapeDataString($appUrl)
+$url = "http://127.0.0.1:$port/nebulum-launch.html?target=$encodedAppUrl&nonce=$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())"
 $windowSettings = Read-WindowSettings
 $browser = Find-Browser
 if ($browser) {
   Write-LaunchDebug "launch browser $browser $url"
-  $screenBounds = Get-PrimaryScreenBounds
+  $screenBounds = Get-NebulumWindowBounds
+  $browserProfile = Update-NebulumBrowserProfile $screenBounds
   $browserArgs = @(
+    "--user-data-dir=$browserProfile",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-session-crashed-bubble",
     "--app=$url",
+    "--autoplay-policy=no-user-gesture-required",
     "--window-size=$($screenBounds.Width),$($screenBounds.Height)",
     "--window-position=$($screenBounds.Left),$($screenBounds.Top)"
   )
