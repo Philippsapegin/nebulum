@@ -38,7 +38,7 @@ function Test-NebulumServer($port) {
       $settingsContent = [System.Text.Encoding]::UTF8.GetString($settingsContent)
     }
     $settings = $settingsContent | ConvertFrom-Json
-    return ($null -ne $settings.borderlessWindow) -and ([int]$settings.serverVersion -ge 8)
+    return ($null -ne $settings.borderlessWindow) -and ([int]$settings.serverVersion -ge 9)
   }
   catch {
     return $false
@@ -227,7 +227,7 @@ if (-not (Test-NebulumServer $port)) {
   Write-LaunchDebug "server ready $port"
 }
 
-$url = "http://127.0.0.1:$port/"
+$url = "http://127.0.0.1:$port/?nebulumApp=1"
 $windowSettings = Read-WindowSettings
 $browser = Find-Browser
 if ($browser) {

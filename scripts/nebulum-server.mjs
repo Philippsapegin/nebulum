@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
@@ -17,7 +17,7 @@ const settingsPath = path.resolve(
     process.env.NEBULUM_SETTINGS_PATH ||
     path.join(process.env.LOCALAPPDATA || os.homedir(), "Nebulum", "settings.json"),
 );
-const SERVER_VERSION = 8;
+const SERVER_VERSION = 9;
 const MOVE_WINDOW_TYPE_DEFINITION = [
   "using System;",
   "using System.Runtime.InteropServices;",
@@ -112,6 +112,29 @@ function sendWindowFitToScreen() {
     { detached: true, stdio: "ignore", windowsHide: true },
   );
   child.unref();
+}
+
+function openPwaWindow() {
+  if (process.platform !== "win32") {
+    return false;
+  }
+
+  const candidates = [
+    path.join(path.dirname(root), "scripts", "run-nebulum.ps1"),
+    path.join(process.cwd(), "scripts", "run-nebulum.ps1"),
+  ];
+  const runScript = candidates.find((candidate) => existsSync(candidate));
+  if (!runScript) {
+    return false;
+  }
+
+  const child = spawn(
+    "powershell.exe",
+    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", runScript],
+    { detached: true, stdio: "ignore", windowsHide: true },
+  );
+  child.unref();
+  return true;
 }
 
 async function readRequestJson(request) {
@@ -222,6 +245,15 @@ const server = createServer(async (request, response) => {
       if (request.method === "POST") {
         sendWindowFitToScreen();
         sendJson(response, 200, withServerMeta({ ok: true }));
+        return;
+      }
+      sendJson(response, 405, { ok: false });
+      return;
+    }
+
+    if (url.pathname === "/api/open-pwa") {
+      if (request.method === "POST") {
+        sendJson(response, openPwaWindow() ? 200 : 501, withServerMeta({ ok: process.platform === "win32" }));
         return;
       }
       sendJson(response, 405, { ok: false });

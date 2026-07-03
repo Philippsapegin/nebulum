@@ -43,9 +43,11 @@ import {
 const params = new URLSearchParams(window.location.search);
 const SEED = params.get("seed") || "nebulum";
 const MENU_DEFAULT_SEED = "nebulum";
+const APP_LAUNCH_PARAM = "nebulumApp";
 const START_AFTER_SEED_STORAGE_KEY = "nebulum:start-after-seed";
 const AUDIO_SETTINGS_STORAGE_KEY = "nebulum:audio-settings";
 const WINDOW_SETTINGS_STORAGE_KEY = "nebulum:window-settings";
+const PWA_INSTALL_STORAGE_KEY = "nebulum:pwa-installed";
 const SAVE_STORAGE_KEY = "nebulum:saves";
 const DEFAULT_SKY_GRADIENT_COLORS = ["#27648f", "#000000", "#884d26", "#000000"];
 const PLANET_WATER_TAG_CHANCE = 0.5;
@@ -80,7 +82,6 @@ const menuMasterVolume = document.querySelector("#menu-master-volume");
 const menuMusicEnabled = document.querySelector("#menu-music-enabled");
 const menuBorderlessWindow = document.querySelector("#menu-borderless-window");
 const menuSettingsClose = document.querySelector("#menu-settings-close");
-const installPwaButton = document.querySelector("#install-pwa-button");
 const gameMenuButton = document.querySelector("#game-menu-button");
 const gameMenuDialog = document.querySelector("#game-menu-dialog");
 const gameSaveGame = document.querySelector("#game-save-game");
@@ -173,6 +174,7 @@ let isReturningToMainMenu = false;
 let audioSettings = readAudioSettings();
 let windowSettings = readWindowSettings();
 let deferredInstallPrompt = null;
+let pwaMenuAction = isNebulumAppWindow() ? "exit" : "install";
 let borderlessBoundsSyncTimer = null;
 let lastBorderlessBoundsSyncAt = 0;
 let selectedMenuSaveIndex = -1;
@@ -562,7 +564,7 @@ function initStartMenu() {
   });
   menuLoadGame.addEventListener("click", openLoadGameDialog);
   menuSettings.addEventListener("click", openSettingsDialog);
-  menuExit.addEventListener("click", exitNebulum);
+  menuExit.addEventListener("click", runStartMenuSystemAction);
   gameMenuButton.addEventListener("click", openGameMenuDialog);
   gameSaveGame.addEventListener("click", openGameSaveDialog);
   gameMainMenu.addEventListener("click", returnToMainMenu);
@@ -593,7 +595,7 @@ function initStartMenu() {
   gameMasterVolume.addEventListener("input", updateAudioSettingsFromMenu);
   gameMenuMusicEnabled.addEventListener("change", updateAudioSettingsFromMenu);
   gameBorderlessWindow.addEventListener("change", updateWindowSettingsFromMenu);
-  initPwaInstallButton();
+  initPwaMenuAction();
 
   seedDialog.addEventListener("pointerdown", (event) => {
     if (event.target === seedDialog) {
@@ -699,26 +701,31 @@ function initStartMenuScene() {
   document.fonts?.ready.then(updateMenuPlaneTexture).catch(() => {});
 }
 
-function initPwaInstallButton() {
-  if (!installPwaButton || isPwaStandalone()) {
-    return;
-  }
+function initPwaMenuAction() {
+  syncPwaMenuAction();
 
-  installPwaButton.hidden = true;
-  installPwaButton.addEventListener("click", installPwaFromMenu);
   window.addEventListener("beforeinstallprompt", (event) => {
-    if (isPwaStandalone()) {
+    if (isNebulumAppWindow()) {
       return;
     }
 
     event.preventDefault();
     deferredInstallPrompt = event;
-    installPwaButton.hidden = false;
+    setPwaMenuAction("install");
   });
   window.addEventListener("appinstalled", () => {
     deferredInstallPrompt = null;
-    installPwaButton.hidden = true;
+    localStorage.setItem(PWA_INSTALL_STORAGE_KEY, "true");
+    syncPwaMenuAction();
   });
+
+  if (!isNebulumAppWindow()) {
+    window.setTimeout(() => {
+      if (!deferredInstallPrompt && pwaMenuAction === "install") {
+        setPwaMenuAction("open");
+      }
+    }, 1200);
+  }
 }
 
 function isPwaStandalone() {
@@ -729,24 +736,94 @@ function isPwaStandalone() {
   );
 }
 
+function isNebulumAppWindow() {
+  return isPwaStandalone() || params.get(APP_LAUNCH_PARAM) === "1";
+}
+
+function syncPwaMenuAction() {
+  setPwaMenuAction(isNebulumAppWindow() ? "exit" : readPwaInstalledFlag() ? "open" : "install");
+}
+
+function setPwaMenuAction(action) {
+  const nextAction = isNebulumAppWindow() ? "exit" : action;
+  if (pwaMenuAction === nextAction) {
+    updateMenuExitButtonLabel();
+    return;
+  }
+
+  pwaMenuAction = nextAction;
+  updateMenuExitButtonLabel();
+  updateMenuPlaneTexture();
+}
+
+function updateMenuExitButtonLabel() {
+  menuExit.textContent = getStartMenuSystemActionLabel();
+}
+
+function getStartMenuSystemActionLabel() {
+  if (isNebulumAppWindow()) {
+    return "EXIT";
+  }
+  return pwaMenuAction === "open" ? "OPEN PWA" : "INSTALL PWA";
+}
+
+function getStartMenuSystemActionId() {
+  return isNebulumAppWindow() ? "exit" : "pwa";
+}
+
+function readPwaInstalledFlag() {
+  return localStorage.getItem(PWA_INSTALL_STORAGE_KEY) === "true";
+}
+
+async function runStartMenuSystemAction() {
+  if (isNebulumAppWindow()) {
+    await exitNebulum();
+    return;
+  }
+
+  if (pwaMenuAction === "open") {
+    await openPwaFromBrowser();
+    return;
+  }
+
+  await installPwaFromMenu();
+}
+
 async function installPwaFromMenu() {
-  if (isPwaStandalone()) {
-    installPwaButton.hidden = true;
+  if (isNebulumAppWindow()) {
+    await exitNebulum();
     return;
   }
 
   if (!deferredInstallPrompt) {
-    installPwaButton.hidden = true;
+    setPwaMenuAction("open");
+    await openPwaFromBrowser();
     return;
   }
 
-  installPwaButton.hidden = true;
   deferredInstallPrompt.prompt();
   const choice = await deferredInstallPrompt.userChoice.catch(() => null);
-  if (choice?.outcome !== "accepted" && !isPwaStandalone()) {
-    installPwaButton.hidden = false;
-  }
   deferredInstallPrompt = null;
+  if (choice?.outcome === "accepted") {
+    localStorage.setItem(PWA_INSTALL_STORAGE_KEY, "true");
+    setPwaMenuAction("open");
+    await openPwaFromBrowser();
+    return;
+  }
+
+  setPwaMenuAction("install");
+}
+
+async function openPwaFromBrowser() {
+  try {
+    const response = await fetch("/api/open-pwa", {
+      method: "POST",
+      keepalive: true,
+    });
+    if (response.ok) {
+      return;
+    }
+  } catch {}
 }
 
 function initStartMenuComposite() {
@@ -1280,7 +1357,7 @@ function updateMenuPlaneTexture() {
     { id: "load", label: "LOAD GAME", x: 555, y: 508, width: 330, height: 42 },
     { id: "settings", label: "SETTINGS", x: 555, y: 566, width: 330, height: 42 },
     { id: "lore", label: "LORE", x: 555, y: 624, width: 330, height: 42 },
-    { id: "exit", label: "EXIT", x: 555, y: 682, width: 330, height: 42 },
+    { id: getStartMenuSystemActionId(), label: getStartMenuSystemActionLabel(), x: 555, y: 682, width: 330, height: 42 },
   ];
 
   for (const button of menuButtonRects) {
@@ -1468,7 +1545,7 @@ function updateStartMenuBlurRects() {
       continue;
     }
 
-    const rect = projectMenuButtonRect(rects[index], 14);
+    const rect = projectMenuButtonRect(rects[index]);
     rectUniforms[index].copy(rect);
   }
   menuCompositeMaterial.uniforms.rectCount.value = rects.length;
@@ -1616,8 +1693,8 @@ function onStartMenuClick(event) {
   if (button.id === "lore") {
     return;
   }
-  if (button.id === "exit") {
-    exitNebulum();
+  if (button.id === "exit" || button.id === "pwa") {
+    runStartMenuSystemAction();
   }
 }
 

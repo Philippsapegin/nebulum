@@ -4,7 +4,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $runScript = Join-Path $repoRoot "scripts\run-nebulum.ps1"
-$iconPath = Join-Path $repoRoot "public\nebulum.ico"
+$iconPath = Join-Path $repoRoot "public\pwa-512x512.ico"
 
 function New-NebulumShortcut($path) {
   $shell = New-Object -ComObject WScript.Shell

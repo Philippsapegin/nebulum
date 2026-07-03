@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,6 +64,44 @@ function paletteWriter() {
   };
 }
 
+function localPwaLauncher() {
+  return {
+    name: "local-pwa-launcher",
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        if (request.url !== "/api/open-pwa") {
+          next();
+          return;
+        }
+
+        if (request.method !== "POST") {
+          response.statusCode = 405;
+          response.setHeader("content-type", "application/json");
+          response.end(JSON.stringify({ ok: false }));
+          return;
+        }
+
+        if (process.platform !== "win32") {
+          response.statusCode = 501;
+          response.setHeader("content-type", "application/json");
+          response.end(JSON.stringify({ ok: false }));
+          return;
+        }
+
+        const runScript = path.join(rootDir, "scripts", "run-nebulum.ps1");
+        const child = spawn(
+          "powershell.exe",
+          ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", runScript],
+          { detached: true, stdio: "ignore", windowsHide: true },
+        );
+        child.unref();
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ ok: true }));
+      });
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const shouldAnalyze = mode === "analyze" || process.env.ANALYZE === "true";
 
@@ -83,6 +122,7 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [
       paletteWriter(),
+      localPwaLauncher(),
       VitePWA({
         registerType: "autoUpdate",
         injectRegister: "auto",
