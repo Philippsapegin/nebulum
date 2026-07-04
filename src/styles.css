@@ -81,6 +81,53 @@ body.game-running .game-menu-button {
   place-items: center;
 }
 
+.sign-turn-button {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  z-index: 67;
+  display: none;
+  width: 86px;
+  height: 86px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(10, 10, 11, 0.72);
+  backdrop-filter: blur(14px);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 0 34px rgba(255, 255, 255, 0.08),
+    0 18px 54px rgba(0, 0, 0, 0.34);
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.06;
+  text-align: center;
+  text-transform: uppercase;
+  transform: translateX(-50%) translateY(22px);
+}
+
+.sign-turn-button span {
+  display: block;
+}
+
+body.game-running .sign-turn-button {
+  display: grid;
+  place-items: center;
+}
+
+.sign-turn-button:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.sign-turn-button:focus-visible {
+  outline: 1px solid rgba(255, 255, 255, 0.32);
+  outline-offset: 3px;
+}
+
 .game-menu-button:focus-visible {
   outline: 1px solid rgba(255, 255, 255, 0.32);
   outline-offset: 2px;
@@ -1230,21 +1277,25 @@ body.graph-entry-moving .hover-panel {
   margin-top: 14px;
 }
 
-body.system-open .left-stack {
+body.game-running .left-stack {
   z-index: 36;
 }
 
-body.system-open .panel {
+body.game-running .panel {
   display: none;
 }
 
-body.system-open .music-player {
+body.game-running .music-player {
   position: fixed;
   left: var(--system-player-left, 18px);
-  top: var(--system-player-top, 62px);
+  top: var(--system-player-top, 18px);
   width: 214px;
   margin-top: 0;
   user-select: none;
+}
+
+body.music-player-hidden .music-player {
+  display: none;
 }
 
 .panel__brand {

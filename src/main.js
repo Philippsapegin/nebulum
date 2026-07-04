@@ -56,12 +56,14 @@ const UI_MENU_CLICK_SOUND = "ui.menu.click";
 const UI_BASE_CLICK_SOUND = "ui.base.click";
 const UI_CANCEL_CLICK_SOUND = "ui.cancel.click";
 const UI_SCROLL_CLICK_SOUND = "ui.scroll.click";
+const UI_TURN_SOUND = "ui.turn";
 const UI_SOUNDS = {
   [UI_HOVER_SOUND]: "/Sounds/UI/NebHoverQuiet.mp3",
   [UI_MENU_CLICK_SOUND]: "/Sounds/UI/NebMenuClick.mp3",
   [UI_BASE_CLICK_SOUND]: "/Sounds/UI/NebBaseClick.mp3",
   [UI_CANCEL_CLICK_SOUND]: "/Sounds/UI/NebCancelClick.mp3",
   [UI_SCROLL_CLICK_SOUND]: "/Sounds/UI/NebScrollClick.mp3",
+  [UI_TURN_SOUND]: "/Sounds/IngameUI/Neb.Turn.mp3",
 };
 const UI_HOVER_SOUND_SELECTOR = [
   ".start-menu__button",
@@ -139,6 +141,7 @@ const settingsDialog = document.querySelector("#settings-dialog");
 const menuMasterVolume = document.querySelector("#menu-master-volume");
 const menuEnvironmentVolume = document.querySelector("#menu-environment-volume");
 const menuMusicEnabled = document.querySelector("#menu-music-enabled");
+const menuShowMusicPlayer = document.querySelector("#menu-show-music-player");
 const menuBorderlessWindow = document.querySelector("#menu-borderless-window");
 const menuSettingsClose = document.querySelector("#menu-settings-close");
 const gameMenuButton = document.querySelector("#game-menu-button");
@@ -156,8 +159,10 @@ const gameSettingsDialog = document.querySelector("#game-settings-dialog");
 const gameMasterVolume = document.querySelector("#game-master-volume");
 const gameEnvironmentVolume = document.querySelector("#game-environment-volume");
 const gameMenuMusicEnabled = document.querySelector("#game-menu-music-enabled");
+const gameShowMusicPlayer = document.querySelector("#game-show-music-player");
 const gameBorderlessWindow = document.querySelector("#game-borderless-window");
 const gameSettingsClose = document.querySelector("#game-settings-close");
+const signTurnButton = document.querySelector("#sign-turn-button");
 const sceneCanvas = document.querySelector("#scene");
 const starLabels = document.querySelector("#star-labels");
 const hoverNameWrap = document.querySelector("#hover-name-wrap");
@@ -598,7 +603,7 @@ function initializeNebulumRuntime() {
   systemScreenController = createSystemScreenController({ root: starWindow });
   musicPlayerController = createMusicPlayer({
     tracks: MUSIC_TRACKS,
-    canDragInSystem: () => systemScreenController.isOpen() && !systemScreenController.isTransitioning(),
+    canDragInSystem: () => isGameRuntimeReady && !isStartMenuOpen && !isAppExited,
   });
   planetScreenController = createPlanetScreenController({
     root: planetScreen,
@@ -636,6 +641,7 @@ function initializeNebulumRuntime() {
   initPanel();
   musicPlayerController.init();
   musicPlayerController.setMasterVolume(audioSettings.masterVolume);
+  musicPlayerController.ensureSystemPosition();
   musicPlayerController.play();
   buildSky(createRandom(`${SEED}:sky`));
   buildLocalSpaceStars(createRandom(`${SEED}:local-space`));
@@ -719,10 +725,12 @@ function initStartMenu() {
   menuMasterVolume.addEventListener("input", updateAudioSettingsFromMenu);
   menuEnvironmentVolume.addEventListener("input", updateAudioSettingsFromMenu);
   menuMusicEnabled.addEventListener("change", updateAudioSettingsFromMenu);
+  menuShowMusicPlayer.addEventListener("change", updateAudioSettingsFromMenu);
   menuBorderlessWindow.addEventListener("change", updateWindowSettingsFromMenu);
   gameMasterVolume.addEventListener("input", updateAudioSettingsFromMenu);
   gameEnvironmentVolume.addEventListener("input", updateAudioSettingsFromMenu);
   gameMenuMusicEnabled.addEventListener("change", updateAudioSettingsFromMenu);
+  gameShowMusicPlayer.addEventListener("change", updateAudioSettingsFromMenu);
   gameBorderlessWindow.addEventListener("change", updateWindowSettingsFromMenu);
   initAudioMixer();
   initUiHoverSounds();
@@ -2081,6 +2089,7 @@ function initAudioMixer() {
   audioMixer.preload(UI_BASE_CLICK_SOUND);
   audioMixer.preload(UI_CANCEL_CLICK_SOUND);
   audioMixer.preload(UI_SCROLL_CLICK_SOUND);
+  audioMixer.preload(UI_TURN_SOUND);
   if (isNebulumAppWindow()) {
     audioMixer.unlock();
   }
@@ -2158,6 +2167,11 @@ function onUiClickSoundPointerDown(event) {
     return;
   }
 
+  if (target === signTurnButton) {
+    playUiTurnSound();
+    return;
+  }
+
   if (isCancelButton(target)) {
     playUiCancelClickSound();
     return;
@@ -2217,6 +2231,13 @@ function playUiScrollClickSound() {
   audioMixer?.play(UI_SCROLL_CLICK_SOUND, {
     channel: "ui",
     volume: 0.84,
+  });
+}
+
+function playUiTurnSound() {
+  audioMixer?.play(UI_TURN_SOUND, {
+    channel: "ui",
+    volume: 0.92,
   });
 }
 
@@ -2282,12 +2303,14 @@ function readAudioSettings() {
       masterVolume: THREE.MathUtils.clamp(Number(settings.masterVolume ?? 1), 0, 1),
       environmentVolume: THREE.MathUtils.clamp(Number(settings.environmentVolume ?? 0.35), 0, 1),
       menuMusicEnabled: settings.menuMusicEnabled !== false,
+      showMusicPlayer: settings.showMusicPlayer !== false,
     };
   } catch {
     return {
       masterVolume: 1,
       environmentVolume: 0.35,
       menuMusicEnabled: true,
+      showMusicPlayer: true,
     };
   }
 }
@@ -2323,6 +2346,9 @@ function syncSettingsDialog() {
   for (const musicToggle of [menuMusicEnabled, gameMenuMusicEnabled]) {
     musicToggle.checked = audioSettings.menuMusicEnabled;
   }
+  for (const playerToggle of [menuShowMusicPlayer, gameShowMusicPlayer]) {
+    playerToggle.checked = audioSettings.showMusicPlayer;
+  }
   for (const windowToggle of [menuBorderlessWindow, gameBorderlessWindow]) {
     windowToggle.checked = windowSettings.borderlessWindow;
   }
@@ -2345,11 +2371,17 @@ function updateAudioSettingsFromMenu(event) {
     : source === menuMusicEnabled
       ? menuMusicEnabled.checked
       : audioSettings.menuMusicEnabled;
+  const showMusicPlayerValue = source === gameShowMusicPlayer
+    ? gameShowMusicPlayer.checked
+    : source === menuShowMusicPlayer
+      ? menuShowMusicPlayer.checked
+      : audioSettings.showMusicPlayer;
 
   audioSettings = {
     masterVolume: THREE.MathUtils.clamp(volume, 0, 1),
     environmentVolume: THREE.MathUtils.clamp(environmentVolume, 0, 1),
     menuMusicEnabled: menuMusicEnabledValue,
+    showMusicPlayer: showMusicPlayerValue,
   };
   syncSettingsDialog();
   writeAudioSettings();
@@ -2362,12 +2394,21 @@ function applyAudioSettings() {
   audioMixer?.setChannelVolume(MENU_ENVIRONMENT_AUDIO_CHANNEL, getEnvironmentChannelVolume());
   audioMixer?.setChannelVolume(LEGACY_ENVIRONMENT_AUDIO_CHANNEL, 0);
   musicPlayerController?.setMasterVolume(audioSettings.masterVolume);
+  applyMusicPlayerVisibility();
   if (!audioSettings.menuMusicEnabled) {
     menuMusicAudio.pause();
     return;
   }
   if (isStartMenuOpen && !isAppExited) {
     playMenuMusic();
+  }
+}
+
+function applyMusicPlayerVisibility() {
+  document.body.classList.toggle("music-player-hidden", !audioSettings.showMusicPlayer);
+  if (!audioSettings.showMusicPlayer) {
+    musicPlayerController?.closeDropdown();
+    musicPlayerController?.cancelDrag();
   }
 }
 
@@ -9718,7 +9759,7 @@ function resize() {
       object.material.uniforms.pixelRatio.value = pixelRatio;
     }
   });
-  if (systemScreenController.isOpen()) {
+  if (isGameRuntimeReady && !isStartMenuOpen) {
     musicPlayerController.ensureSystemPosition();
   }
   resizeObjectDetail3D();

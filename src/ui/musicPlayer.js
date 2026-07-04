@@ -308,7 +308,7 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
 
     if (!systemMusicPlayerPosition) {
       const left = 18;
-      const top = 18 + 30 + 14;
+      const top = 18;
       setSystemMusicPlayerPosition(left, top);
       return;
     }
