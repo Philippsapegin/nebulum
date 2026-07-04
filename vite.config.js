@@ -67,6 +67,92 @@ function paletteWriter() {
 }
 
 function localPwaLauncher() {
+  const settingsPath = path.join(process.env.LOCALAPPDATA || os.homedir(), "Nebulum", "settings.json");
+
+  function normalizeWindowSettings(settings = {}) {
+    return {
+      borderlessWindow: settings.borderlessWindow === true,
+    };
+  }
+
+  function readWindowSettings() {
+    return normalizeWindowSettings(readJsonFile(settingsPath));
+  }
+
+  function withServerMeta(settings) {
+    return {
+      ...settings,
+      serverVersion: 10,
+    };
+  }
+
+  function writeWindowSettings(settings) {
+    mkdirSync(path.dirname(settingsPath), { recursive: true });
+    writeFileSync(settingsPath, `${JSON.stringify(normalizeWindowSettings(settings), null, 2)}\n`, "utf8");
+  }
+
+  function sendJson(response, status, body) {
+    response.statusCode = status;
+    response.setHeader("content-type", "application/json");
+    response.end(JSON.stringify(body));
+  }
+
+  function readRequestJson(request) {
+    return new Promise((resolve, reject) => {
+      let data = "";
+      request.setEncoding("utf8");
+      request.on("data", (chunk) => {
+        data += chunk;
+      });
+      request.on("end", () => {
+        try {
+          resolve(data ? JSON.parse(data) : {});
+        } catch (error) {
+          reject(error);
+        }
+      });
+      request.on("error", reject);
+    });
+  }
+
+  function sendFullscreenToggle(enterFullscreen) {
+    if (process.platform !== "win32") {
+      return;
+    }
+
+    const command = [
+      "Add-Type -AssemblyName System.Windows.Forms",
+      "Start-Sleep -Milliseconds 220",
+      "$shell = New-Object -ComObject WScript.Shell",
+      "$target = $null",
+      "for ($attempt = 0; $attempt -lt 40 -and -not $target; $attempt += 1) {",
+      "  $browserProcesses = Get-CimInstance Win32_Process | Where-Object { ($_.Name -match 'chrome|msedge') -and ($_.CommandLine -match 'Nebulum[\\\\/]BrowserProfile') }",
+      "  foreach ($browserProcess in $browserProcesses) {",
+      "    $candidate = Get-Process -Id $browserProcess.ProcessId -ErrorAction SilentlyContinue",
+      "    if ($candidate -and $candidate.MainWindowHandle -ne 0) { $target = $candidate; break }",
+      "  }",
+      "  if (-not $target) { $target = Get-Process chrome, msedge -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -eq 'Nebulum' } | Select-Object -First 1 }",
+      "  if (-not $target) { Start-Sleep -Milliseconds 150 }",
+      "}",
+      "$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds",
+      enterFullscreen
+        ? "if ($target) { $target.MainWindowHandle | Out-Null; Start-Sleep -Milliseconds 80 }"
+        : "",
+      "if ($target) { $shell.AppActivate($target.Id) | Out-Null } else { $shell.AppActivate('Nebulum') | Out-Null }",
+      "Start-Sleep -Milliseconds 140",
+      "$shell.SendKeys('{F11}')",
+      enterFullscreen
+        ? ""
+        : "Start-Sleep -Milliseconds 260",
+    ].join("; ");
+    const child = spawn(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+      { detached: true, stdio: "ignore", windowsHide: true },
+    );
+    child.unref();
+  }
+
   function getOpenPwaUrl(request) {
     const host = request.headers.host || "127.0.0.1:5173";
     return `http://${host}/?${APP_LAUNCH_PARAM}=1`;
@@ -117,6 +203,37 @@ function localPwaLauncher() {
       return;
     }
 
+    if (url.pathname === "/api/window-settings") {
+      response.setHeader("access-control-allow-origin", "*");
+      response.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
+      response.setHeader("access-control-allow-headers", "content-type");
+      if (request.method === "OPTIONS") {
+        sendJson(response, 200, { ok: true });
+        return;
+      }
+      if (request.method === "GET") {
+        sendJson(response, 200, withServerMeta(readWindowSettings()));
+        return;
+      }
+      if (request.method === "POST") {
+        readRequestJson(request)
+          .then((body) => {
+            const settings = normalizeWindowSettings(body);
+            writeWindowSettings(settings);
+            if (body.applyNow === true) {
+              sendFullscreenToggle(settings.borderlessWindow);
+            }
+            sendJson(response, 200, withServerMeta(settings));
+          })
+          .catch((error) => {
+            sendJson(response, 400, { ok: false, error: error.message });
+          });
+        return;
+      }
+      sendJson(response, 405, { ok: false });
+      return;
+    }
+
     if (url.pathname !== "/api/open-pwa") {
       next();
       return;
@@ -126,29 +243,22 @@ function localPwaLauncher() {
     response.setHeader("access-control-allow-methods", "POST, OPTIONS");
     response.setHeader("access-control-allow-headers", "content-type");
     if (request.method === "OPTIONS") {
-      response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ ok: true }));
+      sendJson(response, 200, { ok: true });
       return;
     }
 
     if (request.method !== "POST") {
-      response.statusCode = 405;
-      response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ ok: false }));
+      sendJson(response, 405, { ok: false });
       return;
     }
 
     if (process.platform !== "win32") {
-      response.statusCode = 501;
-      response.setHeader("content-type", "application/json");
-      response.end(JSON.stringify({ ok: false }));
+      sendJson(response, 501, { ok: false });
       return;
     }
 
     const opened = openPwaWindow(request);
-    response.statusCode = opened ? 200 : 501;
-    response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ ok: opened }));
+    sendJson(response, opened ? 200 : 501, { ok: opened });
   }
 
   return {

@@ -48,15 +48,15 @@ function Test-NebulumServer($port) {
 
 function Read-WindowSettings {
   if (-not (Test-Path $settingsPath)) {
-    return @{ borderlessWindow = $true }
+    return @{ borderlessWindow = $false }
   }
 
   try {
     $settings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
-    return @{ borderlessWindow = $settings.borderlessWindow -ne $false }
+    return @{ borderlessWindow = $settings.borderlessWindow -eq $true }
   }
   catch {
-    return @{ borderlessWindow = $true }
+    return @{ borderlessWindow = $false }
   }
 }
 

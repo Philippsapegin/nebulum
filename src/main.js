@@ -52,8 +52,12 @@ const WINDOW_SETTINGS_STORAGE_KEY = "nebulum:window-settings";
 const PWA_INSTALL_STORAGE_KEY = "nebulum:pwa-installed";
 const SAVE_STORAGE_KEY = "nebulum:saves";
 const UI_HOVER_SOUND = "ui.hover.quiet";
+const UI_MENU_CLICK_SOUND = "ui.menu.click";
+const UI_CANCEL_CLICK_SOUND = "ui.cancel.click";
 const UI_SOUNDS = {
   [UI_HOVER_SOUND]: "/Sounds/UI/NebHoverQuiet.mp3",
+  [UI_MENU_CLICK_SOUND]: "/Sounds/UI/NebMenuClick.mp3",
+  [UI_CANCEL_CLICK_SOUND]: "/Sounds/UI/NebCancelClick.mp3",
 };
 const UI_HOVER_SOUND_SELECTOR = [
   ".start-menu__button",
@@ -65,6 +69,16 @@ const UI_HOVER_SOUND_SELECTOR = [
   ".new-game__faction-card",
   ".menu-save-list__item",
   ".game-menu-button",
+].join(",");
+const UI_MENU_CLICK_SOUND_SELECTOR = [
+  ".start-menu__button",
+  ".menu-dialog__button",
+  ".new-game__scenario-current",
+  ".new-game__scenario-dropdown",
+  ".new-game__scenario-item",
+  ".new-game__inline-button",
+  ".new-game__faction-card",
+  ".menu-save-list__item",
 ].join(",");
 const MENU_ENVIRONMENT_AUDIO_CHANNEL = "menuEnvironment";
 const LEGACY_ENVIRONMENT_AUDIO_CHANNEL = "environment";
@@ -244,6 +258,7 @@ let deferredInstallPrompt = null;
 let pwaMenuAction = isNebulumAppWindow() ? "exit" : "install";
 let borderlessBoundsSyncTimer = null;
 let lastBorderlessBoundsSyncAt = 0;
+let ignoreBorderlessKeySyncUntil = 0;
 let activeUiHoverSoundElement = null;
 let selectedMenuSaveIndex = -1;
 let selectedGameSaveIndex = -1;
@@ -703,6 +718,7 @@ function initStartMenu() {
   gameBorderlessWindow.addEventListener("change", updateWindowSettingsFromMenu);
   initAudioMixer();
   initUiHoverSounds();
+  initUiClickSounds();
   initPwaMenuAction();
 
   seedDialog.addEventListener("pointerdown", (event) => {
@@ -748,6 +764,10 @@ function initStartMenu() {
     }
   });
   window.addEventListener("keydown", (event) => {
+    if (event.key === "F11") {
+      syncBorderlessWindowFromManualToggle(event);
+      return;
+    }
     if (event.key !== "Escape") {
       return;
     }
@@ -756,7 +776,7 @@ function initStartMenu() {
       return;
     }
     closeGameDialogs();
-  });
+  }, { capture: true });
 
   syncSettingsDialog();
   syncWindowSettingsFromServer();
@@ -1824,6 +1844,9 @@ function onStartMenuClick(event) {
   }
 
   event.preventDefault();
+  if (!(event.target instanceof Element) || !event.target.closest(UI_MENU_CLICK_SOUND_SELECTOR)) {
+    playUiMenuClickSound();
+  }
   if (button.id === "new") {
     resetNewGameDialog();
     openMenuDialog(seedDialog, menuSeedInput);
@@ -2046,6 +2069,8 @@ function initAudioMixer() {
   audioMixer.setChannelEnabled(MENU_ENVIRONMENT_AUDIO_CHANNEL, false);
   audioMixer.setChannelEnabled(LEGACY_ENVIRONMENT_AUDIO_CHANNEL, false);
   audioMixer.preload(UI_HOVER_SOUND);
+  audioMixer.preload(UI_MENU_CLICK_SOUND);
+  audioMixer.preload(UI_CANCEL_CLICK_SOUND);
   if (isNebulumAppWindow()) {
     audioMixer.unlock();
   }
@@ -2056,6 +2081,10 @@ function initAudioMixer() {
 function initUiHoverSounds() {
   document.addEventListener("pointerover", onUiHoverSoundPointerOver, { capture: true });
   document.addEventListener("pointerout", onUiHoverSoundPointerOut, { capture: true });
+}
+
+function initUiClickSounds() {
+  document.addEventListener("pointerdown", onUiClickSoundPointerDown, { capture: true });
 }
 
 function unlockAudioMixer() {
@@ -2105,6 +2134,50 @@ function playUiHoverSound() {
   audioMixer?.play(UI_HOVER_SOUND, {
     channel: "ui",
     volume: 0.82,
+  });
+}
+
+function onUiClickSoundPointerDown(event) {
+  const target = getUiClickSoundTarget(event);
+  if (!target) {
+    return;
+  }
+
+  if (isCancelButton(target)) {
+    playUiCancelClickSound();
+    return;
+  }
+
+  playUiMenuClickSound();
+}
+
+function getUiClickSoundTarget(event) {
+  if (!(event.target instanceof Element)) {
+    return null;
+  }
+
+  const target = event.target.closest(UI_MENU_CLICK_SOUND_SELECTOR);
+  if (!target || target.disabled || target.hidden || target.getAttribute("aria-disabled") === "true") {
+    return null;
+  }
+  return target;
+}
+
+function isCancelButton(target) {
+  return target.textContent.trim().toUpperCase() === "CANCEL";
+}
+
+function playUiMenuClickSound() {
+  audioMixer?.play(UI_MENU_CLICK_SOUND, {
+    channel: "ui",
+    volume: 0.88,
+  });
+}
+
+function playUiCancelClickSound() {
+  audioMixer?.play(UI_CANCEL_CLICK_SOUND, {
+    channel: "ui",
+    volume: 0.9,
   });
 }
 
@@ -2184,11 +2257,11 @@ function readWindowSettings() {
   try {
     const settings = JSON.parse(localStorage.getItem(WINDOW_SETTINGS_STORAGE_KEY) || "{}");
     return {
-      borderlessWindow: settings.borderlessWindow !== false,
+      borderlessWindow: settings.borderlessWindow === true,
     };
   } catch {
     return {
-      borderlessWindow: true,
+      borderlessWindow: false,
     };
   }
 }
@@ -2268,7 +2341,7 @@ async function syncWindowSettingsFromServer() {
 
     const settings = await response.json();
     windowSettings = {
-      borderlessWindow: settings.borderlessWindow !== false,
+      borderlessWindow: settings.borderlessWindow === true,
     };
     localStorage.setItem(WINDOW_SETTINGS_STORAGE_KEY, JSON.stringify(windowSettings));
     syncSettingsDialog();
@@ -2284,9 +2357,24 @@ function updateWindowSettingsFromMenu(event) {
       ? menuBorderlessWindow.checked
       : windowSettings.borderlessWindow;
 
+  setBorderlessWindowSetting(borderlessWindow, { applyNow: true });
+}
+
+function syncBorderlessWindowFromManualToggle(event) {
+  if (event.repeat || !isStandaloneWindowShell() || performance.now() < ignoreBorderlessKeySyncUntil) {
+    return;
+  }
+
+  setBorderlessWindowSetting(!windowSettings.borderlessWindow, { applyNow: false });
+}
+
+function setBorderlessWindowSetting(borderlessWindow, { applyNow = false } = {}) {
+  if (applyNow) {
+    ignoreBorderlessKeySyncUntil = performance.now() + 2000;
+  }
   windowSettings = { borderlessWindow };
   syncSettingsDialog();
-  writeWindowSettings({ applyNow: true });
+  writeWindowSettings({ applyNow });
 }
 
 function writeWindowSettings({ applyNow = false } = {}) {

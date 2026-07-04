@@ -47,7 +47,7 @@ const mimeTypes = new Map([
 
 function normalizeWindowSettings(settings = {}) {
   return {
-    borderlessWindow: settings.borderlessWindow !== false,
+    borderlessWindow: settings.borderlessWindow === true,
   };
 }
 
@@ -552,7 +552,7 @@ const server = createServer(async (request, response) => {
         const settings = await readRequestJson(request);
         await writeSettings(settings);
         if (settings.applyNow === true) {
-          sendFullscreenToggle(settings.borderlessWindow !== false);
+          sendFullscreenToggle(settings.borderlessWindow === true);
         }
         sendJson(response, 200, withServerMeta(await readSettings()));
         return;
