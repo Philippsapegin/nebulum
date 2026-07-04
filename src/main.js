@@ -62,7 +62,7 @@ const UI_SOUNDS = {
   [UI_MENU_CLICK_SOUND]: "/Sounds/UI/NebMenuClick.mp3",
   [UI_BASE_CLICK_SOUND]: "/Sounds/UI/NebBaseClick.mp3",
   [UI_CANCEL_CLICK_SOUND]: "/Sounds/UI/NebCancelClick.mp3",
-  [UI_SCROLL_CLICK_SOUND]: "/Sounds/UI/NebScrollClick.mp3",
+  [UI_SCROLL_CLICK_SOUND]: "/Sounds/UI/Neb.ScrollClick.mp3",
   [UI_TURN_SOUND]: "/Sounds/IngameUI/Neb.Turn.mp3",
 };
 const UI_HOVER_SOUND_SELECTOR = [
