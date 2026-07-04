@@ -87,8 +87,14 @@ const UI_MENU_CLICK_SOUND_SELECTOR = [
   ".menu-save-list__item",
 ].join(",");
 const UI_SCROLL_CLICK_SOUND_SELECTOR = [
-  ".new-game__scenario-item",
   ".music-track-item",
+].join(",");
+const UI_BASE_CLICK_SOUND_SELECTOR = [
+  ".new-game__scenario-current",
+  ".new-game__scenario-dropdown",
+  ".new-game__scenario-item",
+  ".new-game__faction-color",
+  ".new-game__faction-card",
 ].join(",");
 const MENU_ENVIRONMENT_AUDIO_CHANNEL = "menuEnvironment";
 const LEGACY_ENVIRONMENT_AUDIO_CHANNEL = "environment";
@@ -2173,6 +2179,11 @@ function onUiClickSoundPointerDown(event) {
 
   if (target === signTurnButton) {
     playUiTurnSound();
+    return;
+  }
+
+  if (target.matches(UI_BASE_CLICK_SOUND_SELECTOR)) {
+    playUiBaseClickSound();
     return;
   }
 
