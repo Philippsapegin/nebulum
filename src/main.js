@@ -53,11 +53,15 @@ const PWA_INSTALL_STORAGE_KEY = "nebulum:pwa-installed";
 const SAVE_STORAGE_KEY = "nebulum:saves";
 const UI_HOVER_SOUND = "ui.hover.quiet";
 const UI_MENU_CLICK_SOUND = "ui.menu.click";
+const UI_BASE_CLICK_SOUND = "ui.base.click";
 const UI_CANCEL_CLICK_SOUND = "ui.cancel.click";
+const UI_SCROLL_CLICK_SOUND = "ui.scroll.click";
 const UI_SOUNDS = {
   [UI_HOVER_SOUND]: "/Sounds/UI/NebHoverQuiet.mp3",
   [UI_MENU_CLICK_SOUND]: "/Sounds/UI/NebMenuClick.mp3",
+  [UI_BASE_CLICK_SOUND]: "/Sounds/UI/NebBaseClick.mp3",
   [UI_CANCEL_CLICK_SOUND]: "/Sounds/UI/NebCancelClick.mp3",
+  [UI_SCROLL_CLICK_SOUND]: "/Sounds/UI/NebScrollClick.mp3",
 };
 const UI_HOVER_SOUND_SELECTOR = [
   ".start-menu__button",
@@ -79,6 +83,10 @@ const UI_MENU_CLICK_SOUND_SELECTOR = [
   ".new-game__inline-button",
   ".new-game__faction-card",
   ".menu-save-list__item",
+].join(",");
+const UI_SCROLL_CLICK_SOUND_SELECTOR = [
+  ".new-game__scenario-item",
+  ".music-track-item",
 ].join(",");
 const MENU_ENVIRONMENT_AUDIO_CHANNEL = "menuEnvironment";
 const LEGACY_ENVIRONMENT_AUDIO_CHANNEL = "environment";
@@ -2070,7 +2078,9 @@ function initAudioMixer() {
   audioMixer.setChannelEnabled(LEGACY_ENVIRONMENT_AUDIO_CHANNEL, false);
   audioMixer.preload(UI_HOVER_SOUND);
   audioMixer.preload(UI_MENU_CLICK_SOUND);
+  audioMixer.preload(UI_BASE_CLICK_SOUND);
   audioMixer.preload(UI_CANCEL_CLICK_SOUND);
+  audioMixer.preload(UI_SCROLL_CLICK_SOUND);
   if (isNebulumAppWindow()) {
     audioMixer.unlock();
   }
@@ -2138,8 +2148,13 @@ function playUiHoverSound() {
 }
 
 function onUiClickSoundPointerDown(event) {
-  const target = getUiClickSoundTarget(event);
+  const target = getUiButtonClickSoundTarget(event);
   if (!target) {
+    return;
+  }
+
+  if (target.matches(UI_SCROLL_CLICK_SOUND_SELECTOR)) {
+    playUiScrollClickSound();
     return;
   }
 
@@ -2148,15 +2163,20 @@ function onUiClickSoundPointerDown(event) {
     return;
   }
 
+  if (isIngameUiClickTarget(target)) {
+    playUiBaseClickSound();
+    return;
+  }
+
   playUiMenuClickSound();
 }
 
-function getUiClickSoundTarget(event) {
+function getUiButtonClickSoundTarget(event) {
   if (!(event.target instanceof Element)) {
     return null;
   }
 
-  const target = event.target.closest(UI_MENU_CLICK_SOUND_SELECTOR);
+  const target = event.target.closest("button");
   if (!target || target.disabled || target.hidden || target.getAttribute("aria-disabled") === "true") {
     return null;
   }
@@ -2164,7 +2184,12 @@ function getUiClickSoundTarget(event) {
 }
 
 function isCancelButton(target) {
-  return target.textContent.trim().toUpperCase() === "CANCEL";
+  const label = target.textContent.trim().toUpperCase();
+  return label === "CANCEL" || label === "CLOSE";
+}
+
+function isIngameUiClickTarget(target) {
+  return !isStartMenuOpen || !target.closest("#start-menu");
 }
 
 function playUiMenuClickSound() {
@@ -2174,10 +2199,24 @@ function playUiMenuClickSound() {
   });
 }
 
+function playUiBaseClickSound() {
+  audioMixer?.play(UI_BASE_CLICK_SOUND, {
+    channel: "ui",
+    volume: 0.86,
+  });
+}
+
 function playUiCancelClickSound() {
   audioMixer?.play(UI_CANCEL_CLICK_SOUND, {
     channel: "ui",
     volume: 0.9,
+  });
+}
+
+function playUiScrollClickSound() {
+  audioMixer?.play(UI_SCROLL_CLICK_SOUND, {
+    channel: "ui",
+    volume: 0.84,
   });
 }
 
