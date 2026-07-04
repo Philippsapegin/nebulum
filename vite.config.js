@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -164,6 +164,7 @@ function localPwaLauncher() {
 
 const APP_LAUNCH_PARAM = "nebulumApp";
 const NEBULUM_LAUNCH_PATH = "/nebulum-launch.html";
+const ICON_CACHE_VERSION = "pwa-icons-2026-07-04-1";
 
 function findBrowser() {
   const candidates = [
@@ -197,6 +198,7 @@ function getNebulumWindowBounds() {
 function prepareNebulumBrowserProfile(bounds) {
   const profileDir = getNebulumBrowserProfileDir();
   const defaultProfileDir = path.join(profileDir, "Default");
+  refreshNebulumIconCache(profileDir);
   mkdirSync(defaultProfileDir, { recursive: true });
   writeProfileWindowPlacement(path.join(defaultProfileDir, "Preferences"), bounds);
   return profileDir;
@@ -230,6 +232,54 @@ function readJsonFile(filePath) {
   } catch {
     return {};
   }
+}
+
+function refreshNebulumIconCache(profileDir) {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  const markerPath = path.join(profileDir, "icon-cache-version.txt");
+  try {
+    if (readFileSync(markerPath, "utf8").trim() === ICON_CACHE_VERSION) {
+      return;
+    }
+  } catch {}
+
+  stopNebulumBrowserProfileProcesses();
+  const defaultProfileDir = path.join(profileDir, "Default");
+  for (const cachePath of [
+    path.join(defaultProfileDir, "Favicons"),
+    path.join(defaultProfileDir, "Favicons-journal"),
+    path.join(defaultProfileDir, "Shortcuts"),
+    path.join(defaultProfileDir, "Shortcuts-journal"),
+    path.join(defaultProfileDir, "Top Sites"),
+    path.join(defaultProfileDir, "Top Sites-journal"),
+    path.join(defaultProfileDir, "Web Applications", "Manifest Resources"),
+  ]) {
+    try {
+      rmSync(cachePath, { recursive: true, force: true });
+    } catch {}
+  }
+
+  mkdirSync(profileDir, { recursive: true });
+  writeFileSync(markerPath, ICON_CACHE_VERSION, "utf8");
+}
+
+function stopNebulumBrowserProfileProcesses() {
+  try {
+    execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "Get-CimInstance Win32_Process | Where-Object { ($_.Name -match 'chrome|msedge') -and ($_.CommandLine -match 'Nebulum[\\\\/]BrowserProfile') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+      ],
+      { stdio: "ignore", windowsHide: true, timeout: 4000 },
+    );
+  } catch {}
 }
 
 function getPrimaryScreenBounds() {
@@ -429,23 +479,35 @@ export default defineConfig(({ mode }) => {
           categories: ["games", "entertainment"],
           icons: [
             {
+              src: "/pwa-512x512.png",
+              sizes: "512x512",
+              type: "image/png",
+              purpose: "any",
+            },
+            {
               src: "/pwa-192x192.png",
               sizes: "192x192",
               type: "image/png",
-              purpose: "any maskable",
+              purpose: "any",
             },
             {
               src: "/pwa-512x512.png",
               sizes: "512x512",
               type: "image/png",
-              purpose: "any maskable",
+              purpose: "maskable",
+            },
+            {
+              src: "/pwa-192x192.png",
+              sizes: "192x192",
+              type: "image/png",
+              purpose: "maskable",
             },
           ],
         },
         workbox: {
           cleanupOutdatedCaches: true,
           globPatterns: ["**/*.{js,css,html,svg,png,ico,webmanifest}"],
-          maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
+          maximumFileSizeToCacheInBytes: 16 * 1024 * 1024,
           navigateFallback: "/index.html",
           runtimeCaching: [
             {

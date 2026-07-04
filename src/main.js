@@ -58,6 +58,11 @@ const UI_SOUNDS = {
 const UI_HOVER_SOUND_SELECTOR = [
   ".start-menu__button",
   ".menu-dialog__button",
+  ".new-game__scenario-current",
+  ".new-game__scenario-dropdown",
+  ".new-game__scenario-item",
+  ".new-game__inline-button",
+  ".new-game__faction-card",
   ".menu-save-list__item",
   ".game-menu-button",
 ].join(",");
@@ -87,6 +92,22 @@ const seedDialog = document.querySelector("#seed-dialog");
 const menuSeedInput = document.querySelector("#menu-seed-input");
 const menuSeedConfirm = document.querySelector("#menu-seed-confirm");
 const menuSeedCancel = document.querySelector("#menu-seed-cancel");
+const menuScenarioCurrent = document.querySelector("#menu-scenario-current");
+const menuScenarioDropdown = document.querySelector("#menu-scenario-dropdown");
+const menuScenarioListBackdrop = document.querySelector("#menu-scenario-list-backdrop");
+const menuScenarioList = document.querySelector("#menu-scenario-list");
+const menuScenarioScrollbar = document.querySelector("#menu-scenario-scrollbar");
+const menuScenarioScrollbarThumb = document.querySelector("#menu-scenario-scrollbar-thumb");
+const menuScenarioImage = document.querySelector("#menu-scenario-image");
+const menuScenarioText = document.querySelector("#menu-scenario-text");
+const menuFactionCount = document.querySelector("#menu-faction-count");
+const menuFactionLimit = document.querySelector("#menu-faction-limit");
+const menuPlayerFactionName = document.querySelector("#menu-player-faction-name");
+const menuPlayerFactionColor = document.querySelector("#menu-player-faction-color");
+const menuBonusesSetup = document.querySelector("#menu-bonuses-setup");
+const menuBonuses = document.querySelector("#menu-bonuses");
+const menuFactionGrid = document.querySelector("#menu-faction-grid");
+const menuNewGameApply = document.querySelector("#menu-new-game-apply");
 const loadDialog = document.querySelector("#load-dialog");
 const menuSaveList = document.querySelector("#menu-save-list");
 const menuLoadSave = document.querySelector("#menu-load-save");
@@ -181,6 +202,32 @@ const objectDetailEntryOverlay = document.createElement("div");
 objectDetailEntryOverlay.className = "object-detail-entry-overlay";
 document.querySelector("#app").append(objectDetailEntryOverlay);
 
+const NEW_GAME_BASIC_SCENARIO_ID = "basic";
+const NEW_GAME_DEFAULT_FACTION_COUNT = 4;
+const NEW_GAME_FACTION_RENDER_LIMIT = 90;
+const NEW_GAME_DEFAULT_PLAYER_FACTION_NAME = "Wanderers";
+const NEW_GAME_DEFAULT_PLAYER_FACTION_COLOR = "#00e1ff";
+const NEW_GAME_SCENARIOS = {
+  basic: {
+    id: "basic",
+    label: "BASIC",
+    image: "/pics/scenarios/basic.png",
+    text: "Welcome to the new Nebulum: empty and unexplored. Of course, the history of humanity is vast, and perhaps people have been here before at some point, but certainly not in the present day. All paths are open, and no one knows what awaits you in this constellation.\n\nYour fleet, your people, and the technologies you brought with you from wherever you came from into this new Nebulum are the only things you have. The first thing you must do is find a planet you can call home.\n\nComplete freedom. No one lays claim to this region of space except you and others like you: fleets of cosmic wanderers drifting through wormholes, hoping that one day they will look out upon their vast space empire.",
+    bonuses: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Donec non orci at nibh elementum commodo.",
+    maxFactions: (seed) => getBasicScenarioFactionLimit(seed),
+    canStart: true,
+  },
+  homeworld: {
+    id: "homeworld",
+    label: "HOMEWORLD",
+    image: "/pics/scenarios/homeworld.png",
+    text: "You have lived here for a long time. Your home is what it is. The truth is, you never had the means to build a spaceport and reach the stars.\nAt last, you have succeeded.\nNow you can look up with pride at the tiny sparks of spacecraft above: the ships of your first fleet.\n\nYour native Nebulum... who else dwells here? Others like you, fragments of humanity forgotten on wretched planets? Or were some more fortunate? The time has come to find out. The time has come to call the entire Nebulum your home, not just one tiny point on the map.\n\nOr at least to try.",
+    bonuses: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla facilisi. Morbi suscipit lectus vel lacus blandit.",
+    maxFactions: () => Infinity,
+    canStart: false,
+  },
+};
+
 let isStartMenuOpen = true;
 let isAppExited = false;
 let isGameRuntimeReady = false;
@@ -203,6 +250,13 @@ let selectedGameSaveIndex = -1;
 let isAddingGameSave = false;
 let gameSaveDraftName = "";
 let shouldStartGameAfterInit = false;
+let selectedNewGameScenarioId = NEW_GAME_BASIC_SCENARIO_ID;
+let newGameFactionCount = NEW_GAME_DEFAULT_FACTION_COUNT;
+let newGamePlayerFactionName = NEW_GAME_DEFAULT_PLAYER_FACTION_NAME;
+let newGamePlayerFactionColor = NEW_GAME_DEFAULT_PLAYER_FACTION_COLOR;
+let selectedNewGamePlayerSideIndex = 0;
+let newGameSideConfigs = [];
+let newGameSideConfigSeed = "";
 let menuScene = null;
 let menuCamera = null;
 let menuSky = null;
@@ -581,7 +635,7 @@ function initStartMenu() {
   shouldStartGameAfterInit = consumeStartAfterSeedFlag();
 
   menuNewGame.addEventListener("click", () => {
-    menuSeedInput.value = MENU_DEFAULT_SEED;
+    resetNewGameDialog();
     openMenuDialog(seedDialog, menuSeedInput);
   });
   menuLoadGame.addEventListener("click", openLoadGameDialog);
@@ -602,6 +656,34 @@ function initStartMenu() {
   startMenu.addEventListener("pointerdown", playMenuMusic, { once: true });
   menuSeedConfirm.addEventListener("click", confirmNewGameSeed);
   menuSeedCancel.addEventListener("click", closeMenuDialogs);
+  menuScenarioCurrent.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setNewGameScenarioDropdownOpen(menuScenarioList.hidden);
+  });
+  menuScenarioDropdown.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setNewGameScenarioDropdownOpen(menuScenarioList.hidden);
+  });
+  menuScenarioList.addEventListener("scroll", updateNewGameScenarioScrollbar);
+  menuScenarioScrollbar.addEventListener("pointerdown", onNewGameScenarioScrollbarPointerDown);
+  menuFactionCount.addEventListener("input", () => {
+    newGameFactionCount = parseFactionCount(menuFactionCount.value);
+    renderNewGameDialog();
+  });
+  menuPlayerFactionName.addEventListener("input", () => {
+    newGamePlayerFactionName = menuPlayerFactionName.value;
+    renderNewGameFactionGrid(newGameFactionCount);
+  });
+  menuPlayerFactionColor.addEventListener("click", () => {
+    openColorPicker(menuPlayerFactionColor, newGamePlayerFactionColor, (color) => {
+      newGamePlayerFactionColor = color;
+      updateNewGamePlayerFactionColor();
+      renderNewGameFactionGrid(newGameFactionCount);
+    });
+  });
+  menuBonusesSetup.addEventListener("click", () => {});
+  menuNewGameApply.addEventListener("click", () => {});
+  menuSeedInput.addEventListener("input", renderNewGameDialog);
   menuSeedInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       confirmNewGameSeed();
@@ -625,7 +707,7 @@ function initStartMenu() {
 
   seedDialog.addEventListener("pointerdown", (event) => {
     if (event.target === seedDialog) {
-      closeMenuDialogs();
+      setNewGameScenarioDropdownOpen(false);
     }
   });
   loadDialog.addEventListener("pointerdown", (event) => {
@@ -637,6 +719,18 @@ function initStartMenu() {
     if (event.target === settingsDialog) {
       closeMenuDialogs();
     }
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (
+      menuScenarioList.hidden ||
+      menuScenarioList.contains(event.target) ||
+      menuScenarioScrollbar.contains(event.target) ||
+      menuScenarioCurrent.contains(event.target) ||
+      menuScenarioDropdown.contains(event.target)
+    ) {
+      return;
+    }
+    setNewGameScenarioDropdownOpen(false);
   });
   gameMenuDialog.addEventListener("pointerdown", (event) => {
     if (event.target === gameMenuDialog) {
@@ -666,6 +760,8 @@ function initStartMenu() {
 
   syncSettingsDialog();
   syncWindowSettingsFromServer();
+  initNewGameScenarioDropdown();
+  resetNewGameDialog();
   applyAudioSettings();
   applyWindowSettings();
   startMenuEnvironmentMachine();
@@ -1729,7 +1825,7 @@ function onStartMenuClick(event) {
 
   event.preventDefault();
   if (button.id === "new") {
-    menuSeedInput.value = MENU_DEFAULT_SEED;
+    resetNewGameDialog();
     openMenuDialog(seedDialog, menuSeedInput);
     return;
   }
@@ -1868,6 +1964,7 @@ function openMenuDialog(dialog, focusTarget = null) {
 }
 
 function closeMenuDialogs() {
+  setNewGameScenarioDropdownOpen(false);
   seedDialog.hidden = true;
   loadDialog.hidden = true;
   settingsDialog.hidden = true;
@@ -2277,7 +2374,296 @@ function getMenuMusicVolume() {
   return 0.62 * audioSettings.masterVolume;
 }
 
+function initNewGameScenarioDropdown() {
+  menuScenarioList.replaceChildren();
+  Object.values(NEW_GAME_SCENARIOS).forEach((scenario) => {
+    const item = document.createElement("button");
+    item.className = "new-game__scenario-item";
+    item.type = "button";
+    item.dataset.scenarioId = scenario.id;
+    item.textContent = scenario.label;
+    item.addEventListener("click", () => {
+      setNewGameScenario(scenario.id);
+      setNewGameScenarioDropdownOpen(false);
+    });
+    menuScenarioList.append(item);
+  });
+}
+
+function resetNewGameDialog() {
+  selectedNewGameScenarioId = NEW_GAME_BASIC_SCENARIO_ID;
+  menuSeedInput.value = MENU_DEFAULT_SEED;
+  newGamePlayerFactionName = NEW_GAME_DEFAULT_PLAYER_FACTION_NAME;
+  newGamePlayerFactionColor = NEW_GAME_DEFAULT_PLAYER_FACTION_COLOR;
+  selectedNewGamePlayerSideIndex = 0;
+  newGameFactionCount = getClampedNewGameFactionCount(
+    NEW_GAME_DEFAULT_FACTION_COUNT,
+    getNewGameScenarioMaxFactions(NEW_GAME_SCENARIOS[selectedNewGameScenarioId], MENU_DEFAULT_SEED),
+  );
+  newGameSideConfigs = createNewGameSideConfigs(newGameFactionCount, MENU_DEFAULT_SEED);
+  newGameSideConfigSeed = MENU_DEFAULT_SEED;
+  renderNewGameDialog();
+}
+
+function setNewGameScenario(scenarioId) {
+  if (!NEW_GAME_SCENARIOS[scenarioId]) {
+    return;
+  }
+
+  selectedNewGameScenarioId = scenarioId;
+  renderNewGameDialog();
+}
+
+function setNewGameScenarioDropdownOpen(isOpen) {
+  menuScenarioList.hidden = !isOpen;
+  menuScenarioListBackdrop.hidden = !isOpen;
+  menuScenarioScrollbar.hidden = !isOpen;
+  menuScenarioCurrent.setAttribute("aria-expanded", String(isOpen));
+  menuScenarioDropdown.setAttribute("aria-expanded", String(isOpen));
+  if (isOpen) {
+    requestAnimationFrame(updateNewGameScenarioScrollbar);
+  }
+}
+
+function renderNewGameDialog() {
+  const scenario = NEW_GAME_SCENARIOS[selectedNewGameScenarioId] ?? NEW_GAME_SCENARIOS[NEW_GAME_BASIC_SCENARIO_ID];
+  const seed = getNewGameSeed();
+  const maxFactions = getNewGameScenarioMaxFactions(scenario, seed);
+  newGameFactionCount = getClampedNewGameFactionCount(newGameFactionCount, maxFactions);
+  syncNewGameSideConfigs(newGameFactionCount, seed);
+  selectedNewGamePlayerSideIndex = THREE.MathUtils.clamp(selectedNewGamePlayerSideIndex, 0, Math.max(0, newGameFactionCount - 1));
+
+  menuScenarioCurrent.textContent = scenario.label;
+  menuScenarioImage.src = scenario.image;
+  menuScenarioImage.alt = scenario.label;
+  menuScenarioText.textContent = scenario.text;
+  menuBonuses.textContent = scenario.bonuses;
+  menuFactionCount.value = String(newGameFactionCount);
+  menuPlayerFactionName.value = newGamePlayerFactionName;
+  updateNewGamePlayerFactionColor();
+  if (Number.isFinite(maxFactions)) {
+    menuFactionCount.max = String(maxFactions);
+    menuFactionLimit.textContent = `MAX ${maxFactions}`;
+  } else {
+    menuFactionCount.removeAttribute("max");
+    menuFactionLimit.textContent = "NO LIMIT";
+  }
+  menuSeedConfirm.disabled = !scenario.canStart;
+  updateNewGameScenarioListUi();
+  renderNewGameFactionGrid(newGameFactionCount);
+}
+
+function updateNewGamePlayerFactionColor() {
+  menuPlayerFactionColor.style.color = newGamePlayerFactionColor;
+  menuPlayerFactionColor.setAttribute("aria-label", `Faction border color ${newGamePlayerFactionColor}`);
+}
+
+function updateNewGameScenarioListUi() {
+  menuScenarioList.querySelectorAll(".new-game__scenario-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.scenarioId === selectedNewGameScenarioId);
+  });
+  updateNewGameScenarioScrollbar();
+}
+
+function updateNewGameScenarioScrollbar() {
+  if (menuScenarioList.hidden) {
+    return;
+  }
+
+  const visibleHeight = menuScenarioList.clientHeight;
+  const scrollHeight = menuScenarioList.scrollHeight;
+  const canScroll = scrollHeight > visibleHeight + 1;
+  menuScenarioListBackdrop.style.height = `${menuScenarioList.offsetHeight}px`;
+  menuScenarioScrollbar.hidden = !canScroll;
+  if (!canScroll) {
+    return;
+  }
+
+  const scrollMargin = 3;
+  menuScenarioScrollbar.style.height = `${menuScenarioList.offsetHeight}px`;
+  const thumbHeight = Math.max(28, (visibleHeight / scrollHeight) * visibleHeight);
+  const maxThumbTop = visibleHeight - thumbHeight - scrollMargin * 2;
+  const maxScrollTop = scrollHeight - visibleHeight;
+  const thumbTop = scrollMargin + (maxScrollTop > 0 ? (menuScenarioList.scrollTop / maxScrollTop) * maxThumbTop : 0);
+  menuScenarioScrollbarThumb.style.height = `${thumbHeight}px`;
+  menuScenarioScrollbarThumb.style.transform = `translateY(${thumbTop}px)`;
+}
+
+function onNewGameScenarioScrollbarPointerDown(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  menuScenarioScrollbar.setPointerCapture?.(event.pointerId);
+
+  const scrollbarRect = menuScenarioScrollbar.getBoundingClientRect();
+  const thumbRect = menuScenarioScrollbarThumb.getBoundingClientRect();
+  const grabOffset = event.clientY >= thumbRect.top && event.clientY <= thumbRect.bottom
+    ? event.clientY - thumbRect.top
+    : thumbRect.height / 2;
+
+  const moveThumb = (clientY) => {
+    const scrollMargin = 3;
+    const visibleHeight = menuScenarioList.clientHeight;
+    const scrollHeight = menuScenarioList.scrollHeight;
+    const thumbHeight = menuScenarioScrollbarThumb.offsetHeight;
+    const maxThumbTop = visibleHeight - thumbHeight - scrollMargin * 2;
+    const maxScrollTop = scrollHeight - visibleHeight;
+    const thumbTop = THREE.MathUtils.clamp(clientY - scrollbarRect.top - grabOffset - scrollMargin, 0, maxThumbTop);
+    menuScenarioList.scrollTop = maxThumbTop > 0 ? (thumbTop / maxThumbTop) * maxScrollTop : 0;
+  };
+
+  const onMove = (moveEvent) => moveThumb(moveEvent.clientY);
+  const onUp = (upEvent) => {
+    menuScenarioScrollbar.releasePointerCapture?.(upEvent.pointerId);
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
+  };
+
+  moveThumb(event.clientY);
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onUp);
+}
+
+function renderNewGameFactionGrid(factionCount) {
+  menuFactionGrid.replaceChildren();
+  const visibleCount = Math.min(factionCount, NEW_GAME_FACTION_RENDER_LIMIT);
+  for (let index = 0; index < visibleCount; index += 1) {
+    const side = getNewGameRenderedSide(index);
+    const card = document.createElement("button");
+    card.className = "new-game__faction-card";
+    card.classList.toggle("new-game__faction-card--player", index === selectedNewGamePlayerSideIndex);
+    card.style.setProperty("--side-color", side.color);
+    card.type = "button";
+    const title = document.createElement("span");
+    title.className = "new-game__faction-card-title";
+    title.textContent = side.name;
+    const meta = document.createElement("span");
+    meta.className = "new-game__faction-card-meta";
+    meta.textContent = index === selectedNewGamePlayerSideIndex ? "YOUR FACTION" : "CONFIG PENDING";
+    card.append(title, meta);
+    card.addEventListener("click", () => {
+      selectedNewGamePlayerSideIndex = index;
+      renderNewGameFactionGrid(newGameFactionCount);
+    });
+    menuFactionGrid.append(card);
+  }
+
+  if (visibleCount < factionCount) {
+    const overflow = document.createElement("div");
+    overflow.className = "new-game__faction-card new-game__faction-card--overflow";
+    overflow.textContent = `+${factionCount - visibleCount}`;
+    menuFactionGrid.append(overflow);
+  }
+}
+
+function getNewGameRenderedSide(index) {
+  if (index === selectedNewGamePlayerSideIndex) {
+    return {
+      name: getNewGamePlayerFactionDisplayName(),
+      color: newGamePlayerFactionColor,
+    };
+  }
+
+  const side = newGameSideConfigs[index] ?? createNewGameSideConfig(index, getNewGameSeed());
+  return {
+    name: side.name,
+    color: side.color,
+  };
+}
+
+function getNewGamePlayerFactionDisplayName() {
+  return newGamePlayerFactionName.trim() || NEW_GAME_DEFAULT_PLAYER_FACTION_NAME;
+}
+
+function syncNewGameSideConfigs(count, seed) {
+  if (newGameSideConfigSeed !== seed) {
+    newGameSideConfigs = createNewGameSideConfigs(count, seed);
+    newGameSideConfigSeed = seed;
+    return;
+  }
+
+  if (newGameSideConfigs.length > count) {
+    newGameSideConfigs.length = count;
+  }
+
+  for (let index = newGameSideConfigs.length; index < count; index += 1) {
+    newGameSideConfigs.push(createNewGameSideConfig(index, seed));
+  }
+}
+
+function createNewGameSideConfigs(count, seed) {
+  return Array.from({ length: count }, (_, index) => createNewGameSideConfig(index, seed));
+}
+
+function createNewGameSideConfig(index, seed) {
+  return {
+    name: `SIDE ${index + 1}`,
+    color: createNewGameSideColor(index, seed),
+  };
+}
+
+function createNewGameSideColor(index, seed) {
+  const random = createRandom(`${seed}:new-game-side:${index}`);
+  const hue = Math.floor(random() * 360);
+  const saturation = 58 + Math.floor(random() * 30);
+  const lightness = 48 + Math.floor(random() * 18);
+  return hslToHexColor(hue, saturation, lightness);
+}
+
+function hslToHexColor(hue, saturation, lightness) {
+  const s = saturation / 100;
+  const l = lightness / 100;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+  const m = l - c / 2;
+  const [r, g, b] = hue < 60
+    ? [c, x, 0]
+    : hue < 120
+      ? [x, c, 0]
+      : hue < 180
+        ? [0, c, x]
+        : hue < 240
+          ? [0, x, c]
+          : hue < 300
+            ? [x, 0, c]
+            : [c, 0, x];
+  return `#${[r, g, b].map((channel) => Math.round((channel + m) * 255).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function getNewGameSeed() {
+  return menuSeedInput.value.trim() || MENU_DEFAULT_SEED;
+}
+
+function getNewGameScenarioMaxFactions(scenario, seed) {
+  return scenario.maxFactions(seed);
+}
+
+function getBasicScenarioFactionLimit(seed) {
+  const previewNodes = createNodes(createRandom(seed));
+  return createOuterLinks(previewNodes, createRandom(`${seed}:outer-links`)).length;
+}
+
+function getClampedNewGameFactionCount(value, maxFactions) {
+  const minimum = 1;
+  const parsed = parseFactionCount(value);
+  if (Number.isFinite(maxFactions)) {
+    return THREE.MathUtils.clamp(parsed, minimum, Math.max(minimum, maxFactions));
+  }
+  return Math.max(minimum, parsed);
+}
+
+function parseFactionCount(value) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : 1;
+}
+
 function confirmNewGameSeed() {
+  const scenario = NEW_GAME_SCENARIOS[selectedNewGameScenarioId] ?? NEW_GAME_SCENARIOS[NEW_GAME_BASIC_SCENARIO_ID];
+  if (!scenario.canStart) {
+    return;
+  }
+
   const nextSeed = menuSeedInput.value.trim() || MENU_DEFAULT_SEED;
   startGameWithSeed(nextSeed);
 }

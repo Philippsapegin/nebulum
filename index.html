@@ -7,8 +7,10 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="Nebulum" />
     <title>Nebulum</title>
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="icon" href="/pwa-512x512.png" sizes="512x512" type="image/png" />
+    <link rel="icon" href="/pwa-192x192.png" sizes="192x192" type="image/png" />
+    <link rel="shortcut icon" href="/pwa-512x512.ico" type="image/x-icon" />
+    <link rel="apple-touch-icon" href="/pwa-512x512.png" sizes="512x512" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -78,13 +80,71 @@
         </div>
 
         <div id="seed-dialog" class="menu-dialog" role="dialog" aria-modal="true" aria-labelledby="seed-dialog-title" hidden>
-          <div class="menu-dialog__surface">
+          <div class="menu-dialog__surface menu-dialog__surface--new-game">
             <div id="seed-dialog-title" class="menu-dialog__title">NEW GAME</div>
-            <label class="menu-dialog__field">
-              <span class="menu-dialog__label">Seed</span>
-              <input id="menu-seed-input" class="menu-dialog__input" type="text" autocomplete="off" />
-            </label>
-            <div class="menu-dialog__actions">
+            <div class="new-game">
+              <div class="new-game__top">
+                <label class="new-game__control-row new-game__seed-field">
+                  <span class="menu-dialog__label">Seed</span>
+                  <input id="menu-seed-input" class="menu-dialog__input new-game__seed-input" type="text" autocomplete="off" />
+                </label>
+                <label class="new-game__control-row new-game__scenario-field">
+                  <span class="menu-dialog__label">Scenario</span>
+                  <div class="new-game__scenario-picker">
+                    <button id="menu-scenario-current" class="new-game__scenario-current" type="button" aria-expanded="false">BASIC</button>
+                    <button id="menu-scenario-dropdown" class="new-game__scenario-dropdown" type="button" aria-expanded="false" title="Select scenario">
+                      <img src="/Musplayer/dropdown.svg" alt="" />
+                    </button>
+                    <div id="menu-scenario-list-backdrop" class="new-game__scenario-list-backdrop" hidden aria-hidden="true"></div>
+                    <div id="menu-scenario-list" class="new-game__scenario-list" hidden></div>
+                    <div id="menu-scenario-scrollbar" class="new-game__scenario-scrollbar" hidden aria-hidden="true">
+                      <div id="menu-scenario-scrollbar-thumb" class="new-game__scenario-scrollbar-thumb"></div>
+                    </div>
+                  </div>
+                </label>
+              </div>
+
+              <div class="new-game__body">
+                <div class="new-game__media-column">
+                  <div class="new-game__image-wrap">
+                    <img id="menu-scenario-image" class="new-game__image" src="/pics/scenarios/basic.png" alt="" />
+                  </div>
+                  <div class="new-game__scenario-lower">
+                    <div class="new-game__config">
+                      <label class="new-game__control-row new-game__side-count">
+                        <span class="menu-dialog__label">Sides</span>
+                        <input id="menu-faction-count" class="menu-dialog__input new-game__number-input" type="number" min="1" step="1" inputmode="numeric" />
+                      </label>
+                      <span id="menu-faction-limit" class="new-game__limit"></span>
+                    </div>
+                    <div class="new-game__your-faction">
+                      <span class="menu-dialog__label">Your faction</span>
+                      <div class="new-game__your-faction-row">
+                        <input id="menu-player-faction-name" class="menu-dialog__input new-game__faction-name-input" type="text" autocomplete="off" value="Wanderers" />
+                        <button id="menu-player-faction-color" class="swatch swatch--large new-game__faction-color" type="button" title="Pick faction border color"></button>
+                      </div>
+                    </div>
+                    <div class="new-game__bonuses">
+                      <div class="new-game__section-header">
+                        <span class="menu-dialog__label">Bonuses</span>
+                        <button id="menu-bonuses-setup" class="new-game__inline-button" type="button">SETUP</button>
+                      </div>
+                      <div id="menu-bonuses" class="new-game__bonus-zone"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="new-game__details-column">
+                  <p id="menu-scenario-text" class="new-game__scenario-text"></p>
+                  <div class="new-game__factions-panel">
+                    <span class="menu-dialog__label">Sides setup</span>
+                    <div id="menu-faction-grid" class="new-game__faction-grid" aria-label="Factions"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="menu-dialog__actions menu-dialog__actions--new-game">
+              <button id="menu-new-game-apply" class="menu-dialog__button" type="button">APPLY</button>
               <button id="menu-seed-confirm" class="menu-dialog__button" type="button">START</button>
               <button id="menu-seed-cancel" class="menu-dialog__button" type="button">CANCEL</button>
             </div>

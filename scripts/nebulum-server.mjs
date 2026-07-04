@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { execFileSync, spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
-import { createReadStream, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
@@ -20,6 +20,7 @@ const settingsPath = path.resolve(
 const SERVER_VERSION = 10;
 const APP_LAUNCH_PARAM = "nebulumApp";
 const NEBULUM_LAUNCH_PATH = "/nebulum-launch.html";
+const ICON_CACHE_VERSION = "pwa-icons-2026-07-04-1";
 const MOVE_WINDOW_TYPE_DEFINITION = [
   "using System;",
   "using System.Runtime.InteropServices;",
@@ -191,6 +192,7 @@ function getNebulumWindowBounds() {
 function prepareNebulumBrowserProfile(bounds) {
   const profileDir = getNebulumBrowserProfileDir();
   const defaultProfileDir = path.join(profileDir, "Default");
+  refreshNebulumIconCache(profileDir);
   mkdirSync(defaultProfileDir, { recursive: true });
   writeProfileWindowPlacement(path.join(defaultProfileDir, "Preferences"), bounds);
   return profileDir;
@@ -224,6 +226,54 @@ function readJsonFile(filePath) {
   } catch {
     return {};
   }
+}
+
+function refreshNebulumIconCache(profileDir) {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  const markerPath = path.join(profileDir, "icon-cache-version.txt");
+  try {
+    if (readFileSync(markerPath, "utf8").trim() === ICON_CACHE_VERSION) {
+      return;
+    }
+  } catch {}
+
+  stopNebulumBrowserProfileProcesses();
+  const defaultProfileDir = path.join(profileDir, "Default");
+  for (const cachePath of [
+    path.join(defaultProfileDir, "Favicons"),
+    path.join(defaultProfileDir, "Favicons-journal"),
+    path.join(defaultProfileDir, "Shortcuts"),
+    path.join(defaultProfileDir, "Shortcuts-journal"),
+    path.join(defaultProfileDir, "Top Sites"),
+    path.join(defaultProfileDir, "Top Sites-journal"),
+    path.join(defaultProfileDir, "Web Applications", "Manifest Resources"),
+  ]) {
+    try {
+      rmSync(cachePath, { recursive: true, force: true });
+    } catch {}
+  }
+
+  mkdirSync(profileDir, { recursive: true });
+  writeFileSync(markerPath, ICON_CACHE_VERSION, "utf8");
+}
+
+function stopNebulumBrowserProfileProcesses() {
+  try {
+    execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "Get-CimInstance Win32_Process | Where-Object { ($_.Name -match 'chrome|msedge') -and ($_.CommandLine -match 'Nebulum[\\\\/]BrowserProfile') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+      ],
+      { stdio: "ignore", windowsHide: true, timeout: 4000 },
+    );
+  } catch {}
 }
 
 

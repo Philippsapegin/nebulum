@@ -7,6 +7,7 @@ $logDir = Join-Path $env:LOCALAPPDATA "Nebulum\logs"
 $settingsPath = Join-Path $env:LOCALAPPDATA "Nebulum\settings.json"
 $portRange = 4173..4183
 $debugLog = Join-Path $env:TEMP "nebulum-launch-debug.log"
+$iconCacheVersion = "pwa-icons-2026-07-04-1"
 
 function Write-LaunchDebug($message) {
   if (-not $env:NEBULUM_LAUNCH_DEBUG) {
@@ -142,10 +143,48 @@ function Get-NebulumWindowBounds {
   }
 }
 
+function Stop-NebulumBrowserProfileProcesses {
+  $profilePattern = "Nebulum[\\/]BrowserProfile"
+  Get-CimInstance Win32_Process |
+    Where-Object { ($_.Name -match "chrome|msedge") -and ($_.CommandLine -match $profilePattern) } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+
+function Clear-NebulumIconCache($profileDir) {
+  $markerPath = Join-Path $profileDir "icon-cache-version.txt"
+  try {
+    if ((Get-Content -LiteralPath $markerPath -Raw).Trim() -eq $iconCacheVersion) {
+      return
+    }
+  }
+  catch {
+  }
+
+  Stop-NebulumBrowserProfileProcesses
+  $defaultProfileDir = Join-Path $profileDir "Default"
+  $cachePaths = @(
+    (Join-Path $defaultProfileDir "Favicons"),
+    (Join-Path $defaultProfileDir "Favicons-journal"),
+    (Join-Path $defaultProfileDir "Shortcuts"),
+    (Join-Path $defaultProfileDir "Shortcuts-journal"),
+    (Join-Path $defaultProfileDir "Top Sites"),
+    (Join-Path $defaultProfileDir "Top Sites-journal"),
+    (Join-Path $defaultProfileDir "Web Applications\Manifest Resources")
+  )
+
+  foreach ($cachePath in $cachePaths) {
+    Remove-Item -LiteralPath $cachePath -Recurse -Force -ErrorAction SilentlyContinue
+  }
+
+  New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
+  Set-Content -LiteralPath $markerPath -Value $iconCacheVersion -Encoding UTF8
+}
+
 function Update-NebulumBrowserProfile($bounds) {
   $profileDir = Join-Path $env:LOCALAPPDATA "Nebulum\BrowserProfile"
   $defaultProfileDir = Join-Path $profileDir "Default"
   $preferencesPath = Join-Path $defaultProfileDir "Preferences"
+  Clear-NebulumIconCache $profileDir
   New-Item -ItemType Directory -Force -Path $defaultProfileDir | Out-Null
 
   try {
