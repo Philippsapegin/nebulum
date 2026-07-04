@@ -48,6 +48,7 @@ const MENU_DEFAULT_SEED = "nebulum";
 const APP_LAUNCH_PARAM = "nebulumApp";
 const START_AFTER_SEED_STORAGE_KEY = "nebulum:start-after-seed";
 const AUDIO_SETTINGS_STORAGE_KEY = "nebulum:audio-settings";
+const GAME_UI_SETTINGS_STORAGE_KEY = "nebulum:game-ui-settings";
 const WINDOW_SETTINGS_STORAGE_KEY = "nebulum:window-settings";
 const PWA_INSTALL_STORAGE_KEY = "nebulum:pwa-installed";
 const SAVE_STORAGE_KEY = "nebulum:saves";
@@ -167,6 +168,8 @@ const gameMasterVolume = document.querySelector("#game-master-volume");
 const gameEnvironmentVolume = document.querySelector("#game-environment-volume");
 const gameMenuMusicEnabled = document.querySelector("#game-menu-music-enabled");
 const gameShowMusicPlayer = document.querySelector("#game-show-music-player");
+const gameSpaceGradientSetting = document.querySelector("#game-space-gradient-setting");
+const gameSpaceGradientEnabled = document.querySelector("#game-space-gradient-enabled");
 const gameBorderlessWindow = document.querySelector("#game-borderless-window");
 const gameSettingsClose = document.querySelector("#game-settings-close");
 const signTurnButton = document.querySelector("#sign-turn-button");
@@ -272,6 +275,7 @@ let menuAnimationFrameId = null;
 let menuMusicFadeFrame = null;
 let isReturningToMainMenu = false;
 let audioSettings = readAudioSettings();
+let gameUiSettings = readGameUiSettings();
 let windowSettings = readWindowSettings();
 let audioMixer = null;
 let menuEnvironmentMachine = null;
@@ -464,6 +468,20 @@ const OBJECT_DETAIL_EMISSIVE_NOISE_SPEED = 0.030;
 const OBJECT_DETAIL_EMISSIVE_NOISE_BLACK_STOP = 0.16;
 const OBJECT_DETAIL_EMISSIVE_NOISE_WHITE_STOP = 1;
 const OBJECT_DETAIL_EMISSIVE_NOISE_OCTAVES = 3;
+const OBJECT_DETAIL_HEX_HOVER_FILL = "rgba(255, 255, 255, 0.1)";
+const OBJECT_DETAIL_BUILD_MENU_OPTIONS = [
+  { id: "town", label: "T" },
+  { id: "powerstation", label: "P" },
+  { id: "mining", label: "M" },
+  { id: "laboratory", label: "L" },
+  { id: "spaceport", label: "S" },
+  { id: "radar", label: "R" },
+  { id: "base", label: "B" },
+  { id: "terraforming", label: "TF" },
+];
+const OBJECT_DETAIL_BUILD_MENU_ANIMATION_SPEED = 5.6;
+const OBJECT_DETAIL_HEX_WATER_SAMPLE_GRID = 7;
+const OBJECT_DETAIL_HEX_WATER_LIMIT = 0.5;
 let activeSystemStar = null;
 let activeSystemStarSurface = null;
 let tooltipTypingTimeout = null;
@@ -481,6 +499,7 @@ let isObjectDetailOpen = false;
 let objectDetailToken = 0;
 let objectDetail3D = null;
 let objectDetailDayMarkers = [];
+let objectDetailHexAnimationFrame = null;
 const objectDetailOptions = {
   light: true,
   clouds: true,
@@ -741,6 +760,7 @@ function initStartMenu() {
   gameEnvironmentVolume.addEventListener("input", updateAudioSettingsFromMenu);
   gameMenuMusicEnabled.addEventListener("change", updateAudioSettingsFromMenu);
   gameShowMusicPlayer.addEventListener("change", updateAudioSettingsFromMenu);
+  gameSpaceGradientEnabled.addEventListener("change", updateGameUiSettingsFromMenu);
   gameBorderlessWindow.addEventListener("change", updateWindowSettingsFromMenu);
   initAudioMixer();
   initUiHoverSounds();
@@ -2330,6 +2350,19 @@ function readAudioSettings() {
   }
 }
 
+function readGameUiSettings() {
+  try {
+    const settings = JSON.parse(localStorage.getItem(GAME_UI_SETTINGS_STORAGE_KEY) || "{}");
+    return {
+      spaceGradientVisible: settings.spaceGradientVisible === true,
+    };
+  } catch {
+    return {
+      spaceGradientVisible: false,
+    };
+  }
+}
+
 function readWindowSettings() {
   try {
     const settings = JSON.parse(localStorage.getItem(WINDOW_SETTINGS_STORAGE_KEY) || "{}");
@@ -2345,6 +2378,10 @@ function readWindowSettings() {
 
 function writeAudioSettings() {
   localStorage.setItem(AUDIO_SETTINGS_STORAGE_KEY, JSON.stringify(audioSettings));
+}
+
+function writeGameUiSettings() {
+  localStorage.setItem(GAME_UI_SETTINGS_STORAGE_KEY, JSON.stringify(gameUiSettings));
 }
 
 function syncSettingsDialog() {
@@ -2364,6 +2401,8 @@ function syncSettingsDialog() {
   for (const playerToggle of [menuShowMusicPlayer, gameShowMusicPlayer]) {
     playerToggle.checked = audioSettings.showMusicPlayer;
   }
+  gameSpaceGradientEnabled.checked = gameUiSettings.spaceGradientVisible;
+  gameSpaceGradientSetting.hidden = isEditorMode;
   for (const windowToggle of [menuBorderlessWindow, gameBorderlessWindow]) {
     windowToggle.checked = windowSettings.borderlessWindow;
   }
@@ -2403,6 +2442,15 @@ function updateAudioSettingsFromMenu(event) {
   applyAudioSettings();
 }
 
+function updateGameUiSettingsFromMenu() {
+  gameUiSettings = {
+    spaceGradientVisible: gameSpaceGradientEnabled.checked,
+  };
+  syncSettingsDialog();
+  writeGameUiSettings();
+  applyGameUiSettings();
+}
+
 function applyAudioSettings() {
   menuMusicAudio.volume = getMenuMusicVolume();
   audioMixer?.setMasterVolume(audioSettings.masterVolume);
@@ -2425,6 +2473,13 @@ function applyMusicPlayerVisibility() {
     musicPlayerController?.closeDropdown();
     musicPlayerController?.cancelDrag();
   }
+}
+
+function applyGameUiSettings() {
+  document.body.classList.toggle(
+    "space-gradient-visible",
+    !isEditorMode && gameUiSettings.spaceGradientVisible,
+  );
 }
 
 async function syncWindowSettingsFromServer() {
@@ -2973,6 +3028,7 @@ function startGameFromMenu({ editorMode = false } = {}) {
   document.body.classList.remove("start-menu-open");
   document.body.classList.add("game-running");
   document.body.classList.toggle("editor-mode", isEditorMode);
+  applyGameUiSettings();
   startMenu.classList.add("start-menu--hidden");
   startMenu.setAttribute("aria-hidden", "true");
   initializeNebulumRuntime();
@@ -3325,6 +3381,7 @@ function initPanel() {
   objectDetailBackOrbit.addEventListener("click", returnToOrbitFromObjectDetail);
   objectDetailScreen.addEventListener("pointermove", updateObjectDetailCursorInteraction);
   objectDetailScreen.addEventListener("pointerleave", clearObjectDetailCursorInteraction);
+  objectDetailTexture.addEventListener("click", onObjectDetailTextureClick);
 
   planetWindowClose.addEventListener("click", closePlanetWindow);
 
@@ -5009,7 +5066,7 @@ function closeStarWindow() {
 function disposeNebulumRuntime() {
   disposeStartMenuScene();
   isEditorMode = false;
-  document.body.classList.remove("game-running", "editor-mode");
+  document.body.classList.remove("game-running", "editor-mode", "space-gradient-visible");
   if (!isGameRuntimeReady) {
     renderer.dispose();
     renderer.forceContextLoss();
@@ -5280,6 +5337,9 @@ function scheduleObjectDetailTextureUpgrade(detail, detailToken) {
     } else {
       detail.textureUrl = texture.url ?? detail.textureUrl;
       detail.textureCanvas = texture.canvas ?? detail.textureCanvas;
+      detail.waterMaskCanvas = detail.kind === "PLANET"
+        ? texture.specularCanvas ?? detail.waterMaskCanvas ?? null
+        : null;
       detail.cloudCanvas = texture.cloudCanvas ?? detail.cloudCanvas;
       detail.textureMode = texture.textureMode ?? detail.textureMode;
       detail.bumpCanvas = detail.kind === "MOON"
@@ -6173,18 +6233,12 @@ function updateObjectDetailCursorInteraction(event) {
     return;
   }
 
-  const rect = objectDetailTexture.getBoundingClientRect();
-  const bounds = updateObjectDetailHoverBounds(rect);
-  if (rect.width <= 0 || rect.height <= 0 || !bounds) {
+  const hit = getObjectDetailSurfacePointerHit(event);
+  if (!hit) {
     return;
   }
-  const left = rect.left + bounds.left;
-  const right = rect.left + bounds.right;
-  const top = rect.top + bounds.top;
-  const bottom = rect.top + bounds.bottom;
-  const rawU = (event.clientX - left) / bounds.width;
-  const rawScreenV = (event.clientY - top) / bounds.height;
-  const insideHoverZone = rawU >= 0 && rawU <= 1 && rawScreenV >= 0 && rawScreenV <= 1;
+
+  const { rawU, rawScreenV, insideHoverZone } = hit;
   const shaderU = THREE.MathUtils.clamp(rawU, 0, 1);
   const shaderScreenV = THREE.MathUtils.clamp(rawScreenV, 0, 1);
   const textureV = 1 - shaderScreenV;
@@ -6193,6 +6247,7 @@ function updateObjectDetailCursorInteraction(event) {
   objectDetail3D.cursor.active = insideHoverZone;
   objectDetail3D.cursor.uv.set(shaderU, textureV);
   objectDetail3D.cursor.world.set(worldX, worldY);
+  updateObjectDetailHexHover(hit);
   updateObjectDetailCursorLight(performance.now());
   updateObjectDetailCursorUniforms();
   renderObjectDetail3D();
@@ -6204,9 +6259,194 @@ function clearObjectDetailCursorInteraction() {
   }
 
   objectDetail3D.cursor.active = false;
+  updateObjectDetailHexHover(null);
   updateObjectDetailCursorLight(performance.now());
   updateObjectDetailCursorUniforms();
   renderObjectDetail3D();
+}
+
+function getObjectDetailSurfacePointerHit(event) {
+  if (!objectDetail3D?.hexGrid) {
+    return null;
+  }
+
+  const rect = objectDetailTexture.getBoundingClientRect();
+  const bounds = updateObjectDetailHoverBounds(rect);
+  if (rect.width <= 0 || rect.height <= 0 || !bounds) {
+    return null;
+  }
+
+  const left = rect.left + bounds.left;
+  const top = rect.top + bounds.top;
+  const rawU = (event.clientX - left) / bounds.width;
+  const rawScreenV = (event.clientY - top) / bounds.height;
+  const insideHoverZone = rawU >= 0 && rawU <= 1 && rawScreenV >= 0 && rawScreenV <= 1;
+  const canvasX = THREE.MathUtils.clamp(rawU, 0, 1) * objectDetail3D.hexGrid.canvas.width;
+  const canvasY = THREE.MathUtils.clamp(rawScreenV, 0, 1) * objectDetail3D.hexGrid.canvas.height;
+  const hex = insideHoverZone
+    ? findObjectDetailHexAt(objectDetail3D.hexGrid, canvasX, canvasY)
+    : null;
+
+  return {
+    rawU,
+    rawScreenV,
+    insideHoverZone,
+    canvasX,
+    canvasY,
+    hex,
+  };
+}
+
+function updateObjectDetailHexHover(hit) {
+  const hexGrid = objectDetail3D?.hexGrid;
+  if (!hexGrid) {
+    return;
+  }
+
+  const nextAddress = hit?.hex?.address ?? null;
+  if (hexGrid.state.hoverAddress === nextAddress) {
+    return;
+  }
+
+  hexGrid.state.hoverAddress = nextAddress;
+  redrawObjectDetailHexGrid(hexGrid);
+}
+
+function findObjectDetailHexAt(hexGrid, canvasX, canvasY) {
+  return hexGrid.hexes.find((hex) => isPointInObjectDetailHex(canvasX, canvasY, hex)) ?? null;
+}
+
+function onObjectDetailTextureClick(event) {
+  if (!objectDetail3D?.hexGrid || !isObjectDetailOpen) {
+    return;
+  }
+
+  if (event.target instanceof Element && event.target.closest("button, .object-detail-screen__options")) {
+    return;
+  }
+
+  const hit = getObjectDetailSurfacePointerHit(event);
+  if (!hit?.insideHoverZone) {
+    return;
+  }
+
+  const option = getObjectDetailBuildMenuOptionAt(objectDetail3D.hexGrid, hit.canvasX, hit.canvasY);
+  if (option) {
+    const hex = getObjectDetailHexByAddress(objectDetail3D.hexGrid, objectDetail3D.hexGrid.state.menuAddress);
+    if (hex) {
+      handleObjectDetailBuildMenuOptionClick(objectDetail3D.hexGrid, hex, option);
+    }
+    return;
+  }
+
+  if (!hit.hex) {
+    return;
+  }
+
+  handleObjectDetailHexClick(hit);
+}
+
+function handleObjectDetailHexClick(hit) {
+  const hexGrid = objectDetail3D.hexGrid;
+  const { state } = hexGrid;
+  if (state.menuAddress === hit.hex.address && state.menuTarget > 0) {
+    closeObjectDetailBuildMenu(hexGrid);
+    return;
+  }
+
+  openObjectDetailBuildMenu(hexGrid, hit.hex);
+}
+
+function getObjectDetailBuildMenuOptionAt(hexGrid, canvasX, canvasY) {
+  const { state } = hexGrid;
+  if (!state.menuAddress || state.menuProgress < 0.72) {
+    return null;
+  }
+
+  const hex = getObjectDetailHexByAddress(hexGrid, state.menuAddress);
+  if (!hex) {
+    return null;
+  }
+
+  return getObjectDetailBuildMenuLayout(hex, easeOutCubic(state.menuProgress))
+    .find((option) => Math.hypot(canvasX - option.x, canvasY - option.y) <= option.radius) ?? null;
+}
+
+function handleObjectDetailBuildMenuOptionClick(hexGrid, hex, option) {
+  if (option.id !== "town" || hexGrid.state.towns.has(hex.address)) {
+    return;
+  }
+
+  if (getObjectDetailHexWaterRatio(hexGrid, hex) > OBJECT_DETAIL_HEX_WATER_LIMIT) {
+    return;
+  }
+
+  hexGrid.state.towns.add(hex.address);
+  closeObjectDetailBuildMenu(hexGrid);
+  redrawObjectDetailHexGrid(hexGrid);
+  renderObjectDetail3D();
+}
+
+function openObjectDetailBuildMenu(hexGrid, hex) {
+  const state = hexGrid.state;
+  if (state.menuAddress !== hex.address) {
+    state.menuProgress = 0;
+  }
+  state.menuAddress = hex.address;
+  state.menuTarget = 1;
+  state.menuUpdatedAt = performance.now();
+  scheduleObjectDetailHexGridAnimation();
+}
+
+function closeObjectDetailBuildMenu(hexGrid) {
+  const state = hexGrid.state;
+  state.menuTarget = 0;
+  state.menuUpdatedAt = performance.now();
+  scheduleObjectDetailHexGridAnimation();
+}
+
+function scheduleObjectDetailHexGridAnimation() {
+  if (objectDetailHexAnimationFrame !== null) {
+    return;
+  }
+  objectDetailHexAnimationFrame = requestAnimationFrame(updateObjectDetailHexGridAnimation);
+}
+
+function updateObjectDetailHexGridAnimation(now) {
+  objectDetailHexAnimationFrame = null;
+  const hexGrid = objectDetail3D?.hexGrid;
+  if (!hexGrid) {
+    return;
+  }
+
+  const state = hexGrid.state;
+  const previous = state.menuProgress;
+  const deltaSeconds = Math.max(0, (now - (state.menuUpdatedAt ?? now)) / 1000);
+  const step = deltaSeconds * OBJECT_DETAIL_BUILD_MENU_ANIMATION_SPEED;
+  state.menuProgress = state.menuTarget > previous
+    ? Math.min(state.menuTarget, previous + step)
+    : Math.max(state.menuTarget, previous - step);
+  state.menuUpdatedAt = now;
+
+  if (state.menuTarget === 0 && state.menuProgress <= 0.001) {
+    state.menuProgress = 0;
+    state.menuAddress = null;
+  }
+
+  redrawObjectDetailHexGrid(hexGrid);
+  renderObjectDetail3D();
+
+  if (Math.abs(state.menuProgress - state.menuTarget) > 0.001) {
+    scheduleObjectDetailHexGridAnimation();
+  }
+}
+
+function cancelObjectDetailHexGridAnimation() {
+  if (objectDetailHexAnimationFrame === null) {
+    return;
+  }
+  cancelAnimationFrame(objectDetailHexAnimationFrame);
+  objectDetailHexAnimationFrame = null;
 }
 
 function updateObjectDetailCursorLight(now = performance.now()) {
@@ -6444,9 +6684,9 @@ function createObjectDetailHexGrid(detail, renderer3D) {
   const canvas = document.createElement("canvas");
   canvas.width = OBJECT_DETAIL_HEX_GRID_TEXTURE_WIDTH;
   canvas.height = OBJECT_DETAIL_HEX_GRID_TEXTURE_HEIGHT;
-  const hexes = drawObjectDetailHexGrid(canvas, detail.bodySizeRank);
-  canvas.objectDetailHexes = hexes;
-  canvas.dataset.hexCount = String(hexes.length);
+  const hexes = createObjectDetailHexes(canvas, detail.bodySizeRank);
+  const state = getObjectDetailHexState(detail);
+  resetObjectDetailHexWaterCache(detail, state);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -6464,21 +6704,16 @@ function createObjectDetailHexGrid(detail, renderer3D) {
   const mesh = new THREE.Mesh(geometry, material);
   mesh.position.z = OBJECT_DETAIL_HEX_GRID_HEIGHT;
   mesh.renderOrder = 1;
-  return { canvas, texture, geometry, material, mesh, hexes };
+  const hexGrid = { canvas, texture, geometry, material, mesh, hexes, state, detail, waterSampleData: null };
+  canvas.objectDetailHexes = hexes;
+  canvas.dataset.hexCount = String(hexes.length);
+  redrawObjectDetailHexGrid(hexGrid);
+  return hexGrid;
 }
 
-function drawObjectDetailHexGrid(canvas, bodySizeRank = 12) {
-  const context = canvas.getContext("2d");
+function createObjectDetailHexes(canvas, bodySizeRank = 12) {
   const width = canvas.width;
   const height = canvas.height;
-  context.clearRect(0, 0, width, height);
-  context.lineJoin = "round";
-  context.lineCap = "round";
-  context.strokeStyle = "rgba(216, 238, 255, 0.5)";
-  context.lineWidth = 1.15;
-  context.shadowColor = "rgba(60, 170, 255, 0.12)";
-  context.shadowBlur = 3;
-
   const rank = THREE.MathUtils.clamp(Math.round(bodySizeRank), 0, 12);
   const columns = 7 + rank * 2;
   const horizontalPadding = width * 0.006;
@@ -6502,11 +6737,40 @@ function drawObjectDetailHexGrid(canvas, bodySizeRank = 12) {
         continue;
       }
       const address = `${column}:${row}`;
-      hexes.push({ address, column, row, x: centerX / width, y: centerY / height });
-      drawObjectDetailHex(context, centerX, centerY, hexRadius);
+      hexes.push({
+        address,
+        column,
+        row,
+        x: centerX / width,
+        y: centerY / height,
+        px: centerX,
+        py: centerY,
+        radius: hexRadius,
+        halfHeight: hexHalfHeight,
+      });
     }
   }
   return hexes;
+}
+
+function drawObjectDetailHexGrid(canvas, bodySizeRank = 12) {
+  const hexes = createObjectDetailHexes(canvas, bodySizeRank);
+  const context = canvas.getContext("2d");
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  setObjectDetailHexStrokeStyle(context);
+  for (const hex of hexes) {
+    drawObjectDetailHex(context, hex.px, hex.py, hex.radius);
+  }
+  return hexes;
+}
+
+function setObjectDetailHexStrokeStyle(context) {
+  context.lineJoin = "round";
+  context.lineCap = "round";
+  context.strokeStyle = "rgba(216, 238, 255, 0.5)";
+  context.lineWidth = 1.15;
+  context.shadowColor = "rgba(60, 170, 255, 0.12)";
+  context.shadowBlur = 3;
 }
 
 function drawObjectDetailHex(context, centerX, centerY, radius) {
@@ -6530,6 +6794,368 @@ function isObjectDetailHexFullyVisible(centerX, centerY, radius, halfHeight, wid
     && centerX + radius <= width
     && centerY - halfHeight >= 0
     && centerY + halfHeight <= height;
+}
+
+function getObjectDetailHexState(detail) {
+  const state = detail.objectDetailHexState ?? {};
+  state.towns = state.towns instanceof Set ? state.towns : new Set(state.towns ?? []);
+  state.waterRatios = state.waterRatios instanceof Map ? state.waterRatios : new Map();
+  state.hoverAddress = state.hoverAddress ?? null;
+  state.menuAddress = state.menuAddress ?? null;
+  state.menuProgress = Number.isFinite(state.menuProgress) ? state.menuProgress : 0;
+  state.menuTarget = Number.isFinite(state.menuTarget) ? state.menuTarget : 0;
+  state.menuUpdatedAt = Number.isFinite(state.menuUpdatedAt) ? state.menuUpdatedAt : performance.now();
+  detail.objectDetailHexState = state;
+  return state;
+}
+
+function resetObjectDetailHexWaterCache(detail, state) {
+  const waterCacheKey = [
+    detail.textureCanvas?.width ?? 0,
+    detail.textureCanvas?.height ?? 0,
+    detail.waterMaskCanvas?.width ?? 0,
+    detail.waterMaskCanvas?.height ?? 0,
+    detail.waterPosition ?? 0,
+    detail.freezeWater ? "ice" : "water",
+  ].join(":");
+  if (state.waterCacheKey === waterCacheKey) {
+    return;
+  }
+
+  state.waterCacheKey = waterCacheKey;
+  state.waterRatios = new Map();
+}
+
+function redrawObjectDetailHexGrid(hexGrid) {
+  if (!hexGrid?.canvas) {
+    return;
+  }
+
+  const { canvas, hexes, state } = hexGrid;
+  const context = canvas.getContext("2d");
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.imageSmoothingEnabled = false;
+
+  for (const hex of hexes) {
+    if (hex.address === state.hoverAddress) {
+      drawObjectDetailHexFill(context, hex, OBJECT_DETAIL_HEX_HOVER_FILL);
+    }
+    if (state.towns.has(hex.address)) {
+      drawObjectDetailTown(context, hex, hexGrid);
+    }
+  }
+
+  setObjectDetailHexStrokeStyle(context);
+  for (const hex of hexes) {
+    drawObjectDetailHex(context, hex.px, hex.py, hex.radius);
+  }
+
+  drawObjectDetailBuildMenu(context, hexGrid);
+  if (hexGrid.texture) {
+    hexGrid.texture.needsUpdate = true;
+  }
+}
+
+function drawObjectDetailHexFill(context, hex, fillStyle) {
+  context.save();
+  context.shadowBlur = 0;
+  context.fillStyle = fillStyle;
+  traceObjectDetailHexPath(context, hex.px, hex.py, hex.radius);
+  context.fill();
+  context.restore();
+}
+
+function traceObjectDetailHexPath(context, centerX, centerY, radius) {
+  context.beginPath();
+  for (let index = 0; index < 6; index += 1) {
+    const angle = THREE.MathUtils.degToRad(60 * index);
+    const x = centerX + Math.cos(angle) * radius;
+    const y = centerY + Math.sin(angle) * radius;
+    if (index === 0) {
+      context.moveTo(x, y);
+    } else {
+      context.lineTo(x, y);
+    }
+  }
+  context.closePath();
+}
+
+function drawObjectDetailBuildMenu(context, hexGrid) {
+  const { state } = hexGrid;
+  const progress = THREE.MathUtils.clamp(state.menuProgress, 0, 1);
+  if (!state.menuAddress || progress <= 0.001) {
+    return;
+  }
+
+  const hex = getObjectDetailHexByAddress(hexGrid, state.menuAddress);
+  if (!hex) {
+    return;
+  }
+
+  const isBlocked = getObjectDetailHexWaterRatio(hexGrid, hex) > OBJECT_DETAIL_HEX_WATER_LIMIT;
+  const easedProgress = easeOutCubic(progress);
+  for (const option of getObjectDetailBuildMenuLayout(hex, easedProgress)) {
+    drawObjectDetailBuildMenuOption(context, option, {
+      alpha: progress,
+      blocked: isBlocked,
+      clickable: option.id === "town" && !isBlocked && !state.towns.has(hex.address),
+    });
+  }
+}
+
+function getObjectDetailBuildMenuLayout(hex, progress = 1) {
+  const distance = hex.radius * 0.78 * progress;
+  const radius = Math.max(9, Math.min(15, hex.radius * 0.18));
+  return OBJECT_DETAIL_BUILD_MENU_OPTIONS.map((option, index) => {
+    const angle = -Math.PI / 2 + index * (Math.PI * 2 / OBJECT_DETAIL_BUILD_MENU_OPTIONS.length);
+    return {
+      ...option,
+      x: hex.px + Math.cos(angle) * distance,
+      y: hex.py + Math.sin(angle) * distance,
+      radius,
+    };
+  });
+}
+
+function drawObjectDetailBuildMenuOption(context, option, { alpha, blocked, clickable }) {
+  context.save();
+  context.globalAlpha = alpha;
+  context.shadowBlur = 0;
+  context.beginPath();
+  context.arc(option.x, option.y, option.radius, 0, Math.PI * 2);
+  context.fillStyle = clickable
+    ? "rgba(255, 255, 255, 0.14)"
+    : "rgba(5, 5, 6, 0.74)";
+  context.strokeStyle = blocked
+    ? "rgba(255, 80, 80, 0.86)"
+    : clickable
+      ? "rgba(255, 255, 255, 0.9)"
+      : "rgba(255, 255, 255, 0.32)";
+  context.lineWidth = Math.max(1, option.radius * 0.08);
+  context.fill();
+  context.stroke();
+
+  context.fillStyle = blocked
+    ? "rgba(255, 96, 96, 0.88)"
+    : clickable
+      ? "rgba(255, 255, 255, 0.94)"
+      : "rgba(255, 255, 255, 0.42)";
+  context.font = `${Math.max(9, Math.round(option.radius * (option.label.length > 1 ? 0.74 : 0.86)))}px "Albert Sans", sans-serif`;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(option.label, option.x, option.y + 0.5);
+
+  if (blocked) {
+    const crossRadius = option.radius * 0.46;
+    context.strokeStyle = "rgba(255, 52, 52, 0.95)";
+    context.lineWidth = Math.max(1.4, option.radius * 0.12);
+    context.beginPath();
+    context.moveTo(option.x - crossRadius, option.y - crossRadius);
+    context.lineTo(option.x + crossRadius, option.y + crossRadius);
+    context.moveTo(option.x + crossRadius, option.y - crossRadius);
+    context.lineTo(option.x - crossRadius, option.y + crossRadius);
+    context.stroke();
+  }
+  context.restore();
+}
+
+function drawObjectDetailTown(context, hex, hexGrid) {
+  const sampleData = getObjectDetailWaterSampleData(hexGrid);
+  const unit = Math.max(2, Math.round(hex.radius / 22));
+  const minX = Math.floor((hex.px - hex.radius) / unit) * unit;
+  const maxX = Math.ceil((hex.px + hex.radius) / unit) * unit;
+  const minY = Math.floor((hex.py - hex.halfHeight) / unit) * unit;
+  const maxY = Math.ceil((hex.py + hex.halfHeight) / unit) * unit;
+  const districtRadius = hex.radius * 0.72;
+
+  context.save();
+  context.shadowBlur = 0;
+  traceObjectDetailHexPath(context, hex.px, hex.py, hex.radius);
+  context.clip();
+
+  for (let y = minY; y <= maxY; y += unit) {
+    for (let x = minX; x <= maxX; x += unit) {
+      const centerX = x + unit * 0.5;
+      const centerY = y + unit * 0.5;
+      if (!isPointInObjectDetailHex(centerX, centerY, hex)) {
+        continue;
+      }
+      if (sampleData && isObjectDetailWaterSample(sampleData, hexGrid, centerX, centerY)) {
+        continue;
+      }
+
+      const distance = Math.hypot(centerX - hex.px, centerY - hex.py);
+      const localDensity = 1 - THREE.MathUtils.smoothstep(districtRadius * 0.18, districtRadius, distance);
+      const cityNoise = hashObjectDetailCityCell(Math.floor(centerX / unit), Math.floor(centerY / unit), 17);
+      const streetNoise = hashObjectDetailCityCell(Math.floor(centerX / (unit * 4)), Math.floor(centerY / (unit * 4)), 41);
+      const density = 0.1 + localDensity * 0.56 + streetNoise * 0.12;
+      if (cityNoise > density) {
+        continue;
+      }
+
+      const toneNoise = hashObjectDetailCityCell(Math.floor(centerX / unit), Math.floor(centerY / unit), 73);
+      const tone = Math.floor(9 + toneNoise * 38);
+      const inset = toneNoise > 0.72 ? 0 : Math.floor(unit * 0.18);
+      context.fillStyle = `rgb(${tone}, ${tone}, ${Math.min(58, tone + Math.floor(toneNoise * 7))})`;
+      context.fillRect(
+        Math.round(x + inset),
+        Math.round(y + inset),
+        Math.max(1, Math.round(unit - inset * 2)),
+        Math.max(1, Math.round(unit - inset * 2)),
+      );
+    }
+  }
+
+  context.restore();
+}
+
+function hashObjectDetailCityCell(x, y, salt = 0) {
+  let hash = Math.imul(x ^ 0x9e3779b9, 0x85ebca6b);
+  hash ^= Math.imul(y ^ 0xc2b2ae35, 0x27d4eb2d);
+  hash ^= Math.imul(salt ^ 0x165667b1, 0x9e3779b1);
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x7feb352d);
+  hash ^= hash >>> 15;
+  hash = Math.imul(hash, 0x846ca68b);
+  hash ^= hash >>> 16;
+  return (hash >>> 0) / 4294967295;
+}
+
+function getObjectDetailHexByAddress(hexGrid, address) {
+  return hexGrid.hexes.find((hex) => hex.address === address) ?? null;
+}
+
+function getObjectDetailHexWaterRatio(hexGrid, hex) {
+  const { state } = hexGrid;
+  if (state.waterRatios.has(hex.address)) {
+    return state.waterRatios.get(hex.address);
+  }
+
+  const ratio = computeObjectDetailHexWaterRatio(hexGrid, hex);
+  state.waterRatios.set(hex.address, ratio);
+  return ratio;
+}
+
+function computeObjectDetailHexWaterRatio(hexGrid, hex) {
+  const detail = hexGrid.detail;
+  if (detail.kind !== "PLANET" || !(detail.waterPosition > 0)) {
+    return 0;
+  }
+
+  const sampleData = getObjectDetailWaterSampleData(hexGrid);
+  if (!sampleData) {
+    return 0;
+  }
+
+  let sampleCount = 0;
+  let waterCount = 0;
+  const sampleSteps = OBJECT_DETAIL_HEX_WATER_SAMPLE_GRID;
+  for (let yIndex = 0; yIndex < sampleSteps; yIndex += 1) {
+    const y = hex.py - hex.halfHeight + (hex.halfHeight * 2 * yIndex) / Math.max(1, sampleSteps - 1);
+    for (let xIndex = 0; xIndex < sampleSteps; xIndex += 1) {
+      const x = hex.px - hex.radius + (hex.radius * 2 * xIndex) / Math.max(1, sampleSteps - 1);
+      if (!isPointInObjectDetailHex(x, y, hex)) {
+        continue;
+      }
+      sampleCount += 1;
+      if (isObjectDetailWaterSample(sampleData, hexGrid, x, y)) {
+        waterCount += 1;
+      }
+    }
+  }
+
+  return sampleCount > 0 ? waterCount / sampleCount : 0;
+}
+
+function getObjectDetailWaterSampleData(hexGrid) {
+  if (hexGrid.waterSampleData !== null) {
+    return hexGrid.waterSampleData;
+  }
+
+  const detail = hexGrid.detail;
+  if (!detail.textureCanvas) {
+    hexGrid.waterSampleData = null;
+    return null;
+  }
+
+  const textureContext = detail.textureCanvas.getContext("2d", { willReadFrequently: true });
+  const textureImage = textureContext.getImageData(0, 0, detail.textureCanvas.width, detail.textureCanvas.height);
+  const waterImage = detail.waterMaskCanvas
+    ? detail.waterMaskCanvas
+      .getContext("2d", { willReadFrequently: true })
+      .getImageData(0, 0, detail.waterMaskCanvas.width, detail.waterMaskCanvas.height)
+    : null;
+  hexGrid.waterSampleData = {
+    textureImage,
+    textureWidth: detail.textureCanvas.width,
+    textureHeight: detail.textureCanvas.height,
+    waterImage,
+    waterWidth: detail.waterMaskCanvas?.width ?? 0,
+    waterHeight: detail.waterMaskCanvas?.height ?? 0,
+  };
+  return hexGrid.waterSampleData;
+}
+
+function isObjectDetailWaterSample(sampleData, hexGrid, canvasX, canvasY) {
+  const u = THREE.MathUtils.clamp(canvasX / hexGrid.canvas.width, 0, 1);
+  const v = THREE.MathUtils.clamp(canvasY / hexGrid.canvas.height, 0, 1);
+  const textureX = Math.min(sampleData.textureWidth - 1, Math.max(0, Math.floor(u * sampleData.textureWidth)));
+  const textureY = Math.min(sampleData.textureHeight - 1, Math.max(0, Math.floor(v * sampleData.textureHeight)));
+  const textureOffset = (textureY * sampleData.textureWidth + textureX) * 4;
+  const textureData = sampleData.textureImage.data;
+
+  if (sampleData.waterImage) {
+    const waterX = Math.min(sampleData.waterWidth - 1, Math.max(0, Math.floor(u * sampleData.waterWidth)));
+    const waterY = Math.min(sampleData.waterHeight - 1, Math.max(0, Math.floor(v * sampleData.waterHeight)));
+    const waterOffset = (waterY * sampleData.waterWidth + waterX) * 4;
+    if (sampleData.waterImage.data[waterOffset] < 128) {
+      return false;
+    }
+    return !isObjectDetailIceLikePixel(textureData, textureOffset);
+  }
+
+  return isObjectDetailLikelyWaterPixel(textureData, textureOffset);
+}
+
+function isObjectDetailIceLikePixel(data, offset) {
+  const red = data[offset];
+  const green = data[offset + 1];
+  const blue = data[offset + 2];
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+  return luminance > 154 && (max - min < 58 || (blue >= red && blue >= green && luminance > 184));
+}
+
+function isObjectDetailLikelyWaterPixel(data, offset) {
+  const red = data[offset];
+  const green = data[offset + 1];
+  const blue = data[offset + 2];
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const luminance = red * 0.2126 + green * 0.7152 + blue * 0.0722;
+  if (isObjectDetailIceLikePixel(data, offset)) {
+    return false;
+  }
+  return blue > red * 1.08 && blue >= green * 0.88 && max - min > 18 && luminance < 176;
+}
+
+function isPointInObjectDetailHex(x, y, hex) {
+  let inside = false;
+  let previousX = hex.px + Math.cos(THREE.MathUtils.degToRad(300)) * hex.radius;
+  let previousY = hex.py + Math.sin(THREE.MathUtils.degToRad(300)) * hex.radius;
+  for (let index = 0; index < 6; index += 1) {
+    const angle = THREE.MathUtils.degToRad(60 * index);
+    const currentX = hex.px + Math.cos(angle) * hex.radius;
+    const currentY = hex.py + Math.sin(angle) * hex.radius;
+    if (((currentY > y) !== (previousY > y)) &&
+      x < ((previousX - currentX) * (y - currentY)) / (previousY - currentY) + currentX) {
+      inside = !inside;
+    }
+    previousX = currentX;
+    previousY = currentY;
+  }
+  return inside;
 }
 
 function createObjectDetailTintUniforms(tintColor) {
@@ -6743,6 +7369,7 @@ function disposeObjectDetail3D() {
     return;
   }
 
+  cancelObjectDetailHexGridAnimation();
   objectDetail3D.geometry.dispose();
   objectDetail3D.material.dispose();
   releaseCanvasTexture(objectDetail3D.colorMapRef);

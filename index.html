@@ -204,8 +204,8 @@
           <div id="game-menu-dialog-title" class="menu-dialog__title">MENU</div>
           <div class="menu-dialog__actions menu-dialog__actions--stacked">
             <button id="game-save-game" class="menu-dialog__button" type="button">SAVE GAME</button>
-            <button id="game-main-menu" class="menu-dialog__button" type="button">MAIN MENU</button>
             <button id="game-settings" class="menu-dialog__button" type="button">SETTINGS</button>
+            <button id="game-main-menu" class="menu-dialog__button" type="button">MAIN MENU</button>
           </div>
         </div>
       </div>
@@ -242,6 +242,10 @@
             <input id="game-show-music-player" type="checkbox" />
             <span>SHOW MUSIC PLAYER</span>
           </label>
+          <label id="game-space-gradient-setting" class="menu-dialog__check">
+            <input id="game-space-gradient-enabled" type="checkbox" />
+            <span>SPACE GRADIENT</span>
+          </label>
           <label class="menu-dialog__check">
             <input id="game-borderless-window" type="checkbox" />
             <span>BORDERLESS WINDOW</span>
@@ -268,7 +272,7 @@
         <aside class="panel" aria-label="Graph controls">
           <div class="panel__brand">Nebulum</div>
 
-          <div class="panel-block">
+          <div class="panel-block panel-block--seed">
             <label class="field">
               <span class="field__label">Seed</span>
               <span class="seed-row">
@@ -280,7 +284,7 @@
             </label>
           </div>
 
-          <div class="panel-block">
+          <div class="panel-block panel-block--space-gradient">
             <div class="field">
               <span class="field__label">Space gradient</span>
               <div id="sky-gradient-colors" class="gradient-colors"></div>

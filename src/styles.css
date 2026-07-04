@@ -1319,6 +1319,20 @@ body.game-running .panel {
   display: none;
 }
 
+body.game-running.space-gradient-visible:not(.system-open):not(.editor-mode) .panel {
+  display: block;
+}
+
+body.game-running.space-gradient-visible:not(.system-open):not(.editor-mode) .panel__brand,
+body.game-running.space-gradient-visible:not(.system-open):not(.editor-mode) .panel-block--seed,
+body.game-running.space-gradient-visible:not(.system-open):not(.editor-mode) .panel-block--borders {
+  display: none;
+}
+
+body.game-running.space-gradient-visible:not(.system-open):not(.editor-mode) .panel-block--space-gradient {
+  margin-top: 0;
+}
+
 body.game-running .music-player {
   position: fixed;
   left: var(--system-player-left, 18px);
