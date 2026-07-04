@@ -143,6 +143,7 @@ const menuEnvironmentVolume = document.querySelector("#menu-environment-volume")
 const menuMusicEnabled = document.querySelector("#menu-music-enabled");
 const menuShowMusicPlayer = document.querySelector("#menu-show-music-player");
 const menuBorderlessWindow = document.querySelector("#menu-borderless-window");
+const menuOpenEditor = document.querySelector("#menu-open-editor");
 const menuSettingsClose = document.querySelector("#menu-settings-close");
 const gameMenuButton = document.querySelector("#game-menu-button");
 const gameMenuDialog = document.querySelector("#game-menu-dialog");
@@ -176,6 +177,7 @@ const currentColorSwatch = document.querySelector("#current-color-swatch");
 const currentColorValue = document.querySelector("#current-color-value");
 const usedColors = document.querySelector("#used-colors");
 const clearButton = document.querySelector("#clear-button");
+const editorSaveButton = document.querySelector("#editor-save-button");
 const maskToolToggle = document.querySelector("#mask-tool-toggle");
 const skyGradientColorsElement = document.querySelector("#sky-gradient-colors");
 const starWindow = document.querySelector("#star-window");
@@ -257,6 +259,7 @@ const NEW_GAME_SCENARIOS = {
 
 let isStartMenuOpen = true;
 let isAppExited = false;
+let isEditorMode = false;
 let isGameRuntimeReady = false;
 let animationFrameId = null;
 let menuAnimationFrameId = null;
@@ -722,6 +725,7 @@ function initStartMenu() {
   menuLoadSave.addEventListener("click", loadSelectedMenuSave);
   menuDeleteSave.addEventListener("click", deleteSelectedMenuSave);
   menuSettingsClose.addEventListener("click", closeMenuDialogs);
+  menuOpenEditor.addEventListener("click", openEditorFromMenu);
   menuMasterVolume.addEventListener("input", updateAudioSettingsFromMenu);
   menuEnvironmentVolume.addEventListener("input", updateAudioSettingsFromMenu);
   menuMusicEnabled.addEventListener("change", updateAudioSettingsFromMenu);
@@ -2836,11 +2840,15 @@ function confirmNewGameSeed() {
   startGameWithSeed(nextSeed);
 }
 
+function openEditorFromMenu() {
+  startGameFromMenu({ editorMode: true });
+}
+
 function startGameWithSeed(nextSeed) {
   stopMenuEnvironmentMachine();
   if (nextSeed === SEED) {
     seedInput.value = nextSeed;
-    startGameFromMenu();
+    startGameFromMenu({ editorMode: false });
     return;
   }
 
@@ -2939,11 +2947,12 @@ async function returnToMainMenu() {
   window.location.href = url.toString();
 }
 
-function startGameFromMenu() {
+function startGameFromMenu({ editorMode = false } = {}) {
   if (!isStartMenuOpen) {
     return;
   }
 
+  isEditorMode = editorMode;
   closeMenuDialogs();
   setMenuStatus("STARTING");
   fadeOutMenuMusic();
@@ -2952,6 +2961,7 @@ function startGameFromMenu() {
   isStartMenuOpen = false;
   document.body.classList.remove("start-menu-open");
   document.body.classList.add("game-running");
+  document.body.classList.toggle("editor-mode", isEditorMode);
   startMenu.classList.add("start-menu--hidden");
   startMenu.setAttribute("aria-hidden", "true");
   initializeNebulumRuntime();
@@ -3381,6 +3391,7 @@ function initPanel() {
     edgeExitAnimations.clear();
     updateUsedColorsUi();
   });
+  editorSaveButton.addEventListener("click", () => {});
 
 }
 
@@ -4986,7 +4997,8 @@ function closeStarWindow() {
 
 function disposeNebulumRuntime() {
   disposeStartMenuScene();
-  document.body.classList.remove("game-running");
+  isEditorMode = false;
+  document.body.classList.remove("game-running", "editor-mode");
   if (!isGameRuntimeReady) {
     renderer.dispose();
     renderer.forceContextLoss();
