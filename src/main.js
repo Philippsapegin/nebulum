@@ -498,6 +498,13 @@ const OBJECT_DETAIL_CITY_STAGE_THRESHOLDS = [
   1.01,
 ];
 const OBJECT_DETAIL_CITY_ROAD_CUT_THRESHOLD = 0.66;
+const OBJECT_DETAIL_CITY_FOUNDATION_MARGIN_CELLS = 3;
+const OBJECT_DETAIL_CITY_FOUNDATION_GROWTH_MARGIN = 0.05;
+const OBJECT_DETAIL_CITY_NIGHT_SURFACE_OFFSET = OBJECT_DETAIL_CITY_SURFACE_OFFSET + 0.0015;
+const OBJECT_DETAIL_CITY_NIGHT_LIGHT_CHANCE = 0.12;
+const OBJECT_DETAIL_CITY_NIGHT_ORANGE_STRIP_CHANCE = 0.24;
+const OBJECT_DETAIL_CITY_NIGHT_EMISSIVE_INTENSITY = 2.55;
+const OBJECT_DETAIL_CITY_NIGHT_DAY_RADIUS_SCALE = 1.03;
 const OBJECT_DETAIL_CITY_SEED_HASH = hashObjectDetailSeedString(SEED);
 let activeSystemStar = null;
 let activeSystemStarSurface = null;
@@ -5894,6 +5901,7 @@ function renderObjectDetailPlanetSurface(detail) {
     hasDisplacement,
   });
   scene3D.add(hexGrid.cityMesh);
+  scene3D.add(hexGrid.cityNightMesh);
   scene3D.add(hexGrid.mesh);
 
   const cloudGeometry = cloudMap ? new THREE.PlaneGeometry(2, 1, 1, 1) : null;
@@ -6629,12 +6637,14 @@ function updateObjectDetailLightMotion(now) {
     const cloudPhase = elapsedSeconds / cloudCycleSeconds;
     objectDetail3D.cloudMap.offset.x = ((cloudPhase % 1) + 1) % 1;
   }
+  const cityNightChanged = updateObjectDetailCityNightUniforms(now);
   const needsRender =
     optionChanged ||
     cursorChanged ||
     shouldUpdateLightPositions ||
     hasBodyTextureMotion ||
     hasCloudTextureMotion ||
+    cityNightChanged ||
     Boolean(objectDetail3D.bloomResources);
 
   if (!needsRender) {
@@ -6771,6 +6781,106 @@ function wrapObjectDetailLightX(x) {
   return wrapped;
 }
 
+function applyObjectDetailCityNightMaterialEffects(material) {
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.detailCityNightTime = { value: 0 };
+    shader.uniforms.detailCityNightLightPositions = { value: [new THREE.Vector2(-1, 0), new THREE.Vector2(1, 0)] };
+    shader.uniforms.detailCityNightLightCount = { value: 0 };
+    shader.uniforms.detailCityNightLightRadius = {
+      value: OBJECT_DETAIL_LIGHT_Z
+        * Math.tan(THREE.MathUtils.degToRad(OBJECT_DETAIL_LIGHT_ANGLE_DEGREES))
+        * OBJECT_DETAIL_CITY_NIGHT_DAY_RADIUS_SCALE,
+    };
+    shader.uniforms.detailCityNightLightMix = { value: 1 };
+    shader.uniforms.detailCityNightIntensity = { value: OBJECT_DETAIL_CITY_NIGHT_EMISSIVE_INTENSITY };
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        "#include <common>",
+        `#include <common>
+varying vec2 vDetailCityNightUv;
+`,
+      )
+      .replace(
+        "#include <uv_vertex>",
+        `#include <uv_vertex>
+vDetailCityNightUv = uv;
+`,
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        `#include <common>
+uniform float detailCityNightTime;
+uniform vec2 detailCityNightLightPositions[2];
+uniform float detailCityNightLightCount;
+uniform float detailCityNightLightRadius;
+uniform float detailCityNightLightMix;
+uniform float detailCityNightIntensity;
+varying vec2 vDetailCityNightUv;
+
+float getDetailCityNightHash(vec2 point) {
+  return fract(sin(dot(point, vec2(127.1, 311.7))) * 43758.5453123);
+}
+`,
+      )
+      .replace(
+        "#include <dithering_fragment>",
+        `vec2 detailCityNightWorldPosition = vec2((vDetailCityNightUv.x - 0.5) * ${OBJECT_DETAIL_SURFACE_WORLD_WIDTH.toFixed(1)}, vDetailCityNightUv.y - 0.5);
+float detailCityNightDay = 0.0;
+for (int index = 0; index < 2; index += 1) {
+  if (float(index) >= detailCityNightLightCount) {
+    break;
+  }
+  float lightDistance = distance(detailCityNightWorldPosition, detailCityNightLightPositions[index]);
+  float daySpot = 1.0 - smoothstep(detailCityNightLightRadius * 0.42, detailCityNightLightRadius, lightDistance);
+  detailCityNightDay = max(detailCityNightDay, daySpot);
+}
+float detailCityNightMix = smoothstep(0.2, 0.82, 1.0 - detailCityNightDay * detailCityNightLightMix) * detailCityNightLightMix;
+float detailCityNightRedSignal = smoothstep(0.58, 0.95, gl_FragColor.r)
+  * (1.0 - smoothstep(0.18, 0.36, gl_FragColor.g))
+  * (1.0 - smoothstep(0.14, 0.34, gl_FragColor.b));
+float detailCityNightBlueSignal = smoothstep(0.5, 0.95, gl_FragColor.b)
+  * (1.0 - smoothstep(0.2, 0.48, gl_FragColor.r));
+float detailCityNightPhase = getDetailCityNightHash(vDetailCityNightUv * vec2(1801.0, 997.0));
+float detailCityNightRedSpeed = mix(0.42, 1.55, getDetailCityNightHash(vDetailCityNightUv * vec2(613.0, 337.0)));
+float detailCityNightBlueSpeed = mix(0.18, 0.86, getDetailCityNightHash(vDetailCityNightUv * vec2(271.0, 941.0)));
+float detailCityNightRedPulse = 0.5 + 0.5 * sin(detailCityNightTime * detailCityNightRedSpeed + detailCityNightPhase * 6.2831853);
+float detailCityNightBluePulse = 0.5 + 0.5 * sin(detailCityNightTime * detailCityNightBlueSpeed + detailCityNightPhase * 12.5663706);
+float detailCityNightFlicker = 1.0;
+detailCityNightFlicker = mix(detailCityNightFlicker, mix(0.32, 1.18, detailCityNightRedPulse), detailCityNightRedSignal);
+detailCityNightFlicker = mix(detailCityNightFlicker, mix(0.28, 1.32, detailCityNightBluePulse), detailCityNightBlueSignal);
+float detailCityNightAlpha = gl_FragColor.a * detailCityNightMix * detailCityNightFlicker;
+gl_FragColor.rgb *= detailCityNightIntensity * detailCityNightMix * detailCityNightFlicker;
+gl_FragColor.a = detailCityNightAlpha;
+#include <dithering_fragment>`,
+      );
+    material.userData.detailCityNightShader = shader;
+  };
+}
+
+function updateObjectDetailCityNightUniforms(now = performance.now()) {
+  const hexGrid = objectDetail3D?.hexGrid;
+  const shader = hexGrid?.cityNightMaterial?.userData.detailCityNightShader;
+  if (!shader) {
+    return false;
+  }
+
+  shader.uniforms.detailCityNightTime.value = now * 0.001;
+  shader.uniforms.detailCityNightLightMix.value = THREE.MathUtils.clamp(objectDetail3D.lightMix ?? 1, 0, 1);
+  shader.uniforms.detailCityNightLightRadius.value = OBJECT_DETAIL_LIGHT_Z
+    * Math.tan(THREE.MathUtils.degToRad(OBJECT_DETAIL_LIGHT_ANGLE_DEGREES))
+    * OBJECT_DETAIL_CITY_NIGHT_DAY_RADIUS_SCALE;
+  const positions = objectDetail3D.spotLights
+    .slice(0, 2)
+    .map((item) => item.target.position);
+  positions.forEach((position, index) => {
+    shader.uniforms.detailCityNightLightPositions.value[index].set(position.x, position.y);
+  });
+  shader.uniforms.detailCityNightLightCount.value = positions.length;
+  shader.uniforms.detailCityNightIntensity.value = OBJECT_DETAIL_CITY_NIGHT_EMISSIVE_INTENSITY;
+  return Boolean(hexGrid.cityNightLayerHasLights);
+}
+
 function createObjectDetailHexGrid(detail, renderer3D, surfaceOptions = {}) {
   const canvas = document.createElement("canvas");
   canvas.width = OBJECT_DETAIL_HEX_GRID_TEXTURE_WIDTH;
@@ -6778,6 +6888,9 @@ function createObjectDetailHexGrid(detail, renderer3D, surfaceOptions = {}) {
   const cityLayerCanvas = document.createElement("canvas");
   cityLayerCanvas.width = canvas.width;
   cityLayerCanvas.height = canvas.height;
+  const cityNightLayerCanvas = document.createElement("canvas");
+  cityNightLayerCanvas.width = canvas.width;
+  cityNightLayerCanvas.height = canvas.height;
   const hexes = createObjectDetailHexes(canvas, detail.bodySizeRank);
   const state = getObjectDetailHexState(detail);
   resetObjectDetailHexWaterCache(detail, state);
@@ -6794,6 +6907,13 @@ function createObjectDetailHexGrid(detail, renderer3D, surfaceOptions = {}) {
   cityTexture.minFilter = THREE.NearestFilter;
   cityTexture.needsUpdate = true;
 
+  const cityNightTexture = new THREE.CanvasTexture(cityNightLayerCanvas);
+  cityNightTexture.colorSpace = THREE.SRGBColorSpace;
+  cityNightTexture.anisotropy = Math.min(8, renderer3D.capabilities.getMaxAnisotropy());
+  cityNightTexture.magFilter = THREE.NearestFilter;
+  cityNightTexture.minFilter = THREE.NearestFilter;
+  cityNightTexture.needsUpdate = true;
+
   const geometry = new THREE.PlaneGeometry(2, 1, 1, 1);
   const material = new THREE.MeshBasicMaterial({
     map: texture,
@@ -6804,7 +6924,7 @@ function createObjectDetailHexGrid(detail, renderer3D, surfaceOptions = {}) {
   });
   const mesh = new THREE.Mesh(geometry, material);
   mesh.position.z = OBJECT_DETAIL_HEX_GRID_HEIGHT;
-  mesh.renderOrder = 1;
+  mesh.renderOrder = 1.2;
   const cityGeometry = surfaceOptions.surfaceGeometry?.clone() ?? new THREE.PlaneGeometry(2, 1, 1, 1);
   const cityMaterial = new THREE.MeshLambertMaterial({
     map: cityTexture,
@@ -6824,6 +6944,33 @@ function createObjectDetailHexGrid(detail, renderer3D, surfaceOptions = {}) {
   cityMesh.position.z = OBJECT_DETAIL_CITY_SURFACE_OFFSET;
   cityMesh.renderOrder = 1;
   cityMesh.receiveShadow = true;
+  const cityNightGeometry = surfaceOptions.surfaceGeometry?.clone() ?? new THREE.PlaneGeometry(2, 1, 1, 1);
+  const cityNightMaterial = new THREE.MeshStandardMaterial({
+    color: 0x000000,
+    map: cityNightTexture,
+    emissive: 0xffffff,
+    emissiveMap: cityNightTexture,
+    emissiveIntensity: 1,
+    displacementMap: surfaceOptions.heightMap ?? undefined,
+    displacementScale: surfaceOptions.hasDisplacement ? OBJECT_DETAIL_DISPLACEMENT_SCALE : 0,
+    displacementBias: surfaceOptions.hasDisplacement ? -0.035 : 0,
+    transparent: true,
+    alphaTest: 0.01,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.AdditiveBlending,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+    toneMapped: false,
+    roughness: 1,
+    metalness: 0,
+  });
+  applyObjectDetailCityNightMaterialEffects(cityNightMaterial);
+  const cityNightMesh = new THREE.Mesh(cityNightGeometry, cityNightMaterial);
+  cityNightMesh.position.z = OBJECT_DETAIL_CITY_NIGHT_SURFACE_OFFSET;
+  cityNightMesh.renderOrder = 1.1;
+  cityNightMesh.receiveShadow = false;
   const hexGrid = {
     canvas,
     cityLayerCanvas,
@@ -6831,6 +6978,12 @@ function createObjectDetailHexGrid(detail, renderer3D, surfaceOptions = {}) {
     cityGeometry,
     cityMaterial,
     cityMesh,
+    cityNightLayerCanvas,
+    cityNightTexture,
+    cityNightGeometry,
+    cityNightMaterial,
+    cityNightMesh,
+    cityNightLayerHasLights: false,
     cityLayerDirty: true,
     texture,
     geometry,
@@ -6996,14 +7149,24 @@ function redrawObjectDetailCityLayer(hexGrid) {
   const context = cityLayerCanvas.getContext("2d");
   context.clearRect(0, 0, cityLayerCanvas.width, cityLayerCanvas.height);
   context.imageSmoothingEnabled = false;
+  const nightContext = hexGrid.cityNightLayerCanvas?.getContext("2d") ?? null;
+  if (nightContext) {
+    nightContext.clearRect(0, 0, hexGrid.cityNightLayerCanvas.width, hexGrid.cityNightLayerCanvas.height);
+    nightContext.imageSmoothingEnabled = false;
+  }
+  let hasNightLights = false;
   for (const hex of hexes) {
     if (state.towns.has(hex.address)) {
-      drawObjectDetailTown(context, hex, hexGrid);
+      hasNightLights = drawObjectDetailTown(context, nightContext, hex, hexGrid) || hasNightLights;
     }
   }
   if (hexGrid.cityTexture) {
     hexGrid.cityTexture.needsUpdate = true;
   }
+  if (hexGrid.cityNightTexture) {
+    hexGrid.cityNightTexture.needsUpdate = true;
+  }
+  hexGrid.cityNightLayerHasLights = hasNightLights;
   hexGrid.cityLayerDirty = false;
 }
 
@@ -7107,7 +7270,7 @@ function drawObjectDetailBuildMenuOption(context, option, { alpha, blocked, clic
   context.restore();
 }
 
-function drawObjectDetailTown(context, hex, hexGrid) {
+function drawObjectDetailTown(context, nightContext, hex, hexGrid) {
   const sampleData = getObjectDetailWaterSampleData(hexGrid);
   const cityStage = getObjectDetailCityStage(hexGrid);
   const unit = Math.max(OBJECT_DETAIL_CITY_MIN_PIXEL_SIZE, Math.round(hex.radius / 26));
@@ -7118,10 +7281,81 @@ function drawObjectDetailTown(context, hex, hexGrid) {
 
   const cityHex = { ...hex, px: placement.x, py: placement.y };
   const maxGrowthDistance = getObjectDetailCityMaxGrowthDistance(hex, cityHex);
+  drawObjectDetailTownFoundation(context, hex, hexGrid, {
+    cityHex,
+    cityStage,
+    maxGrowthDistance,
+    sampleData,
+    unit,
+  });
+  return drawObjectDetailTownPixels(context, nightContext, hex, hexGrid, {
+    cityHex,
+    cityStage,
+    maxGrowthDistance,
+    sampleData,
+    unit,
+  });
+}
+
+function drawObjectDetailTownFoundation(context, hex, hexGrid, drawData) {
+  const { cityHex, cityStage, maxGrowthDistance, sampleData, unit } = drawData;
+  const margin = OBJECT_DETAIL_CITY_FOUNDATION_MARGIN_CELLS * unit;
+  const foundationHex = {
+    ...hex,
+    radius: hex.radius + margin,
+  };
+  const minX = Math.floor((hex.px - hex.radius - margin) / unit) * unit;
+  const maxX = Math.ceil((hex.px + hex.radius + margin) / unit) * unit;
+  const minY = Math.floor((hex.py - hex.halfHeight - margin) / unit) * unit;
+  const maxY = Math.ceil((hex.py + hex.halfHeight + margin) / unit) * unit;
+
+  context.save();
+  context.shadowBlur = 0;
+  context.globalCompositeOperation = "source-over";
+
+  for (let y = minY; y <= maxY; y += unit) {
+    for (let x = minX; x <= maxX; x += unit) {
+      const centerX = x + unit * 0.5;
+      const centerY = y + unit * 0.5;
+      if (!isPointInObjectDetailHex(centerX, centerY, foundationHex)) {
+        continue;
+      }
+      if (sampleData && isObjectDetailWaterSample(sampleData, hexGrid, centerX, centerY)) {
+        continue;
+      }
+
+      const foundation = getObjectDetailCityFoundationMask(
+        cityHex,
+        hex,
+        centerX,
+        centerY,
+        maxGrowthDistance,
+        cityStage,
+      );
+      if (foundation.mask <= 0) {
+        continue;
+      }
+
+      const cellX = Math.floor(centerX / unit);
+      const cellY = Math.floor(centerY / unit);
+      if (foundation.edge > 0 && getObjectDetailSurfaceCityRoadMask(cellX, cellY) <= OBJECT_DETAIL_CITY_ROAD_CUT_THRESHOLD) {
+        continue;
+      }
+
+      drawObjectDetailCityFoundationPixel(context, x, y, unit, cellX, cellY, foundation.mask);
+    }
+  }
+
+  context.restore();
+}
+
+function drawObjectDetailTownPixels(context, nightContext, hex, hexGrid, drawData) {
+  const { cityHex, cityStage, maxGrowthDistance, sampleData, unit } = drawData;
   const minX = Math.floor((hex.px - hex.radius) / unit) * unit;
   const maxX = Math.ceil((hex.px + hex.radius) / unit) * unit;
   const minY = Math.floor((hex.py - hex.halfHeight) / unit) * unit;
   const maxY = Math.ceil((hex.py + hex.halfHeight) / unit) * unit;
+  let hasNightLights = false;
 
   context.save();
   context.shadowBlur = 0;
@@ -7152,10 +7386,14 @@ function drawObjectDetailTown(context, hex, hexGrid) {
       }
 
       drawObjectDetailCityPixel(context, x, y, unit, cellX, cellY, mask);
+      if (nightContext) {
+        hasNightLights = drawObjectDetailCityNightLight(nightContext, x, y, unit, cellX, cellY, mask) || hasNightLights;
+      }
     }
   }
 
   context.restore();
+  return hasNightLights;
 }
 
 function normalizeObjectDetailCityPlacements(cityPlacements) {
@@ -7219,7 +7457,7 @@ function createObjectDetailCityPlacement(hexGrid, hex, sampleData) {
 
 function drawObjectDetailCityPixel(context, x, y, unit, cellX, cellY, mask) {
   const toneNoise = hashObjectDetailCityCell(cellX, cellY, 73);
-  const tone = Math.floor(24 + toneNoise * 72 + mask * 16);
+  const tone = Math.floor(42 + toneNoise * 82 + mask * 18);
   context.fillStyle = `rgb(${tone}, ${tone}, ${tone})`;
   context.fillRect(
     Math.round(x),
@@ -7227,6 +7465,64 @@ function drawObjectDetailCityPixel(context, x, y, unit, cellX, cellY, mask) {
     Math.max(1, Math.round(unit)),
     Math.max(1, Math.round(unit)),
   );
+}
+
+function drawObjectDetailCityFoundationPixel(context, x, y, unit, cellX, cellY, mask) {
+  const toneNoise = hashObjectDetailCityCell(cellX, cellY, 83);
+  const tone = Math.floor(18 + toneNoise * 42 + mask * 10);
+  context.fillStyle = `rgb(${tone}, ${tone}, ${tone})`;
+  context.fillRect(
+    Math.round(x),
+    Math.round(y),
+    Math.max(1, Math.round(unit)),
+    Math.max(1, Math.round(unit)),
+  );
+}
+
+function drawObjectDetailCityNightLight(context, x, y, unit, cellX, cellY, mask) {
+  const chance = OBJECT_DETAIL_CITY_NIGHT_LIGHT_CHANCE * THREE.MathUtils.clamp(mask + 0.15, 0.25, 1.15);
+  if (hashObjectDetailCityCell(cellX, cellY, 3101) > chance) {
+    return false;
+  }
+
+  const colorRoll = hashObjectDetailCityCell(cellX, cellY, 3103);
+  const colorJitter = hashObjectDetailCityCell(cellX, cellY, 3105);
+  let red = 255;
+  let green = Math.floor(154 + colorJitter * 82);
+  let blue = Math.floor(46 + hashObjectDetailCityCell(cellX, cellY, 3107) * 46);
+  let alpha = Math.floor(145 + hashObjectDetailCityCell(cellX, cellY, 3109) * 80);
+  let canStrip = true;
+
+  if (colorRoll < 0.018) {
+    red = Math.floor(76 + colorJitter * 34);
+    green = Math.floor(132 + hashObjectDetailCityCell(cellX, cellY, 3111) * 48);
+    blue = 255;
+    alpha = Math.floor(130 + hashObjectDetailCityCell(cellX, cellY, 3113) * 78);
+    canStrip = false;
+  } else if (colorRoll < 0.075) {
+    red = 255;
+    green = Math.floor(38 + colorJitter * 42);
+    blue = Math.floor(28 + hashObjectDetailCityCell(cellX, cellY, 3115) * 24);
+    alpha = Math.floor(126 + hashObjectDetailCityCell(cellX, cellY, 3117) * 74);
+    canStrip = false;
+  }
+
+  const drawX = Math.round(x + hashObjectDetailCityCell(cellX, cellY, 3121) * Math.max(1, unit - 1));
+  const drawY = Math.round(y + hashObjectDetailCityCell(cellX, cellY, 3123) * Math.max(1, unit - 1));
+  context.fillStyle = `rgba(${red}, ${green}, ${blue}, ${(alpha / 255).toFixed(3)})`;
+
+  if (canStrip && hashObjectDetailCityCell(cellX, cellY, 3125) < OBJECT_DETAIL_CITY_NIGHT_ORANGE_STRIP_CHANCE) {
+    const length = 2 + Math.floor(hashObjectDetailCityCell(cellX, cellY, 3127) * Math.max(1, unit));
+    if (hashObjectDetailCityCell(cellX, cellY, 3129) < 0.5) {
+      context.fillRect(drawX, drawY, Math.max(2, length), 1);
+    } else {
+      context.fillRect(drawX, drawY, 1, Math.max(2, length));
+    }
+    return true;
+  }
+
+  context.fillRect(drawX, drawY, 1, 1);
+  return true;
 }
 
 function getObjectDetailCityStage(hexGrid) {
@@ -7257,13 +7553,37 @@ function getObjectDetailCityMask(hex, originalHex, x, y, maxGrowthDistance, stag
     return 1;
   }
 
+  const requiredGrowth = getObjectDetailCityRequiredGrowth(hex, originalHex, x, y, maxGrowthDistance);
+  const growth = getObjectDetailCityStageThreshold(stage);
+  if (requiredGrowth > growth) {
+    return 0;
+  }
+
+  return THREE.MathUtils.clamp(0.45 + (growth - requiredGrowth) * 0.8, 0.35, 1);
+}
+
+function getObjectDetailCityFoundationMask(hex, originalHex, x, y, maxGrowthDistance, stage) {
+  const growth = getObjectDetailCityStageThreshold(stage);
+  const requiredGrowth = getObjectDetailCityRequiredGrowth(hex, originalHex, x, y, maxGrowthDistance);
+  const margin = OBJECT_DETAIL_CITY_FOUNDATION_GROWTH_MARGIN;
+  if (requiredGrowth > growth + margin) {
+    return { mask: 0, edge: 0 };
+  }
+
+  const edge = requiredGrowth > growth ? 1 : 0;
+  return {
+    mask: THREE.MathUtils.clamp(0.52 + (growth + margin - requiredGrowth) * 0.8, 0.42, 1),
+    edge,
+  };
+}
+
+function getObjectDetailCityRequiredGrowth(hex, originalHex, x, y, maxGrowthDistance) {
   const dx = x - hex.px;
   const dy = y - hex.py;
   const originDistance = Math.hypot(dx, dy);
   const originNorm = originDistance / Math.max(1, maxGrowthDistance);
   const centerDistance = Math.hypot(x - originalHex.px, y - originalHex.py);
   const centerNorm = THREE.MathUtils.clamp(centerDistance / originalHex.radius, 0, 1.25);
-  const growth = getObjectDetailCityStageThreshold(stage);
   const centerVectorX = originalHex.px - hex.px;
   const centerVectorY = originalHex.py - hex.py;
   const centerVectorLength = Math.hypot(centerVectorX, centerVectorY);
@@ -7279,16 +7599,10 @@ function getObjectDetailCityMask(hex, originalHex, x, y, maxGrowthDistance, stag
   const fine = hashObjectDetailCityCell(Math.floor(x / 5), Math.floor(y / 5), 509) - 0.5;
   const irregularity = coarse * 0.2 + fine * 0.12;
   const centerBias = Math.max(0, centerDirection) * (0.16 + (1 - centerNorm) * 0.1);
-  const requiredGrowth = THREE.MathUtils.clamp(
-    originNorm + centerNorm * 0.12 + Math.max(0, -centerDirection) * 0.1 - centerBias + irregularity,
+  return Math.max(
     0,
-    1,
+    originNorm + centerNorm * 0.12 + Math.max(0, -centerDirection) * 0.1 - centerBias + irregularity,
   );
-  if (requiredGrowth > growth) {
-    return 0;
-  }
-
-  return THREE.MathUtils.clamp(0.45 + (growth - requiredGrowth) * 0.8, 0.35, 1);
 }
 
 function getObjectDetailCityStageThreshold(stage) {
@@ -7736,6 +8050,9 @@ function disposeObjectDetail3D() {
   objectDetail3D.hexGrid?.cityTexture.dispose();
   objectDetail3D.hexGrid?.cityGeometry.dispose();
   objectDetail3D.hexGrid?.cityMaterial.dispose();
+  objectDetail3D.hexGrid?.cityNightTexture.dispose();
+  objectDetail3D.hexGrid?.cityNightGeometry.dispose();
+  objectDetail3D.hexGrid?.cityNightMaterial.dispose();
   releaseCanvasTexture(objectDetail3D.cloudMapRef);
   objectDetail3D.cloudGeometry?.dispose();
   objectDetail3D.cloudMaterial?.dispose();
