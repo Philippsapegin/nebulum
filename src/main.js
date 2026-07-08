@@ -498,8 +498,9 @@ const OBJECT_DETAIL_CITY_STAGE_THRESHOLDS = [
   1.01,
 ];
 const OBJECT_DETAIL_CITY_ROAD_CUT_THRESHOLD = 0.66;
-const OBJECT_DETAIL_CITY_FOUNDATION_MARGIN_CELLS = 3;
+const OBJECT_DETAIL_CITY_FOUNDATION_MARGIN_CELLS = 9;
 const OBJECT_DETAIL_CITY_FOUNDATION_GROWTH_MARGIN = 0.05;
+const OBJECT_DETAIL_CITY_FOUNDATION_EDGE_WIDTH = 0.16;
 const OBJECT_DETAIL_CITY_NIGHT_SURFACE_OFFSET = OBJECT_DETAIL_CITY_SURFACE_OFFSET + 0.0015;
 const OBJECT_DETAIL_CITY_NIGHT_LIGHT_CHANCE = 0.12;
 const OBJECT_DETAIL_CITY_NIGHT_ORANGE_STRIP_CHANCE = 0.24;
@@ -7154,11 +7155,21 @@ function redrawObjectDetailCityLayer(hexGrid) {
     nightContext.clearRect(0, 0, hexGrid.cityNightLayerCanvas.width, hexGrid.cityNightLayerCanvas.height);
     nightContext.imageSmoothingEnabled = false;
   }
+  const townDrawItems = [];
   let hasNightLights = false;
   for (const hex of hexes) {
     if (state.towns.has(hex.address)) {
-      hasNightLights = drawObjectDetailTown(context, nightContext, hex, hexGrid) || hasNightLights;
+      const drawData = getObjectDetailTownDrawData(hex, hexGrid);
+      if (drawData) {
+        townDrawItems.push({ hex, drawData });
+      }
     }
+  }
+  for (const { hex, drawData } of townDrawItems) {
+    drawObjectDetailTownFoundation(context, hex, hexGrid, drawData);
+  }
+  for (const { hex, drawData } of townDrawItems) {
+    hasNightLights = drawObjectDetailTownPixels(context, nightContext, hex, hexGrid, drawData) || hasNightLights;
   }
   if (hexGrid.cityTexture) {
     hexGrid.cityTexture.needsUpdate = true;
@@ -7270,40 +7281,28 @@ function drawObjectDetailBuildMenuOption(context, option, { alpha, blocked, clic
   context.restore();
 }
 
-function drawObjectDetailTown(context, nightContext, hex, hexGrid) {
+function getObjectDetailTownDrawData(hex, hexGrid) {
   const sampleData = getObjectDetailWaterSampleData(hexGrid);
   const cityStage = getObjectDetailCityStage(hexGrid);
   const unit = Math.max(OBJECT_DETAIL_CITY_MIN_PIXEL_SIZE, Math.round(hex.radius / 26));
   const placement = getObjectDetailCityPlacementCenter(hexGrid, hex, sampleData);
   if (!placement) {
-    return;
+    return null;
   }
 
   const cityHex = { ...hex, px: placement.x, py: placement.y };
-  const maxGrowthDistance = getObjectDetailCityMaxGrowthDistance(hex, cityHex);
-  drawObjectDetailTownFoundation(context, hex, hexGrid, {
+  return {
     cityHex,
     cityStage,
-    maxGrowthDistance,
+    maxGrowthDistance: getObjectDetailCityMaxGrowthDistance(hex, cityHex),
     sampleData,
     unit,
-  });
-  return drawObjectDetailTownPixels(context, nightContext, hex, hexGrid, {
-    cityHex,
-    cityStage,
-    maxGrowthDistance,
-    sampleData,
-    unit,
-  });
+  };
 }
 
 function drawObjectDetailTownFoundation(context, hex, hexGrid, drawData) {
   const { cityHex, cityStage, maxGrowthDistance, sampleData, unit } = drawData;
   const margin = OBJECT_DETAIL_CITY_FOUNDATION_MARGIN_CELLS * unit;
-  const foundationHex = {
-    ...hex,
-    radius: hex.radius + margin,
-  };
   const minX = Math.floor((hex.px - hex.radius - margin) / unit) * unit;
   const maxX = Math.ceil((hex.px + hex.radius + margin) / unit) * unit;
   const minY = Math.floor((hex.py - hex.halfHeight - margin) / unit) * unit;
@@ -7317,9 +7316,6 @@ function drawObjectDetailTownFoundation(context, hex, hexGrid, drawData) {
     for (let x = minX; x <= maxX; x += unit) {
       const centerX = x + unit * 0.5;
       const centerY = y + unit * 0.5;
-      if (!isPointInObjectDetailHex(centerX, centerY, foundationHex)) {
-        continue;
-      }
       if (sampleData && isObjectDetailWaterSample(sampleData, hexGrid, centerX, centerY)) {
         continue;
       }
@@ -7565,15 +7561,46 @@ function getObjectDetailCityMask(hex, originalHex, x, y, maxGrowthDistance, stag
 function getObjectDetailCityFoundationMask(hex, originalHex, x, y, maxGrowthDistance, stage) {
   const growth = getObjectDetailCityStageThreshold(stage);
   const requiredGrowth = getObjectDetailCityRequiredGrowth(hex, originalHex, x, y, maxGrowthDistance);
-  const margin = OBJECT_DETAIL_CITY_FOUNDATION_GROWTH_MARGIN;
-  if (requiredGrowth > growth + margin) {
+  const footprint = getObjectDetailCityFoundationFootprint(hex, originalHex, x, y);
+  const margin = OBJECT_DETAIL_CITY_FOUNDATION_GROWTH_MARGIN + footprint.margin;
+  if (requiredGrowth > growth + margin || footprint.mask <= 0) {
     return { mask: 0, edge: 0 };
   }
 
-  const edge = requiredGrowth > growth ? 1 : 0;
+  const edge = requiredGrowth > growth || footprint.edge > 0 ? 1 : 0;
   return {
-    mask: THREE.MathUtils.clamp(0.52 + (growth + margin - requiredGrowth) * 0.8, 0.42, 1),
+    mask: THREE.MathUtils.clamp((0.52 + (growth + margin - requiredGrowth) * 0.8) * footprint.mask, 0.34, 1),
     edge,
+  };
+}
+
+function getObjectDetailCityFoundationFootprint(hex, originalHex, x, y) {
+  const dx = x - hex.px;
+  const dy = y - hex.py;
+  const distance = Math.hypot(dx, dy);
+  const angle = Math.atan2(dy, dx);
+  const normalizedDistance = distance / Math.max(1, originalHex.radius);
+  const directionA = Math.cos(angle * 5.0 + hashObjectDetailCityCell(originalHex.column, originalHex.row, 4101) * Math.PI * 2);
+  const directionB = Math.sin(angle * 9.0 + hashObjectDetailCityCell(originalHex.row, originalHex.column, 4103) * Math.PI * 2);
+  const coarse = hashObjectDetailCityCell(
+    Math.floor((x + directionA * 17) / 29),
+    Math.floor((y + directionB * 17) / 29),
+    4111,
+  ) - 0.5;
+  const medium = hashObjectDetailCityCell(Math.floor(x / 13), Math.floor(y / 13), 4117) - 0.5;
+  const fine = hashObjectDetailCityCell(Math.floor(x / 5), Math.floor(y / 5), 4121) - 0.5;
+  const radial = directionA * 0.13 + directionB * 0.09 + coarse * 0.24 + medium * 0.12 + fine * 0.05;
+  const edgeLimit = 1.04 + radial;
+  const outerLimit = edgeLimit + OBJECT_DETAIL_CITY_FOUNDATION_EDGE_WIDTH;
+  if (normalizedDistance > outerLimit) {
+    return { mask: 0, edge: 0, margin: 0 };
+  }
+
+  const edge = normalizedDistance > edgeLimit ? 1 : 0;
+  return {
+    mask: edge ? 1 - THREE.MathUtils.smoothstep(edgeLimit, outerLimit, normalizedDistance) * 0.45 : 1,
+    edge,
+    margin: Math.max(0, edgeLimit - 0.95) * 0.1,
   };
 }
 
