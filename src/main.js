@@ -424,6 +424,7 @@ const OBJECT_DETAIL_AMBIENT_NO_LIGHT_INTENSITY = 1.6;
 const OBJECT_DETAIL_DISPLACEMENT_SCALE = 0.3;
 const OBJECT_DETAIL_CLOUD_HEIGHT = 0.270;
 const OBJECT_DETAIL_HEX_GRID_HEIGHT = OBJECT_DETAIL_CLOUD_HEIGHT - 0.008;
+const OBJECT_DETAIL_CITY_SURFACE_OFFSET = 0.004;
 const OBJECT_DETAIL_HEX_GRID_TEXTURE_WIDTH = 2048;
 const OBJECT_DETAIL_HEX_GRID_TEXTURE_HEIGHT = 1024;
 const OBJECT_DETAIL_CLOUD_ALPHA_TEST = 0.03;
@@ -468,7 +469,6 @@ const OBJECT_DETAIL_EMISSIVE_NOISE_SPEED = 0.030;
 const OBJECT_DETAIL_EMISSIVE_NOISE_BLACK_STOP = 0.16;
 const OBJECT_DETAIL_EMISSIVE_NOISE_WHITE_STOP = 1;
 const OBJECT_DETAIL_EMISSIVE_NOISE_OCTAVES = 3;
-const OBJECT_DETAIL_HEX_HOVER_FILL = "rgba(255, 255, 255, 0.1)";
 const OBJECT_DETAIL_BUILD_MENU_OPTIONS = [
   { id: "town", label: "T" },
   { id: "powerstation", label: "P" },
@@ -482,6 +482,23 @@ const OBJECT_DETAIL_BUILD_MENU_OPTIONS = [
 const OBJECT_DETAIL_BUILD_MENU_ANIMATION_SPEED = 5.6;
 const OBJECT_DETAIL_HEX_WATER_SAMPLE_GRID = 7;
 const OBJECT_DETAIL_HEX_WATER_LIMIT = 0.5;
+const OBJECT_DETAIL_CITY_MIN_PIXEL_SIZE = 3;
+const OBJECT_DETAIL_CITY_STAGE_MIN = 1;
+const OBJECT_DETAIL_CITY_STAGE_MAX = 10;
+const OBJECT_DETAIL_CITY_STAGE_THRESHOLDS = [
+  0.07,
+  0.13,
+  0.21,
+  0.31,
+  0.42,
+  0.54,
+  0.66,
+  0.78,
+  0.9,
+  1.01,
+];
+const OBJECT_DETAIL_CITY_ROAD_CUT_THRESHOLD = 0.66;
+const OBJECT_DETAIL_CITY_SEED_HASH = hashObjectDetailSeedString(SEED);
 let activeSystemStar = null;
 let activeSystemStarSurface = null;
 let tooltipTypingTimeout = null;
@@ -5442,6 +5459,9 @@ function createObjectDetailOptionControls() {
     createObjectDetailOptionControl("LIGHT", "light"),
     createObjectDetailOptionControl("CLOUDS", "clouds"),
   );
+  if (objectDetail3D?.hexGrid) {
+    controls.append(createObjectDetailCityStageControl());
+  }
   return controls;
 }
 
@@ -5466,6 +5486,45 @@ function createObjectDetailOptionControl(labelText, optionKey) {
   return row;
 }
 
+function createObjectDetailCityStageControl() {
+  const row = document.createElement("label");
+  row.className = "object-detail-screen__city-stage";
+  row.addEventListener("pointerdown", (event) => event.stopPropagation());
+  row.addEventListener("pointermove", (event) => event.stopPropagation());
+  row.addEventListener("click", (event) => event.stopPropagation());
+
+  const label = document.createElement("span");
+  label.className = "object-detail-screen__city-stage-label";
+  label.textContent = "CITY STATE";
+
+  const value = document.createElement("span");
+  value.className = "object-detail-screen__city-stage-value";
+  value.textContent = String(getObjectDetailCityStage(objectDetail3D?.hexGrid));
+
+  const input = document.createElement("input");
+  input.className = "object-detail-screen__city-stage-range";
+  input.type = "range";
+  input.min = String(OBJECT_DETAIL_CITY_STAGE_MIN);
+  input.max = String(OBJECT_DETAIL_CITY_STAGE_MAX);
+  input.step = "1";
+  input.value = value.textContent;
+  input.setAttribute("aria-label", "City state");
+  const commitInput = (event) => {
+    event.stopPropagation();
+    setObjectDetailCityStage(Number(event.currentTarget.value));
+  };
+  input.addEventListener("input", commitInput);
+  input.addEventListener("change", commitInput);
+  input.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+  });
+  input.addEventListener("pointermove", (event) => event.stopPropagation());
+  input.addEventListener("click", (event) => event.stopPropagation());
+
+  row.append(label, value, input);
+  return row;
+}
+
 function setObjectDetailOption(optionKey, isEnabled) {
   objectDetailOptions[optionKey] = Boolean(isEnabled);
   objectDetailTexture
@@ -5477,6 +5536,33 @@ function setObjectDetailOption(optionKey, isEnabled) {
     objectDetail3D.targetLightMix = objectDetailOptions.light ? 1 : 0;
     objectDetail3D.targetCloudMix = objectDetailOptions.clouds ? 1 : 0;
   }
+}
+
+function setObjectDetailCityStage(stage) {
+  const hexGrid = objectDetail3D?.hexGrid;
+  if (!hexGrid) {
+    return;
+  }
+
+  const nextStage = normalizeObjectDetailCityStage(stage);
+  if (hexGrid.state.cityStage === nextStage) {
+    return;
+  }
+
+  hexGrid.state.cityStage = nextStage;
+  markObjectDetailCityLayerDirty(hexGrid);
+  objectDetailTexture
+    .querySelectorAll(".object-detail-screen__city-stage-value")
+    .forEach((value) => {
+      value.textContent = String(nextStage);
+    });
+  objectDetailTexture
+    .querySelectorAll(".object-detail-screen__city-stage-range")
+    .forEach((input) => {
+      input.value = String(nextStage);
+    });
+  redrawObjectDetailHexGrid(hexGrid);
+  renderObjectDetail3D();
 }
 
 function createObjectDetailInfo(detail) {
@@ -5802,7 +5888,12 @@ function renderObjectDetailPlanetSurface(detail) {
   mesh.receiveShadow = true;
   scene3D.add(mesh);
 
-  const hexGrid = createObjectDetailHexGrid(detail, renderer3D);
+  const hexGrid = createObjectDetailHexGrid(detail, renderer3D, {
+    surfaceGeometry: geometry,
+    heightMap,
+    hasDisplacement,
+  });
+  scene3D.add(hexGrid.cityMesh);
   scene3D.add(hexGrid.mesh);
 
   const cloudGeometry = cloudMap ? new THREE.PlaneGeometry(2, 1, 1, 1) : null;
@@ -6309,7 +6400,6 @@ function updateObjectDetailHexHover(hit) {
   }
 
   hexGrid.state.hoverAddress = nextAddress;
-  redrawObjectDetailHexGrid(hexGrid);
 }
 
 function findObjectDetailHexAt(hexGrid, canvasX, canvasY) {
@@ -6382,6 +6472,7 @@ function handleObjectDetailBuildMenuOptionClick(hexGrid, hex, option) {
   }
 
   hexGrid.state.towns.add(hex.address);
+  markObjectDetailCityLayerDirty(hexGrid);
   closeObjectDetailBuildMenu(hexGrid);
   redrawObjectDetailHexGrid(hexGrid);
   renderObjectDetail3D();
@@ -6680,10 +6771,13 @@ function wrapObjectDetailLightX(x) {
   return wrapped;
 }
 
-function createObjectDetailHexGrid(detail, renderer3D) {
+function createObjectDetailHexGrid(detail, renderer3D, surfaceOptions = {}) {
   const canvas = document.createElement("canvas");
   canvas.width = OBJECT_DETAIL_HEX_GRID_TEXTURE_WIDTH;
   canvas.height = OBJECT_DETAIL_HEX_GRID_TEXTURE_HEIGHT;
+  const cityLayerCanvas = document.createElement("canvas");
+  cityLayerCanvas.width = canvas.width;
+  cityLayerCanvas.height = canvas.height;
   const hexes = createObjectDetailHexes(canvas, detail.bodySizeRank);
   const state = getObjectDetailHexState(detail);
   resetObjectDetailHexWaterCache(detail, state);
@@ -6692,6 +6786,13 @@ function createObjectDetailHexGrid(detail, renderer3D) {
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = Math.min(8, renderer3D.capabilities.getMaxAnisotropy());
   texture.needsUpdate = true;
+
+  const cityTexture = new THREE.CanvasTexture(cityLayerCanvas);
+  cityTexture.colorSpace = THREE.SRGBColorSpace;
+  cityTexture.anisotropy = Math.min(8, renderer3D.capabilities.getMaxAnisotropy());
+  cityTexture.magFilter = THREE.NearestFilter;
+  cityTexture.minFilter = THREE.NearestFilter;
+  cityTexture.needsUpdate = true;
 
   const geometry = new THREE.PlaneGeometry(2, 1, 1, 1);
   const material = new THREE.MeshBasicMaterial({
@@ -6704,7 +6805,42 @@ function createObjectDetailHexGrid(detail, renderer3D) {
   const mesh = new THREE.Mesh(geometry, material);
   mesh.position.z = OBJECT_DETAIL_HEX_GRID_HEIGHT;
   mesh.renderOrder = 1;
-  const hexGrid = { canvas, texture, geometry, material, mesh, hexes, state, detail, waterSampleData: null };
+  const cityGeometry = surfaceOptions.surfaceGeometry?.clone() ?? new THREE.PlaneGeometry(2, 1, 1, 1);
+  const cityMaterial = new THREE.MeshLambertMaterial({
+    map: cityTexture,
+    displacementMap: surfaceOptions.heightMap ?? undefined,
+    displacementScale: surfaceOptions.hasDisplacement ? OBJECT_DETAIL_DISPLACEMENT_SCALE : 0,
+    displacementBias: surfaceOptions.hasDisplacement ? -0.035 : 0,
+    transparent: true,
+    alphaTest: 0.01,
+    depthWrite: false,
+    depthTest: true,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+    toneMapped: false,
+  });
+  const cityMesh = new THREE.Mesh(cityGeometry, cityMaterial);
+  cityMesh.position.z = OBJECT_DETAIL_CITY_SURFACE_OFFSET;
+  cityMesh.renderOrder = 1;
+  cityMesh.receiveShadow = true;
+  const hexGrid = {
+    canvas,
+    cityLayerCanvas,
+    cityTexture,
+    cityGeometry,
+    cityMaterial,
+    cityMesh,
+    cityLayerDirty: true,
+    texture,
+    geometry,
+    material,
+    mesh,
+    hexes,
+    state,
+    detail,
+    waterSampleData: null,
+  };
   canvas.objectDetailHexes = hexes;
   canvas.dataset.hexCount = String(hexes.length);
   redrawObjectDetailHexGrid(hexGrid);
@@ -6767,10 +6903,10 @@ function drawObjectDetailHexGrid(canvas, bodySizeRank = 12) {
 function setObjectDetailHexStrokeStyle(context) {
   context.lineJoin = "round";
   context.lineCap = "round";
-  context.strokeStyle = "rgba(216, 238, 255, 0.5)";
+  context.strokeStyle = "rgba(226, 226, 226, 0.34)";
   context.lineWidth = 1.15;
-  context.shadowColor = "rgba(60, 170, 255, 0.12)";
-  context.shadowBlur = 3;
+  context.shadowColor = "transparent";
+  context.shadowBlur = 0;
 }
 
 function drawObjectDetailHex(context, centerX, centerY, radius) {
@@ -6800,11 +6936,13 @@ function getObjectDetailHexState(detail) {
   const state = detail.objectDetailHexState ?? {};
   state.towns = state.towns instanceof Set ? state.towns : new Set(state.towns ?? []);
   state.waterRatios = state.waterRatios instanceof Map ? state.waterRatios : new Map();
+  state.cityPlacements = normalizeObjectDetailCityPlacements(state.cityPlacements);
   state.hoverAddress = state.hoverAddress ?? null;
   state.menuAddress = state.menuAddress ?? null;
   state.menuProgress = Number.isFinite(state.menuProgress) ? state.menuProgress : 0;
   state.menuTarget = Number.isFinite(state.menuTarget) ? state.menuTarget : 0;
   state.menuUpdatedAt = Number.isFinite(state.menuUpdatedAt) ? state.menuUpdatedAt : performance.now();
+  state.cityStage = normalizeObjectDetailCityStage(state.cityStage);
   detail.objectDetailHexState = state;
   return state;
 }
@@ -6824,6 +6962,7 @@ function resetObjectDetailHexWaterCache(detail, state) {
 
   state.waterCacheKey = waterCacheKey;
   state.waterRatios = new Map();
+  state.cityPlacements = new Map();
 }
 
 function redrawObjectDetailHexGrid(hexGrid) {
@@ -6831,19 +6970,11 @@ function redrawObjectDetailHexGrid(hexGrid) {
     return;
   }
 
-  const { canvas, hexes, state } = hexGrid;
+  const { canvas, hexes } = hexGrid;
   const context = canvas.getContext("2d");
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.imageSmoothingEnabled = false;
-
-  for (const hex of hexes) {
-    if (hex.address === state.hoverAddress) {
-      drawObjectDetailHexFill(context, hex, OBJECT_DETAIL_HEX_HOVER_FILL);
-    }
-    if (state.towns.has(hex.address)) {
-      drawObjectDetailTown(context, hex, hexGrid);
-    }
-  }
+  redrawObjectDetailCityLayer(hexGrid);
 
   setObjectDetailHexStrokeStyle(context);
   for (const hex of hexes) {
@@ -6856,13 +6987,30 @@ function redrawObjectDetailHexGrid(hexGrid) {
   }
 }
 
-function drawObjectDetailHexFill(context, hex, fillStyle) {
-  context.save();
-  context.shadowBlur = 0;
-  context.fillStyle = fillStyle;
-  traceObjectDetailHexPath(context, hex.px, hex.py, hex.radius);
-  context.fill();
-  context.restore();
+function redrawObjectDetailCityLayer(hexGrid) {
+  if (!hexGrid?.cityLayerCanvas || !hexGrid.cityLayerDirty) {
+    return;
+  }
+
+  const { cityLayerCanvas, hexes, state } = hexGrid;
+  const context = cityLayerCanvas.getContext("2d");
+  context.clearRect(0, 0, cityLayerCanvas.width, cityLayerCanvas.height);
+  context.imageSmoothingEnabled = false;
+  for (const hex of hexes) {
+    if (state.towns.has(hex.address)) {
+      drawObjectDetailTown(context, hex, hexGrid);
+    }
+  }
+  if (hexGrid.cityTexture) {
+    hexGrid.cityTexture.needsUpdate = true;
+  }
+  hexGrid.cityLayerDirty = false;
+}
+
+function markObjectDetailCityLayerDirty(hexGrid) {
+  if (hexGrid) {
+    hexGrid.cityLayerDirty = true;
+  }
 }
 
 function traceObjectDetailHexPath(context, centerX, centerY, radius) {
@@ -6961,15 +7109,23 @@ function drawObjectDetailBuildMenuOption(context, option, { alpha, blocked, clic
 
 function drawObjectDetailTown(context, hex, hexGrid) {
   const sampleData = getObjectDetailWaterSampleData(hexGrid);
-  const unit = Math.max(2, Math.round(hex.radius / 22));
+  const cityStage = getObjectDetailCityStage(hexGrid);
+  const unit = Math.max(OBJECT_DETAIL_CITY_MIN_PIXEL_SIZE, Math.round(hex.radius / 26));
+  const placement = getObjectDetailCityPlacementCenter(hexGrid, hex, sampleData);
+  if (!placement) {
+    return;
+  }
+
+  const cityHex = { ...hex, px: placement.x, py: placement.y };
+  const maxGrowthDistance = getObjectDetailCityMaxGrowthDistance(hex, cityHex);
   const minX = Math.floor((hex.px - hex.radius) / unit) * unit;
   const maxX = Math.ceil((hex.px + hex.radius) / unit) * unit;
   const minY = Math.floor((hex.py - hex.halfHeight) / unit) * unit;
   const maxY = Math.ceil((hex.py + hex.halfHeight) / unit) * unit;
-  const districtRadius = hex.radius * 0.72;
 
   context.save();
   context.shadowBlur = 0;
+  context.globalCompositeOperation = "source-over";
   traceObjectDetailHexPath(context, hex.px, hex.py, hex.radius);
   context.clip();
 
@@ -6984,33 +7140,232 @@ function drawObjectDetailTown(context, hex, hexGrid) {
         continue;
       }
 
-      const distance = Math.hypot(centerX - hex.px, centerY - hex.py);
-      const localDensity = 1 - THREE.MathUtils.smoothstep(districtRadius * 0.18, districtRadius, distance);
-      const cityNoise = hashObjectDetailCityCell(Math.floor(centerX / unit), Math.floor(centerY / unit), 17);
-      const streetNoise = hashObjectDetailCityCell(Math.floor(centerX / (unit * 4)), Math.floor(centerY / (unit * 4)), 41);
-      const density = 0.1 + localDensity * 0.56 + streetNoise * 0.12;
-      if (cityNoise > density) {
+      const mask = getObjectDetailCityMask(cityHex, hex, centerX, centerY, maxGrowthDistance, cityStage);
+      if (mask <= 0) {
         continue;
       }
 
-      const toneNoise = hashObjectDetailCityCell(Math.floor(centerX / unit), Math.floor(centerY / unit), 73);
-      const tone = Math.floor(9 + toneNoise * 38);
-      const inset = toneNoise > 0.72 ? 0 : Math.floor(unit * 0.18);
-      context.fillStyle = `rgb(${tone}, ${tone}, ${Math.min(58, tone + Math.floor(toneNoise * 7))})`;
-      context.fillRect(
-        Math.round(x + inset),
-        Math.round(y + inset),
-        Math.max(1, Math.round(unit - inset * 2)),
-        Math.max(1, Math.round(unit - inset * 2)),
-      );
+      const cellX = Math.floor(centerX / unit);
+      const cellY = Math.floor(centerY / unit);
+      if (getObjectDetailSurfaceCityRoadMask(cellX, cellY) > OBJECT_DETAIL_CITY_ROAD_CUT_THRESHOLD) {
+        continue;
+      }
+
+      drawObjectDetailCityPixel(context, x, y, unit, cellX, cellY, mask);
     }
   }
 
   context.restore();
 }
 
+function normalizeObjectDetailCityPlacements(cityPlacements) {
+  if (cityPlacements instanceof Map) {
+    return cityPlacements;
+  }
+
+  if (Array.isArray(cityPlacements)) {
+    return new Map(cityPlacements);
+  }
+
+  return new Map(Object.entries(cityPlacements ?? {}));
+}
+
+function getObjectDetailCityPlacementCenter(hexGrid, hex, sampleData) {
+  const cached = hexGrid.state.cityPlacements.get(hex.address);
+  if (cached && Number.isFinite(cached.x) && Number.isFinite(cached.y)) {
+    return cached;
+  }
+
+  const placement = createObjectDetailCityPlacement(hexGrid, hex, sampleData);
+  if (placement) {
+    hexGrid.state.cityPlacements.set(hex.address, placement);
+  }
+  return placement;
+}
+
+function createObjectDetailCityPlacement(hexGrid, hex, sampleData) {
+  for (let index = 0; index < 18; index += 1) {
+    const angle = hashObjectDetailCityCell(hex.column, hex.row, 1601 + index) * Math.PI * 2;
+    const distance = hex.radius * (0.08 + hashObjectDetailCityCell(hex.row, hex.column, 1701 + index) * 0.54);
+    const x = hex.px + Math.cos(angle) * distance;
+    const y = hex.py + Math.sin(angle) * distance * 0.86;
+    if (!isPointInObjectDetailHex(x, y, hex)) {
+      continue;
+    }
+    if (sampleData && isObjectDetailWaterSample(sampleData, hexGrid, x, y)) {
+      continue;
+    }
+    return { x, y };
+  }
+
+  const scanStep = hex.radius * 0.14;
+  for (let yIndex = -3; yIndex <= 3; yIndex += 1) {
+    for (let xIndex = -3; xIndex <= 3; xIndex += 1) {
+      const x = hex.px + xIndex * scanStep;
+      const y = hex.py + yIndex * scanStep;
+      if (!isPointInObjectDetailHex(x, y, hex)) {
+        continue;
+      }
+      if (sampleData && isObjectDetailWaterSample(sampleData, hexGrid, x, y)) {
+        continue;
+      }
+
+      return { x, y };
+    }
+  }
+
+  return null;
+}
+
+function drawObjectDetailCityPixel(context, x, y, unit, cellX, cellY, mask) {
+  const toneNoise = hashObjectDetailCityCell(cellX, cellY, 73);
+  const tone = Math.floor(24 + toneNoise * 72 + mask * 16);
+  context.fillStyle = `rgb(${tone}, ${tone}, ${tone})`;
+  context.fillRect(
+    Math.round(x),
+    Math.round(y),
+    Math.max(1, Math.round(unit)),
+    Math.max(1, Math.round(unit)),
+  );
+}
+
+function getObjectDetailCityStage(hexGrid) {
+  return normalizeObjectDetailCityStage(hexGrid?.state?.cityStage);
+}
+
+function normalizeObjectDetailCityStage(stage) {
+  return THREE.MathUtils.clamp(
+    Number.isFinite(stage) ? Math.round(stage) : OBJECT_DETAIL_CITY_STAGE_MIN,
+    OBJECT_DETAIL_CITY_STAGE_MIN,
+    OBJECT_DETAIL_CITY_STAGE_MAX,
+  );
+}
+
+function getObjectDetailCityMaxGrowthDistance(hex, cityHex) {
+  let distance = 1;
+  for (let index = 0; index < 6; index += 1) {
+    const angle = THREE.MathUtils.degToRad(60 * index);
+    const cornerX = hex.px + Math.cos(angle) * hex.radius;
+    const cornerY = hex.py + Math.sin(angle) * hex.radius;
+    distance = Math.max(distance, Math.hypot(cornerX - cityHex.px, cornerY - cityHex.py));
+  }
+  return distance;
+}
+
+function getObjectDetailCityMask(hex, originalHex, x, y, maxGrowthDistance, stage) {
+  if (stage >= OBJECT_DETAIL_CITY_STAGE_MAX) {
+    return 1;
+  }
+
+  const dx = x - hex.px;
+  const dy = y - hex.py;
+  const originDistance = Math.hypot(dx, dy);
+  const originNorm = originDistance / Math.max(1, maxGrowthDistance);
+  const centerDistance = Math.hypot(x - originalHex.px, y - originalHex.py);
+  const centerNorm = THREE.MathUtils.clamp(centerDistance / originalHex.radius, 0, 1.25);
+  const growth = getObjectDetailCityStageThreshold(stage);
+  const centerVectorX = originalHex.px - hex.px;
+  const centerVectorY = originalHex.py - hex.py;
+  const centerVectorLength = Math.hypot(centerVectorX, centerVectorY);
+  const pointVectorLength = Math.max(1, originDistance);
+  const centerDirection = centerVectorLength > 0.001
+    ? THREE.MathUtils.clamp(
+      (dx * centerVectorX + dy * centerVectorY) / (pointVectorLength * centerVectorLength),
+      -1,
+      1,
+    )
+    : 0;
+  const coarse = hashObjectDetailCityCell(Math.floor(x / 11), Math.floor(y / 11), 503) - 0.5;
+  const fine = hashObjectDetailCityCell(Math.floor(x / 5), Math.floor(y / 5), 509) - 0.5;
+  const irregularity = coarse * 0.2 + fine * 0.12;
+  const centerBias = Math.max(0, centerDirection) * (0.16 + (1 - centerNorm) * 0.1);
+  const requiredGrowth = THREE.MathUtils.clamp(
+    originNorm + centerNorm * 0.12 + Math.max(0, -centerDirection) * 0.1 - centerBias + irregularity,
+    0,
+    1,
+  );
+  if (requiredGrowth > growth) {
+    return 0;
+  }
+
+  return THREE.MathUtils.clamp(0.45 + (growth - requiredGrowth) * 0.8, 0.35, 1);
+}
+
+function getObjectDetailCityStageThreshold(stage) {
+  const index = normalizeObjectDetailCityStage(stage) - OBJECT_DETAIL_CITY_STAGE_MIN;
+  return OBJECT_DETAIL_CITY_STAGE_THRESHOLDS[index] ?? OBJECT_DETAIL_CITY_STAGE_THRESHOLDS[0];
+}
+
+function getObjectDetailSurfaceCityRoadMask(cellX, cellY) {
+  if (isObjectDetailHorizontalRoadCell(cellX, cellY)) {
+    return 1;
+  }
+  if (isObjectDetailVerticalRoadCell(cellX, cellY)) {
+    return 1;
+  }
+  if (isObjectDetailDiagonalRoadCell(cellX, cellY, 1)) {
+    return 1;
+  }
+  if (isObjectDetailDiagonalRoadCell(cellX, cellY, -1)) {
+    return 1;
+  }
+  return 0;
+}
+
+function isObjectDetailHorizontalRoadCell(cellX, cellY) {
+  if (!isObjectDetailRoadLineActive(cellY, 2201, 0.34)) {
+    return false;
+  }
+  return isObjectDetailFiniteRoadSegment(cellY, cellX, 2211, 5, 12, 2, 6, 0.9);
+}
+
+function isObjectDetailVerticalRoadCell(cellX, cellY) {
+  if (!isObjectDetailRoadLineActive(cellX, 2301, 0.34)) {
+    return false;
+  }
+  return isObjectDetailFiniteRoadSegment(cellX, cellY, 2311, 5, 12, 2, 6, 0.9);
+}
+
+function isObjectDetailDiagonalRoadCell(cellX, cellY, direction) {
+  const lineKey = direction > 0 ? cellX + cellY : cellX - cellY;
+  if (!isObjectDetailRoadLineActive(lineKey, direction > 0 ? 2401 : 2501, 0.22)) {
+    return false;
+  }
+  return isObjectDetailFiniteRoadSegment(lineKey, cellX, direction > 0 ? 2411 : 2511, 4, 10, 3, 7, 0.78);
+}
+
+function isObjectDetailRoadLineActive(lineKey, salt, chance) {
+  return hashObjectDetailCityCell(lineKey, salt, salt + 17) < chance;
+}
+
+function isObjectDetailFiniteRoadSegment(lineKey, along, salt, minSegment, maxSegment, minGap, maxGap, chance) {
+  const segmentLength = minSegment + Math.floor(hashObjectDetailCityCell(lineKey, 0, salt) * (maxSegment - minSegment + 1));
+  const gapLength = minGap + Math.floor(hashObjectDetailCityCell(lineKey, 0, salt + 1) * (maxGap - minGap + 1));
+  const period = Math.max(1, segmentLength + gapLength);
+  const offset = Math.floor(hashObjectDetailCityCell(lineKey, 0, salt + 2) * period);
+  const shiftedAlong = along + offset;
+  const segmentIndex = Math.floor(shiftedAlong / period);
+  if (hashObjectDetailCityCell(lineKey, segmentIndex, salt + 3) > chance) {
+    return false;
+  }
+  return getPositiveObjectDetailModulo(shiftedAlong, period) < segmentLength;
+}
+
+function getPositiveObjectDetailModulo(value, divisor) {
+  return ((value % divisor) + divisor) % divisor;
+}
+
+function hashObjectDetailSeedString(seed) {
+  let hash = 2166136261;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash ^= seed.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
 function hashObjectDetailCityCell(x, y, salt = 0) {
-  let hash = Math.imul(x ^ 0x9e3779b9, 0x85ebca6b);
+  let hash = Math.imul((x ^ OBJECT_DETAIL_CITY_SEED_HASH) ^ 0x9e3779b9, 0x85ebca6b);
   hash ^= Math.imul(y ^ 0xc2b2ae35, 0x27d4eb2d);
   hash ^= Math.imul(salt ^ 0x165667b1, 0x9e3779b1);
   hash ^= hash >>> 16;
@@ -7378,6 +7733,9 @@ function disposeObjectDetail3D() {
   objectDetail3D.hexGrid?.texture.dispose();
   objectDetail3D.hexGrid?.geometry.dispose();
   objectDetail3D.hexGrid?.material.dispose();
+  objectDetail3D.hexGrid?.cityTexture.dispose();
+  objectDetail3D.hexGrid?.cityGeometry.dispose();
+  objectDetail3D.hexGrid?.cityMaterial.dispose();
   releaseCanvasTexture(objectDetail3D.cloudMapRef);
   objectDetail3D.cloudGeometry?.dispose();
   objectDetail3D.cloudMaterial?.dispose();
