@@ -81,54 +81,193 @@ body.game-running .game-menu-button {
   place-items: center;
 }
 
-.sign-turn-button {
+.game-bottom-ui {
   position: fixed;
-  left: 50%;
-  bottom: 12px;
+  left: 18px;
+  bottom: 16px;
   z-index: 67;
   display: none;
-  width: 68px;
-  height: 68px;
-  padding: 0;
+  width: 131px;
+  gap: 7px;
+}
+
+body.game-running .game-bottom-ui {
+  display: grid;
+}
+
+body.editor-mode .game-bottom-ui {
+  display: none;
+}
+
+.game-breadcrumbs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3px;
+}
+
+.game-breadcrumb-button,
+.game-ui-panel__button,
+.sign-turn-button {
   border: 0;
-  border-radius: 50%;
-  background: rgba(10, 10, 11, 0.72);
-  backdrop-filter: blur(14px);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
-    0 18px 44px rgba(0, 0, 0, 0.34);
   color: rgba(255, 255, 255, 0.9);
   cursor: pointer;
   font: inherit;
+  text-transform: uppercase;
+}
+
+.game-breadcrumb-button {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.game-breadcrumb-button[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.26;
+}
+
+.game-breadcrumb-button[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 7px);
+  z-index: 2;
+  width: max-content;
+  max-width: 180px;
+  padding: 5px 7px 6px;
+  border-radius: 3px;
+  background: rgba(8, 8, 9, 0.86);
+  color: rgba(255, 255, 255, 0.88);
+  font-family: "Albert Sans", Inter, sans-serif;
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+  text-transform: uppercase;
+  transform: translateY(4px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+}
+
+.game-breadcrumb-button[data-tooltip]:hover::after,
+.game-breadcrumb-button[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.game-ui-panel {
+  display: grid;
+  gap: 3px;
+  padding: 4px;
+  border-radius: 3px;
+  background: rgba(10, 10, 11, 0.48);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.game-ui-panel__button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 32px;
+  padding: 0;
+  gap: 2px;
+  border-radius: 3px;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  color: rgba(255, 255, 255, 0.82);
   font-size: 10px;
   font-weight: 500;
-  line-height: 0.86;
+  line-height: 1;
+  text-align: left;
+}
+
+.game-ui-panel__icon-slot {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.game-ui-panel__text {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  align-self: stretch;
+  min-width: 0;
+  padding: 0 8px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.sign-turn-panel {
+  padding: 4px;
+  border-radius: 3px;
+  background: rgba(10, 10, 11, 0.48);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.sign-turn-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  font-family: "Wire One", "Albert Sans", sans-serif;
+  font-size: 25px;
+  font-weight: 400;
+  line-height: 1;
   text-align: center;
-  text-transform: uppercase;
-  transform: translateX(-50%);
 }
 
 .sign-turn-button span {
   display: block;
 }
 
-body.game-running .sign-turn-button {
-  display: grid;
-  place-items: center;
-}
-
-body.editor-mode .sign-turn-button {
-  display: none;
-}
-
+.game-breadcrumb-button[aria-disabled="false"]:hover,
 .sign-turn-button:hover {
   background: rgba(255, 255, 255, 0.08);
   color: #fff;
 }
 
+.game-ui-panel__button:hover .game-ui-panel__text {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.game-ui-panel__button:hover .game-ui-panel__icon-slot {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.game-breadcrumb-button:focus-visible,
+.game-ui-panel__button:focus-visible,
 .sign-turn-button:focus-visible {
-  outline: 1px solid rgba(255, 255, 255, 0.32);
-  outline-offset: 3px;
+  outline: 0;
+}
+
+.game-ui-panel__button:focus-visible .game-ui-panel__text,
+.game-ui-panel__button:focus-visible .game-ui-panel__icon-slot {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
 }
 
 .game-menu-button:focus-visible {
@@ -888,7 +1027,7 @@ body.start-menu-open .hover-panel {
 }
 
 .menu-save-list {
-  display: grid;
+  display: block;
   min-height: 160px;
   margin-top: 18px;
   border: 0;
@@ -902,14 +1041,21 @@ body.start-menu-open .hover-panel {
 }
 
 .menu-save-list__empty {
-  place-self: center;
+  display: grid;
+  min-height: 160px;
+  place-items: center;
   color: rgba(255, 255, 255, 0.38);
   font-size: 11px;
   text-transform: uppercase;
 }
 
 .menu-save-list__item {
+  display: flex;
+  align-items: center;
+  width: 100%;
   height: 20px;
+  margin: 0;
+  padding: 0 6px;
   border: 0;
   background: transparent;
   color: rgba(255, 255, 255, 0.56);
@@ -918,14 +1064,32 @@ body.start-menu-open .hover-panel {
   line-height: 20px;
   text-align: left;
   text-transform: uppercase;
-  padding: 0 6px;
+  white-space: nowrap;
   cursor: pointer;
+}
+
+.menu-save-list__name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menu-save-list__meta {
+  flex: 0 0 auto;
+  margin-left: 28px;
+  color: rgba(255, 255, 255, 0.42);
 }
 
 .menu-save-list__item:hover,
 .menu-save-list__item.selected {
   background: rgba(255, 255, 255, 0.045);
   color: rgba(255, 255, 255, 0.9);
+}
+
+.menu-save-list__item:hover .menu-save-list__meta,
+.menu-save-list__item.selected .menu-save-list__meta {
+  color: rgba(255, 255, 255, 0.66);
 }
 
 .menu-save-list__item:last-child {
@@ -2075,6 +2239,12 @@ body.editor-mode .music-player {
 .back-button:focus-visible {
   outline: 1px solid rgba(255, 255, 255, 0.32);
   outline-offset: 2px;
+}
+
+.system-top-bar #back-to-starmap,
+.planet-screen__top-bar,
+.object-detail-screen__top-bar {
+  display: none !important;
 }
 
 .field {

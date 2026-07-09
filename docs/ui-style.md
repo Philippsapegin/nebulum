@@ -14,7 +14,7 @@ Use this as the baseline for Nebulum UI work. The goal is quiet, thin, system-li
 - Modal surfaces use transparent dark glass:
   `background: rgba(10, 10, 11, 0.48)` and `backdrop-filter: blur(18px)`.
 - Corners are small, usually `3px`.
-- Do not add visible decorative borders or stroke outlines.
+- Do not add visible decorative borders, stroke outlines, inset rings, or focus outlines unless the specific control explicitly calls for them.
 - Repeated item cards use `rgba(255, 255, 255, 0.045)` backgrounds.
 
 ## Buttons
@@ -57,6 +57,7 @@ Use this as the baseline for Nebulum UI work. The goal is quiet, thin, system-li
 ## Avoid
 
 - No CSS/SVG strokes around menu text or modal controls.
+- No control outlines by default. Nebulum UI is flat glass unless a border/stroke is explicitly requested.
 - No random grid backgrounds or decorative frames.
 - No nested cards unless the inner card is a repeated data item.
 - No large marketing-style UI panels inside gameplay menus.

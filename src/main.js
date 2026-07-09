@@ -53,7 +53,8 @@ const AUDIO_SETTINGS_STORAGE_KEY = "nebulum:audio-settings";
 const GAME_UI_SETTINGS_STORAGE_KEY = "nebulum:game-ui-settings";
 const WINDOW_SETTINGS_STORAGE_KEY = "nebulum:window-settings";
 const PWA_INSTALL_STORAGE_KEY = "nebulum:pwa-installed";
-const SAVE_STORAGE_KEY = "nebulum:saves";
+const LEGACY_SAVE_STORAGE_KEY = "nebulum:saves";
+const SAVE_STORAGE_KEY = "nebulum:saves:v2";
 const RUNTIME_SESSION_STORAGE_KEY = "nebulum:runtime-session";
 const DEFAULT_TURN_NUMBER = 0;
 const DEFAULT_PLAYER_ID = "player-1";
@@ -81,6 +82,9 @@ const UI_HOVER_SOUND_SELECTOR = [
   ".new-game__faction-card",
   ".menu-save-list__item",
   ".game-menu-button",
+  ".game-breadcrumb-button",
+  ".game-ui-panel__button",
+  ".sign-turn-button",
 ].join(",");
 const UI_MENU_CLICK_SOUND_SELECTOR = [
   ".start-menu__button",
@@ -118,6 +122,7 @@ let glowTexture = null;
 let linkPulseTexture = null;
 let blackHoleDiskTexture = null;
 let blackHoleDiskMaterial = null;
+const runtimeLoadingOverlay = document.querySelector("#runtime-loading-overlay");
 const startMenu = document.querySelector("#start-menu");
 const menuNewGame = document.querySelector("#menu-new-game");
 const menuLoadGame = document.querySelector("#menu-load-game");
@@ -178,6 +183,14 @@ const gameSpaceGradientEnabled = document.querySelector("#game-space-gradient-en
 const gameBorderlessWindow = document.querySelector("#game-borderless-window");
 const gameSettingsClose = document.querySelector("#game-settings-close");
 const signTurnButton = document.querySelector("#sign-turn-button");
+const gameBreadcrumbStarmap = document.querySelector("#game-breadcrumb-starmap");
+const gameBreadcrumbSystem = document.querySelector("#game-breadcrumb-system");
+const gameBreadcrumbOrbit = document.querySelector("#game-breadcrumb-orbit");
+const gameBreadcrumbButtons = [
+  gameBreadcrumbStarmap,
+  gameBreadcrumbSystem,
+  gameBreadcrumbOrbit,
+].filter(Boolean);
 const sceneCanvas = document.querySelector("#scene");
 const starLabels = document.querySelector("#star-labels");
 const hoverNameWrap = document.querySelector("#hover-name-wrap");
@@ -300,6 +313,8 @@ let pendingRuntimeSession = null;
 let currentGameState = createEmptyGameState();
 let shouldStartGameAfterInit = false;
 let isRuntimeSessionRedirecting = false;
+let runtimeLoadingHideTimer = null;
+let lastGameNavigationUiKey = "";
 let selectedNewGameScenarioId = NEW_GAME_BASIC_SCENARIO_ID;
 let newGameFactionCount = NEW_GAME_DEFAULT_FACTION_COUNT;
 let newGamePlayerFactionName = NEW_GAME_DEFAULT_PLAYER_FACTION_NAME;
@@ -605,10 +620,22 @@ if (!isRuntimeSessionRedirecting) {
 }
 
 window.addEventListener("resize", onWindowResize);
+window.addEventListener("beforeunload", () => {
+  if (!isStartMenuOpen && !isRuntimeSessionRedirecting) {
+    showRuntimeLoadingOverlay();
+  }
+});
 window.addEventListener("pagehide", () => {
   persistRuntimeSession();
   stopMenuEnvironmentMachine();
 });
+document.addEventListener("keydown", (event) => {
+  const key = event.key.toLowerCase();
+  const isReloadKey = event.key === "F5" || ((event.ctrlKey || event.metaKey) && key === "r");
+  if (isReloadKey && !isStartMenuOpen && !isRuntimeSessionRedirecting) {
+    showRuntimeLoadingOverlay();
+  }
+}, { capture: true });
 document.addEventListener("pointermove", onPointerMove, { capture: true });
 sceneCanvas.addEventListener("pointerdown", onPointerDown);
 sceneCanvas.addEventListener("wheel", onWheel, { passive: false });
@@ -732,6 +759,7 @@ function initStartMenu() {
 
   document.body.classList.add("start-menu-open");
   menuSeedInput.value = MENU_DEFAULT_SEED;
+  clearLegacySaves();
   initRuntimeStartupState();
 
   menuNewGame.addEventListener("click", () => {
@@ -750,6 +778,9 @@ function initStartMenu() {
   gameDeleteSave.addEventListener("click", deleteSelectedGameSave);
   gameSaveClose.addEventListener("click", closeGameDialogs);
   gameSettingsClose.addEventListener("click", closeGameDialogs);
+  gameBreadcrumbStarmap?.addEventListener("click", navigateGameBreadcrumbToStarmap);
+  gameBreadcrumbSystem?.addEventListener("click", navigateGameBreadcrumbToSystem);
+  gameBreadcrumbOrbit?.addEventListener("click", navigateGameBreadcrumbToOrbit);
   startMenu.addEventListener("pointermove", onStartMenuPointerMove);
   startMenu.addEventListener("pointerleave", clearStartMenuPointer);
   startMenu.addEventListener("click", onStartMenuClick);
@@ -2140,6 +2171,75 @@ function pauseGameInteractions() {
   setSystemHover(null);
 }
 
+function navigateGameBreadcrumbToStarmap() {
+  if (!isGameBreadcrumbEnabled(gameBreadcrumbStarmap)) {
+    return;
+  }
+
+  closeStarWindow();
+  updateGameNavigationUi(true);
+}
+
+function navigateGameBreadcrumbToSystem() {
+  if (!isGameBreadcrumbEnabled(gameBreadcrumbSystem)) {
+    return;
+  }
+
+  if (isObjectDetailOpen) {
+    returnToStarSystemFromObjectDetail();
+    return;
+  }
+  if (planetScreenController?.isOpen?.()) {
+    returnToStarSystemFromPlanet();
+  }
+}
+
+function navigateGameBreadcrumbToOrbit() {
+  if (!isGameBreadcrumbEnabled(gameBreadcrumbOrbit) || !isObjectDetailOpen) {
+    return;
+  }
+
+  returnToOrbitFromObjectDetail();
+}
+
+function isGameBreadcrumbEnabled(button) {
+  return Boolean(button && button.getAttribute("aria-disabled") !== "true");
+}
+
+function updateGameNavigationUi(force = false) {
+  if (!gameBreadcrumbButtons.length) {
+    return;
+  }
+
+  const view = getCurrentRuntimeView();
+  const canGoStarmap = view === "system" || view === "planet" || view === "detail";
+  const canGoSystem = (view === "planet" || view === "detail") && Boolean(systemScreenController?.state?.activeNode);
+  const canGoOrbit = view === "detail" && Boolean(objectDetailOrbitPlanet);
+  const key = [
+    view,
+    canGoStarmap ? 1 : 0,
+    canGoSystem ? 1 : 0,
+    canGoOrbit ? 1 : 0,
+  ].join(":");
+  if (!force && key === lastGameNavigationUiKey) {
+    return;
+  }
+  lastGameNavigationUiKey = key;
+
+  setGameBreadcrumbState(gameBreadcrumbStarmap, canGoStarmap);
+  setGameBreadcrumbState(gameBreadcrumbSystem, canGoSystem);
+  setGameBreadcrumbState(gameBreadcrumbOrbit, canGoOrbit);
+}
+
+function setGameBreadcrumbState(button, isEnabled) {
+  if (!button) {
+    return;
+  }
+
+  button.setAttribute("aria-disabled", String(!isEnabled));
+  button.tabIndex = isEnabled ? 0 : -1;
+}
+
 function initAudioMixer() {
   if (audioMixer) {
     return;
@@ -3010,6 +3110,7 @@ function initRuntimeStartupState() {
   const runtimeSession = consumePendingRuntimeSession();
   if (shouldStartAfterSeed) {
     if (shouldResumeRuntimeSession(runtimeSession)) {
+      showRuntimeLoadingOverlay({ immediate: true });
       pendingRuntimeSession = runtimeSession;
       pendingStartGameState = normalizeGameState(runtimeSession.gameState);
     }
@@ -3020,16 +3121,19 @@ function initRuntimeStartupState() {
   const storedRuntimeSession = runtimeSession ?? readRuntimeSession();
   if (!shouldResumeRuntimeSession(storedRuntimeSession)) {
     persistRuntimeSession("menu");
+    hideRuntimeLoadingOverlay({ delayMs: 0 });
     return;
   }
 
   if (storedRuntimeSession.seed !== SEED) {
+    showRuntimeLoadingOverlay({ immediate: true });
     rememberStartAfterSeed(storedRuntimeSession.seed, storedRuntimeSession.gameState);
     rememberPendingRuntimeSession(storedRuntimeSession);
     redirectToSeed(storedRuntimeSession.seed);
     return;
   }
 
+  showRuntimeLoadingOverlay({ immediate: true });
   pendingRuntimeSession = storedRuntimeSession;
   pendingStartGameState = normalizeGameState(storedRuntimeSession.gameState);
   shouldStartGameAfterInit = true;
@@ -3123,6 +3227,63 @@ function normalizeRuntimeNullableString(value) {
   return value === null || value === undefined
     ? null
     : String(value);
+}
+
+function showRuntimeLoadingOverlay({ immediate = false } = {}) {
+  if (runtimeLoadingHideTimer !== null) {
+    window.clearTimeout(runtimeLoadingHideTimer);
+    runtimeLoadingHideTimer = null;
+  }
+
+  document.documentElement.classList.add("runtime-restore-loading");
+  if (!runtimeLoadingOverlay) {
+    return;
+  }
+
+  runtimeLoadingOverlay.setAttribute("aria-hidden", "false");
+  runtimeLoadingOverlay.classList.remove("runtime-loading-overlay--hiding");
+  runtimeLoadingOverlay.classList.add("runtime-loading-overlay--visible");
+  if (!immediate) {
+    runtimeLoadingOverlay.style.removeProperty("transition");
+    return;
+  }
+
+  runtimeLoadingOverlay.style.setProperty("transition", "none");
+  void runtimeLoadingOverlay.offsetWidth;
+  requestAnimationFrame(() => {
+    runtimeLoadingOverlay.style.removeProperty("transition");
+  });
+}
+
+function hideRuntimeLoadingOverlay({ delayMs = 80 } = {}) {
+  if (runtimeLoadingHideTimer !== null) {
+    window.clearTimeout(runtimeLoadingHideTimer);
+    runtimeLoadingHideTimer = null;
+  }
+
+  const hide = () => {
+    document.documentElement.classList.remove("runtime-restore-loading");
+    if (!runtimeLoadingOverlay) {
+      return;
+    }
+
+    runtimeLoadingOverlay.setAttribute("aria-hidden", "true");
+    runtimeLoadingOverlay.classList.remove("runtime-loading-overlay--visible");
+    runtimeLoadingOverlay.classList.add("runtime-loading-overlay--hiding");
+    window.setTimeout(() => {
+      runtimeLoadingOverlay.classList.remove("runtime-loading-overlay--hiding");
+    }, 280);
+  };
+
+  if (delayMs > 0) {
+    runtimeLoadingHideTimer = window.setTimeout(() => {
+      runtimeLoadingHideTimer = null;
+      hide();
+    }, delayMs);
+    return;
+  }
+
+  hide();
 }
 
 function persistRuntimeSession(viewOverride = null) {
@@ -3288,15 +3449,22 @@ function startGameFromMenu({ editorMode = false, gameState = null } = {}) {
   initializeNebulumRuntime();
   lastFrameTime = performance.now();
   if (runtimeSessionToRestore) {
-    restoreRuntimeSessionView(runtimeSessionToRestore).catch((error) => {
-      console.error("Runtime session restore failed", error);
-      renderStarmapFrame();
-      persistRuntimeSession(isEditorMode ? "editor" : "starmap");
-    });
+    showRuntimeLoadingOverlay({ immediate: true });
+    restoreRuntimeSessionView(runtimeSessionToRestore)
+      .catch((error) => {
+        console.error("Runtime session restore failed", error);
+        renderStarmapFrame();
+        persistRuntimeSession(isEditorMode ? "editor" : "starmap");
+      })
+      .finally(() => {
+        hideRuntimeLoadingOverlay({ delayMs: 0 });
+      });
   } else {
+    hideRuntimeLoadingOverlay({ delayMs: 0 });
     renderStarmapFrame();
     persistRuntimeSession(isEditorMode ? "editor" : "starmap");
   }
+  updateGameNavigationUi(true);
   startAnimationLoop();
 }
 
@@ -3492,6 +3660,12 @@ function updateMenuSaveActions() {
   menuDeleteSave.disabled = !hasSelection;
 }
 
+function clearLegacySaves() {
+  try {
+    localStorage.removeItem(LEGACY_SAVE_STORAGE_KEY);
+  } catch {}
+}
+
 function readMenuSaves() {
   try {
     const saves = JSON.parse(localStorage.getItem(SAVE_STORAGE_KEY) || "[]");
@@ -3646,12 +3820,43 @@ function createSaveListItem(save, index) {
   button.className = "menu-save-list__item";
   button.type = "button";
   button.role = "option";
-  button.textContent = getSaveDisplayName(save, index);
+
+  const name = document.createElement("span");
+  name.className = "menu-save-list__name";
+  name.textContent = getSaveDisplayName(save, index);
+
+  const turn = document.createElement("span");
+  turn.className = "menu-save-list__meta";
+  turn.textContent = `TURN ${getSaveTurnNumber(save)}`;
+
+  const date = document.createElement("span");
+  date.className = "menu-save-list__meta";
+  date.textContent = `DATE ${formatSaveCreatedAt(save)}`;
+
+  button.append(name, turn, date);
   return button;
 }
 
 function getSaveDisplayName(save, index) {
   return save.name || save.seed || `SAVE ${index + 1}`;
+}
+
+function getSaveTurnNumber(save) {
+  const turn = Number.parseInt(save?.gameState?.turn ?? DEFAULT_TURN_NUMBER, 10);
+  return Number.isFinite(turn) && turn >= 0 ? turn : DEFAULT_TURN_NUMBER;
+}
+
+function formatSaveCreatedAt(save) {
+  const date = new Date(save?.createdAt ?? save?.updatedAt ?? Date.now());
+  if (Number.isNaN(date.getTime())) {
+    return "UNKNOWN";
+  }
+
+  const pad = (value) => String(value).padStart(2, "0");
+  return [
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`,
+    `${pad(date.getHours())}:${pad(date.getMinutes())}`,
+  ].join(" ");
 }
 
 function normalizeSave(save, index = 0) {
@@ -8748,6 +8953,7 @@ async function returnToOrbitFromObjectDetail() {
     return;
   }
 
+  persistRuntimeSession("planet");
   await runObjectDetailZoomOutTransition();
   closeObjectDetailScreen({ preserveTransitionOverlay: true, keepSystemHidden: true });
 
@@ -11817,6 +12023,7 @@ function animate() {
   const now = performance.now();
   const deltaSeconds = Math.min(0.05, (now - lastFrameTime) / 1000);
   lastFrameTime = now;
+  updateGameNavigationUi();
 
   if (isGameDialogOpen()) {
     pauseGameInteractions();

@@ -17,6 +17,55 @@
       href="https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500&family=League+Gothic&family=Wire+One&display=swap"
       rel="stylesheet"
     />
+    <style>
+      .runtime-loading-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        display: grid;
+        place-items: center;
+        background: #000;
+        color: rgba(255, 255, 255, 0.94);
+        font-family: "Wire One", "Albert Sans", sans-serif;
+        font-size: clamp(64px, 8vw, 132px);
+        letter-spacing: 0;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 180ms ease;
+      }
+
+      .runtime-loading-overlay span {
+        transform: translateY(-0.02em);
+      }
+
+      html.runtime-restore-loading,
+      html.runtime-restore-loading body {
+        background: #000;
+      }
+
+      html.runtime-restore-loading .runtime-loading-overlay,
+      .runtime-loading-overlay.runtime-loading-overlay--visible {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      html.runtime-restore-loading .runtime-loading-overlay.runtime-loading-overlay--hiding,
+      .runtime-loading-overlay.runtime-loading-overlay--hiding {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 260ms ease;
+      }
+    </style>
+    <script>
+      (() => {
+        try {
+          const session = JSON.parse(localStorage.getItem("nebulum:runtime-session") || "null");
+          if (session && session.seed && session.view && session.view !== "menu") {
+            document.documentElement.classList.add("runtime-restore-loading");
+          }
+        } catch {}
+      })();
+    </script>
   </head>
   <body>
     <svg class="filter-defs" aria-hidden="true" focusable="false">
@@ -359,10 +408,28 @@
           </div>
         </section>
       </div>
-      <button id="sign-turn-button" class="sign-turn-button" type="button">
-        <span>SIGN</span>
-        <span>TURN</span>
-      </button>
+      <div id="game-bottom-ui" class="game-bottom-ui" aria-label="Game controls">
+        <div class="game-breadcrumbs" aria-label="Navigation breadcrumbs">
+          <button id="game-breadcrumb-starmap" class="game-breadcrumb-button" type="button" aria-label="Back to starmap" data-tooltip="Back to starmap"></button>
+          <button id="game-breadcrumb-system" class="game-breadcrumb-button" type="button" aria-label="Back to starsystem" data-tooltip="Back to starsystem"></button>
+          <button id="game-breadcrumb-orbit" class="game-breadcrumb-button" type="button" aria-label="Back to orbit" data-tooltip="Back to orbit"></button>
+        </div>
+        <div class="game-ui-panel" aria-label="Game sections">
+          <button id="game-economy-button" class="game-ui-panel__button" type="button">
+            <span class="game-ui-panel__icon-slot" aria-hidden="true"></span>
+            <span class="game-ui-panel__text">ECONOMY</span>
+          </button>
+          <button id="game-diplomacy-button" class="game-ui-panel__button" type="button">
+            <span class="game-ui-panel__icon-slot" aria-hidden="true"></span>
+            <span class="game-ui-panel__text">DIPLOMACY</span>
+          </button>
+        </div>
+        <div class="sign-turn-panel">
+          <button id="sign-turn-button" class="sign-turn-button" type="button">
+            <span>SIGN TURN</span>
+          </button>
+        </div>
+      </div>
       <section id="star-window" class="star-window" aria-hidden="true">
         <canvas id="system-glow" class="system-glow" aria-hidden="true"></canvas>
         <div id="system-stars" class="system-stars" aria-hidden="true"></div>
@@ -422,6 +489,9 @@
         </section>
       </section>
     </main>
+    <div id="runtime-loading-overlay" class="runtime-loading-overlay" aria-hidden="true">
+      <span>LOADING</span>
+    </div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>
