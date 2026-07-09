@@ -414,7 +414,11 @@
             <button id="object-detail-back-system" class="back-button" type="button">Back to starsystem</button>
             <button id="object-detail-back-orbit" class="back-button" type="button">Back to orbit</button>
           </div>
-          <div id="object-detail-texture" class="object-detail-screen__texture" aria-hidden="true"></div>
+          <div class="object-detail-screen__layout">
+            <aside class="object-detail-screen__side-panel object-detail-screen__side-panel--left" aria-hidden="true"></aside>
+            <div id="object-detail-texture" class="object-detail-screen__texture" aria-hidden="true"></div>
+            <aside class="object-detail-screen__side-panel object-detail-screen__side-panel--right" aria-hidden="true"></aside>
+          </div>
         </section>
       </section>
     </main>

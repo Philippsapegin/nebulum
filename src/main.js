@@ -47,11 +47,16 @@ const SEED = params.get("seed") || "nebulum";
 const MENU_DEFAULT_SEED = "nebulum";
 const APP_LAUNCH_PARAM = "nebulumApp";
 const START_AFTER_SEED_STORAGE_KEY = "nebulum:start-after-seed";
+const START_AFTER_SAVE_STATE_STORAGE_KEY = "nebulum:start-after-save-state";
+const START_AFTER_RUNTIME_SESSION_STORAGE_KEY = "nebulum:start-after-runtime-session";
 const AUDIO_SETTINGS_STORAGE_KEY = "nebulum:audio-settings";
 const GAME_UI_SETTINGS_STORAGE_KEY = "nebulum:game-ui-settings";
 const WINDOW_SETTINGS_STORAGE_KEY = "nebulum:window-settings";
 const PWA_INSTALL_STORAGE_KEY = "nebulum:pwa-installed";
 const SAVE_STORAGE_KEY = "nebulum:saves";
+const RUNTIME_SESSION_STORAGE_KEY = "nebulum:runtime-session";
+const DEFAULT_TURN_NUMBER = 0;
+const DEFAULT_PLAYER_ID = "player-1";
 const UI_HOVER_SOUND = "ui.hover.quiet";
 const UI_MENU_CLICK_SOUND = "ui.menu.click";
 const UI_BASE_CLICK_SOUND = "ui.base.click";
@@ -290,7 +295,11 @@ let selectedMenuSaveIndex = -1;
 let selectedGameSaveIndex = -1;
 let isAddingGameSave = false;
 let gameSaveDraftName = "";
+let pendingStartGameState = null;
+let pendingRuntimeSession = null;
+let currentGameState = createEmptyGameState();
 let shouldStartGameAfterInit = false;
+let isRuntimeSessionRedirecting = false;
 let selectedNewGameScenarioId = NEW_GAME_BASIC_SCENARIO_ID;
 let newGameFactionCount = NEW_GAME_DEFAULT_FACTION_COUNT;
 let newGamePlayerFactionName = NEW_GAME_DEFAULT_PLAYER_FACTION_NAME;
@@ -479,6 +488,9 @@ const OBJECT_DETAIL_BUILD_MENU_OPTIONS = [
   { id: "base", label: "B" },
   { id: "terraforming", label: "TF" },
 ];
+const OBJECT_DETAIL_DEMOLISH_MENU_OPTIONS = [
+  { id: "demolish", label: "X" },
+];
 const OBJECT_DETAIL_BUILD_MENU_ANIMATION_SPEED = 5.6;
 const OBJECT_DETAIL_HEX_WATER_SAMPLE_GRID = 7;
 const OBJECT_DETAIL_HEX_WATER_LIMIT = 0.5;
@@ -520,6 +532,7 @@ let activeZoneElements = [];
 let isPlanetWindowOpen = false;
 let openPlanetData = null;
 let objectDetailOrbitPlanet = null;
+let activeObjectDetail = null;
 let isObjectDetailOpen = false;
 let objectDetailToken = 0;
 let objectDetail3D = null;
@@ -581,16 +594,21 @@ let musicPlayerController = null;
 let planetScreenController = null;
 
 initStartMenu();
-initStartMenuScene();
-resize();
-if (shouldStartGameAfterInit) {
-  startGameFromMenu();
-} else {
-  startMenuAnimationLoop();
+if (!isRuntimeSessionRedirecting) {
+  initStartMenuScene();
+  resize();
+  if (shouldStartGameAfterInit) {
+    queueMicrotask(() => startGameFromMenu());
+  } else {
+    startMenuAnimationLoop();
+  }
 }
 
 window.addEventListener("resize", onWindowResize);
-window.addEventListener("pagehide", stopMenuEnvironmentMachine);
+window.addEventListener("pagehide", () => {
+  persistRuntimeSession();
+  stopMenuEnvironmentMachine();
+});
 document.addEventListener("pointermove", onPointerMove, { capture: true });
 sceneCanvas.addEventListener("pointerdown", onPointerDown);
 sceneCanvas.addEventListener("wheel", onWheel, { passive: false });
@@ -695,7 +713,7 @@ function initializeNebulumRuntime() {
   musicPlayerController.init();
   musicPlayerController.setMasterVolume(audioSettings.masterVolume);
   musicPlayerController.ensureSystemPosition();
-  musicPlayerController.play();
+  musicPlayerController.resumeInitialPlayback();
   buildSky(createRandom(`${SEED}:sky`));
   buildLocalSpaceStars(createRandom(`${SEED}:local-space`));
   buildLinks(links);
@@ -714,7 +732,7 @@ function initStartMenu() {
 
   document.body.classList.add("start-menu-open");
   menuSeedInput.value = MENU_DEFAULT_SEED;
-  shouldStartGameAfterInit = consumeStartAfterSeedFlag();
+  initRuntimeStartupState();
 
   menuNewGame.addEventListener("click", () => {
     resetNewGameDialog();
@@ -2935,11 +2953,11 @@ function openEditorFromMenu() {
   startGameFromMenu({ editorMode: true });
 }
 
-function startGameWithSeed(nextSeed) {
+function startGameWithSeed(nextSeed, gameState = null) {
   stopMenuEnvironmentMachine();
   if (nextSeed === SEED) {
     seedInput.value = nextSeed;
-    startGameFromMenu({ editorMode: false });
+    startGameFromMenu({ editorMode: false, gameState });
     return;
   }
 
@@ -2947,7 +2965,7 @@ function startGameWithSeed(nextSeed) {
   const url = new URL(window.location.href);
   url.searchParams.set("seed", nextSeed);
   url.searchParams.delete("multiplier");
-  rememberStartAfterSeed(nextSeed);
+  rememberStartAfterSeed(nextSeed, gameState);
   window.location.href = url.toString();
 }
 
@@ -2959,20 +2977,223 @@ function disposeAudioMixerForNavigation() {
   activeUiHoverSoundElement = null;
 }
 
-function rememberStartAfterSeed(seed) {
+function rememberStartAfterSeed(seed, gameState = null) {
   try {
     sessionStorage.setItem(START_AFTER_SEED_STORAGE_KEY, seed);
+    sessionStorage.removeItem(START_AFTER_RUNTIME_SESSION_STORAGE_KEY);
+    if (gameState) {
+      sessionStorage.setItem(START_AFTER_SAVE_STATE_STORAGE_KEY, JSON.stringify(normalizeGameState(gameState)));
+    } else {
+      sessionStorage.removeItem(START_AFTER_SAVE_STATE_STORAGE_KEY);
+    }
   } catch {}
 }
 
 function consumeStartAfterSeedFlag() {
   try {
     const pendingSeed = sessionStorage.getItem(START_AFTER_SEED_STORAGE_KEY);
+    const pendingStateRaw = sessionStorage.getItem(START_AFTER_SAVE_STATE_STORAGE_KEY);
     sessionStorage.removeItem(START_AFTER_SEED_STORAGE_KEY);
+    sessionStorage.removeItem(START_AFTER_SAVE_STATE_STORAGE_KEY);
+    if (pendingSeed === SEED && pendingStateRaw) {
+      pendingStartGameState = normalizeGameState(JSON.parse(pendingStateRaw));
+    }
     return pendingSeed === SEED;
   } catch {
+    pendingStartGameState = null;
     return false;
   }
+}
+
+function initRuntimeStartupState() {
+  const shouldStartAfterSeed = consumeStartAfterSeedFlag();
+  const runtimeSession = consumePendingRuntimeSession();
+  if (shouldStartAfterSeed) {
+    if (shouldResumeRuntimeSession(runtimeSession)) {
+      pendingRuntimeSession = runtimeSession;
+      pendingStartGameState = normalizeGameState(runtimeSession.gameState);
+    }
+    shouldStartGameAfterInit = true;
+    return;
+  }
+
+  const storedRuntimeSession = runtimeSession ?? readRuntimeSession();
+  if (!shouldResumeRuntimeSession(storedRuntimeSession)) {
+    persistRuntimeSession("menu");
+    return;
+  }
+
+  if (storedRuntimeSession.seed !== SEED) {
+    rememberStartAfterSeed(storedRuntimeSession.seed, storedRuntimeSession.gameState);
+    rememberPendingRuntimeSession(storedRuntimeSession);
+    redirectToSeed(storedRuntimeSession.seed);
+    return;
+  }
+
+  pendingRuntimeSession = storedRuntimeSession;
+  pendingStartGameState = normalizeGameState(storedRuntimeSession.gameState);
+  shouldStartGameAfterInit = true;
+}
+
+function shouldResumeRuntimeSession(session) {
+  return Boolean(
+    session &&
+    session.view !== "menu" &&
+    session.seed,
+  );
+}
+
+function redirectToSeed(seed) {
+  isRuntimeSessionRedirecting = true;
+  disposeAudioMixerForNavigation();
+  const url = new URL(window.location.href);
+  url.searchParams.set("seed", seed);
+  url.searchParams.delete("multiplier");
+  window.location.href = url.toString();
+}
+
+function rememberPendingRuntimeSession(session) {
+  try {
+    sessionStorage.setItem(
+      START_AFTER_RUNTIME_SESSION_STORAGE_KEY,
+      JSON.stringify(normalizeRuntimeSession(session)),
+    );
+  } catch {}
+}
+
+function consumePendingRuntimeSession() {
+  try {
+    const raw = sessionStorage.getItem(START_AFTER_RUNTIME_SESSION_STORAGE_KEY);
+    sessionStorage.removeItem(START_AFTER_RUNTIME_SESSION_STORAGE_KEY);
+    return normalizeRuntimeSession(JSON.parse(raw || "null"));
+  } catch {
+    return null;
+  }
+}
+
+function readRuntimeSession() {
+  try {
+    return normalizeRuntimeSession(JSON.parse(localStorage.getItem(RUNTIME_SESSION_STORAGE_KEY) || "null"));
+  } catch {
+    return null;
+  }
+}
+
+function writeRuntimeSession(session) {
+  try {
+    localStorage.setItem(RUNTIME_SESSION_STORAGE_KEY, JSON.stringify(normalizeRuntimeSession(session)));
+  } catch {}
+}
+
+function normalizeRuntimeSession(session) {
+  if (!session || typeof session !== "object") {
+    return null;
+  }
+
+  const seed = String(session.seed ?? "").trim();
+  if (!seed) {
+    return null;
+  }
+
+  const view = normalizeRuntimeView(session.view);
+  const gameState = normalizeGameState(session.gameState ?? session.state);
+  return {
+    version: 1,
+    seed,
+    view,
+    editorMode: session.editorMode === true,
+    systemId: normalizeRuntimeNullableString(session.systemId),
+    planetKey: normalizeRuntimeNullableString(session.planetKey),
+    detailKey: normalizeRuntimeNullableString(session.detailKey),
+    gameState,
+    turn: gameState.turn,
+    playerId: gameState.playerId,
+    updatedAt: String(session.updatedAt ?? new Date().toISOString()),
+  };
+}
+
+function normalizeRuntimeView(view) {
+  const value = String(view ?? "menu");
+  return ["menu", "editor", "starmap", "system", "planet", "detail"].includes(value)
+    ? value
+    : "menu";
+}
+
+function normalizeRuntimeNullableString(value) {
+  return value === null || value === undefined
+    ? null
+    : String(value);
+}
+
+function persistRuntimeSession(viewOverride = null) {
+  if (isRuntimeSessionRedirecting) {
+    return;
+  }
+
+  const session = createRuntimeSessionSnapshot(viewOverride);
+  if (session) {
+    writeRuntimeSession(session);
+  }
+}
+
+function createRuntimeSessionSnapshot(viewOverride = null) {
+  const view = normalizeRuntimeView(viewOverride ?? getCurrentRuntimeView());
+  const gameState = isGameRuntimeReady
+    ? serializeCurrentGameState()
+    : normalizeGameState(currentGameState);
+  const activeNode = systemScreenController?.state?.activeNode ?? null;
+  const activePlanet = getActiveRuntimePlanet();
+  const activeDetail = activeObjectDetail ?? objectDetail3D?.hexGrid?.detail ?? null;
+  const systemId = view === "menu"
+    ? null
+    : normalizeRuntimeNullableString(
+      activeNode?.id ?? activePlanet?.systemId ?? activeDetail?.systemId,
+    );
+
+  return {
+    version: 1,
+    seed: SEED,
+    view,
+    editorMode: isEditorMode,
+    systemId,
+    planetKey: view === "planet" || view === "detail"
+      ? getRuntimeObjectKey(activePlanet)
+      : null,
+    detailKey: view === "detail"
+      ? getRuntimeObjectKey(activeDetail)
+      : null,
+    gameState,
+    turn: gameState.turn,
+    playerId: gameState.playerId,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function getCurrentRuntimeView() {
+  if (isStartMenuOpen || !isGameRuntimeReady) {
+    return "menu";
+  }
+  if (isObjectDetailOpen) {
+    return "detail";
+  }
+  if (planetScreenController?.isOpen?.()) {
+    return "planet";
+  }
+  if (systemScreenController?.isOpen?.()) {
+    return "system";
+  }
+  return isEditorMode ? "editor" : "starmap";
+}
+
+function getActiveRuntimePlanet() {
+  return objectDetailOrbitPlanet
+    ?? planetScreenController?.state?.activePlanet
+    ?? openPlanetData
+    ?? null;
+}
+
+function getRuntimeObjectKey(object) {
+  return getObjectDetailStateKey(object) || null;
 }
 
 function playMenuMusic() {
@@ -3027,9 +3248,13 @@ async function returnToMainMenu() {
   isReturningToMainMenu = true;
   closeGameDialogs();
   stopAnimationLoop();
+  persistRuntimeSession("menu");
+  isRuntimeSessionRedirecting = true;
   await musicPlayerController?.fadeOutStop(650);
   try {
     sessionStorage.removeItem(START_AFTER_SEED_STORAGE_KEY);
+    sessionStorage.removeItem(START_AFTER_SAVE_STATE_STORAGE_KEY);
+    sessionStorage.removeItem(START_AFTER_RUNTIME_SESSION_STORAGE_KEY);
   } catch {}
 
   const url = new URL(window.location.href);
@@ -3038,12 +3263,16 @@ async function returnToMainMenu() {
   window.location.href = url.toString();
 }
 
-function startGameFromMenu({ editorMode = false } = {}) {
+function startGameFromMenu({ editorMode = false, gameState = null } = {}) {
   if (!isStartMenuOpen) {
     return;
   }
 
-  isEditorMode = editorMode;
+  const runtimeSessionToRestore = pendingRuntimeSession;
+  pendingRuntimeSession = null;
+  isEditorMode = runtimeSessionToRestore?.editorMode ?? editorMode;
+  currentGameState = normalizeGameState(gameState ?? pendingStartGameState ?? runtimeSessionToRestore?.gameState);
+  pendingStartGameState = null;
   closeMenuDialogs();
   setMenuStatus("STARTING");
   fadeOutMenuMusic();
@@ -3058,8 +3287,164 @@ function startGameFromMenu({ editorMode = false } = {}) {
   startMenu.setAttribute("aria-hidden", "true");
   initializeNebulumRuntime();
   lastFrameTime = performance.now();
-  renderStarmapFrame();
+  if (runtimeSessionToRestore) {
+    restoreRuntimeSessionView(runtimeSessionToRestore).catch((error) => {
+      console.error("Runtime session restore failed", error);
+      renderStarmapFrame();
+      persistRuntimeSession(isEditorMode ? "editor" : "starmap");
+    });
+  } else {
+    renderStarmapFrame();
+    persistRuntimeSession(isEditorMode ? "editor" : "starmap");
+  }
   startAnimationLoop();
+}
+
+async function restoreRuntimeSessionView(session) {
+  const normalized = normalizeRuntimeSession(session);
+  if (!normalized) {
+    renderStarmapFrame();
+    persistRuntimeSession(isEditorMode ? "editor" : "starmap");
+    return;
+  }
+
+  if (normalized.view === "editor" || normalized.view === "starmap") {
+    renderStarmapFrame();
+    persistRuntimeSession(normalized.view);
+    return;
+  }
+
+  const activeNode = getRuntimeNodeById(normalized.systemId);
+  if (!activeNode) {
+    renderStarmapFrame();
+    persistRuntimeSession(isEditorMode ? "editor" : "starmap");
+    return;
+  }
+
+  const restoresNestedScreen = normalized.view === "planet" || normalized.view === "detail";
+  restoreSystemScreen(activeNode);
+  if (restoresNestedScreen) {
+    starWindow.classList.add("planet-screen-open");
+  }
+  if (normalized.view === "system") {
+    persistRuntimeSession("system");
+    return;
+  }
+
+  const activePlanet = findRenderedSystemPlanetByKey(normalized.planetKey);
+  if (!activePlanet) {
+    starWindow.classList.remove("planet-screen-open");
+    persistRuntimeSession("system");
+    return;
+  }
+
+  await restorePlanetScreenFromSession(activePlanet, { persist: normalized.view === "planet" });
+  if (normalized.view === "planet") {
+    return;
+  }
+
+  restoreObjectDetailScreenFromSession(activePlanet, normalized.detailKey);
+}
+
+function getRuntimeNodeById(systemId) {
+  if (!systemId) {
+    return null;
+  }
+  return nodes.find((node) => String(node.id) === String(systemId)) ?? null;
+}
+
+function restoreSystemScreen(node) {
+  cancelPlanetEntryTransition();
+  closePlanetWindow();
+  planetScreenController.close();
+  closeObjectDetailScreen({ preserveTransitionOverlay: true });
+  openStarWindow(node);
+  updateSystemParallax(lastClientPointer.x, lastClientPointer.y, true);
+  snapPlanetScreenHidden();
+  snapObjectDetailHidden();
+}
+
+function findRenderedSystemPlanetByKey(planetKey) {
+  if (!planetKey) {
+    return null;
+  }
+
+  const hits = starSystem.querySelectorAll(".system-planet-hit");
+  for (const hit of hits) {
+    const planet = hit.userData?.planet;
+    if (getRuntimeObjectKey(planet) === planetKey) {
+      return planet;
+    }
+  }
+  return null;
+}
+
+async function restorePlanetScreenFromSession(planet, { persist = true } = {}) {
+  try {
+    await loadPlanetScreenRenderer();
+  } catch (error) {
+    console.error("Planet screen module failed to load", error);
+  }
+
+  cancelPlanetEntryTransition();
+  closePlanetWindow();
+  planetScreen.style.removeProperty("opacity");
+  planetScreen.style.setProperty("transition", "none");
+  resetTransitionSurfaces();
+  planetScreenController.open(planet);
+  void planetScreen.offsetWidth;
+  requestAnimationFrame(() => {
+    planetScreen.style.removeProperty("transition");
+  });
+  planetScreenController.updateParallax(lastClientPointer.x, lastClientPointer.y);
+  if (persist) {
+    persistRuntimeSession("planet");
+  }
+}
+
+function restoreObjectDetailScreenFromSession(planet, detailKey) {
+  const detail = findRenderedPlanetDetailByKey(detailKey);
+  if (!detail) {
+    persistRuntimeSession("planet");
+    return;
+  }
+
+  objectDetailOrbitPlanet = planet;
+  activeObjectDetail = detail;
+  isObjectDetailOpen = true;
+  objectDetailOptions.light = true;
+  objectDetailOptions.clouds = true;
+  starWindow.classList.add("object-detail-open");
+  const detailToken = ++objectDetailToken;
+  cancelPlanetEntryTransition();
+  closePlanetWindow();
+  planetScreenController.close();
+  resetTransitionSurfaces();
+  objectDetailEntryOverlay.classList.remove("active", "leaving");
+  objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "0");
+  renderObjectDetailContent(detail);
+  objectDetailScreen.style.removeProperty("opacity");
+  objectDetailScreen.style.removeProperty("transition");
+  objectDetailScreen.classList.add("visible");
+  objectDetailScreen.setAttribute("aria-hidden", "false");
+  persistRuntimeSession("detail");
+  scheduleObjectDetailTextureUpgrade(detail, detailToken);
+}
+
+function findRenderedPlanetDetailByKey(detailKey) {
+  const hits = planetScreen.querySelectorAll(".planet-screen__object-hit");
+  let firstDetail = null;
+  for (const hit of hits) {
+    const detail = hit.userData?.detail;
+    if (!detail) {
+      continue;
+    }
+    firstDetail ??= detail;
+    if (detailKey && getRuntimeObjectKey(detail) === detailKey) {
+      return detail;
+    }
+  }
+  return detailKey ? null : firstDetail;
 }
 
 function openLoadGameDialog() {
@@ -3126,7 +3511,7 @@ function loadSelectedMenuSave() {
     return;
   }
 
-  startGameWithSeed(save.seed);
+  startGameWithSeed(save.seed, save.gameState);
 }
 
 function deleteSelectedMenuSave() {
@@ -3283,11 +3668,12 @@ function normalizeSave(save, index = 0) {
   const now = new Date().toISOString();
   return {
     id: String(save.id ?? createSaveId()),
-    version: Number(save.version ?? 1),
+    version: Number(save.version ?? 3),
     name,
     seed,
     createdAt: String(save.createdAt ?? save.updatedAt ?? now),
     updatedAt: String(save.updatedAt ?? now),
+    gameState: normalizeGameState(save.gameState ?? save.state),
   };
 }
 
@@ -3295,11 +3681,12 @@ function createCurrentGameSave(name, timestamp, previousSave = null) {
   const trimmedName = String(name ?? "").trim() || createDefaultSaveName(readMenuSaves());
   return {
     id: previousSave?.id ?? createSaveId(),
-    version: 1,
+    version: 3,
     name: trimmedName,
     seed: SEED,
     createdAt: previousSave?.createdAt ?? timestamp,
     updatedAt: timestamp,
+    gameState: serializeCurrentGameState(),
   };
 }
 
@@ -3314,6 +3701,46 @@ function createDefaultSaveName(saves) {
 
 function createSaveId() {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function createEmptyGameState() {
+  return {
+    turn: DEFAULT_TURN_NUMBER,
+    playerId: DEFAULT_PLAYER_ID,
+    objectDetails: {},
+  };
+}
+
+function normalizeGameState(gameState) {
+  const normalized = createEmptyGameState();
+  if (!gameState || typeof gameState !== "object") {
+    return normalized;
+  }
+
+  const turn = Number.parseInt(gameState.turn ?? gameState.turnNumber ?? DEFAULT_TURN_NUMBER, 10);
+  normalized.turn = Number.isFinite(turn) && turn >= 0
+    ? turn
+    : DEFAULT_TURN_NUMBER;
+  normalized.playerId = String(gameState.playerId ?? gameState.player ?? DEFAULT_PLAYER_ID).trim()
+    || DEFAULT_PLAYER_ID;
+
+  const objectDetails = gameState.objectDetails && typeof gameState.objectDetails === "object"
+    ? gameState.objectDetails
+    : {};
+  for (const [detailKey, detailState] of Object.entries(objectDetails)) {
+    const buildings = serializeObjectDetailBuildings(
+      normalizeObjectDetailBuildings(detailState?.buildings, detailState?.towns),
+    );
+    if (buildings.length > 0) {
+      normalized.objectDetails[detailKey] = { buildings };
+    }
+  }
+  return normalized;
+}
+
+function serializeCurrentGameState() {
+  syncActiveObjectDetailToGameState();
+  return normalizeGameState(currentGameState);
 }
 
 async function exitNebulum() {
@@ -3417,6 +3844,7 @@ function initPanel() {
     }
     if (event.key === "Escape" && planetScreenController.isOpen()) {
       planetScreenController.close();
+      persistRuntimeSession("system");
       return;
     }
     if (event.key === "Escape" && isPlanetWindowOpen) {
@@ -5064,6 +5492,7 @@ function openStarWindow(node) {
   renderSystemParticles(node);
   updateSystemGlow(window.innerWidth / 2, window.innerHeight / 2, 0, 0);
   preloadPlanetScreenRenderer();
+  persistRuntimeSession("system");
 }
 
 function closeStarWindow() {
@@ -5086,6 +5515,7 @@ function closeStarWindow() {
   systemStarLayer.replaceChildren();
   systemParticles.replaceChildren();
   pointer.set(10, 10);
+  persistRuntimeSession(isEditorMode ? "editor" : "starmap");
 }
 
 function disposeNebulumRuntime() {
@@ -5258,6 +5688,7 @@ async function returnToStarSystemFromPlanet() {
   preloadPlanetScreenRenderer();
   snapPlanetScreenHidden();
   await revealObjectDetailEntryOverlay(300);
+  persistRuntimeSession("system");
 }
 
 async function openObjectDetailFromPlanetView(detail, clientX = window.innerWidth / 2, clientY = window.innerHeight / 2) {
@@ -5266,6 +5697,7 @@ async function openObjectDetailFromPlanetView(detail, clientX = window.innerWidt
   }
 
   objectDetailOrbitPlanet = openPlanetData;
+  activeObjectDetail = detail;
   isObjectDetailOpen = true;
   objectDetailOptions.light = true;
   objectDetailOptions.clouds = true;
@@ -5325,6 +5757,7 @@ async function openObjectDetailFromPlanetView(detail, clientX = window.innerWidt
   }
 
   objectDetailEntryOverlay.classList.remove("active");
+  persistRuntimeSession("detail");
   scheduleObjectDetailTextureUpgrade(detail, detailToken);
 }
 
@@ -5386,6 +5819,7 @@ function scheduleObjectDetailTextureUpgrade(detail, detailToken) {
 }
 
 function renderObjectDetailContent(detail) {
+  activeObjectDetail = detail;
   const runtimeState = captureObjectDetailRuntimeState();
   disposeObjectDetail3D();
   objectDetailTexture.replaceChildren();
@@ -5394,6 +5828,7 @@ function renderObjectDetailContent(detail) {
   if (runtimeState) {
     detail.objectDetailRuntimeState = runtimeState;
   }
+  applySavedObjectDetailState(detail);
 
   if ((detail.kind === "PLANET" || detail.kind === "GAS GIANT" || detail.kind === "MOON") && detail.textureCanvas) {
     renderObjectDetailPlanetSurface(detail);
@@ -5421,6 +5856,73 @@ function captureObjectDetailRuntimeState() {
     cursorEffectMix: objectDetail3D.cursorEffectMix,
     cursorLightUpdatedAt: objectDetail3D.cursorLightUpdatedAt,
   };
+}
+
+function getObjectDetailStateKey(detail) {
+  if (!detail) {
+    return "";
+  }
+  return [
+    detail.systemId ?? "system",
+    detail.kind ?? "object",
+    detail.name ?? "unnamed",
+  ].map((part) => encodeURIComponent(String(part))).join(":");
+}
+
+function getLegacyObjectDetailStateKey(detail) {
+  if (!detail?.systemId) {
+    return "";
+  }
+  return [
+    "system",
+    detail.kind ?? "object",
+    detail.name ?? "unnamed",
+  ].map((part) => encodeURIComponent(String(part))).join(":");
+}
+
+function applySavedObjectDetailState(detail) {
+  const detailKey = getObjectDetailStateKey(detail);
+  const legacyDetailKey = getLegacyObjectDetailStateKey(detail);
+  const savedDetailState = currentGameState.objectDetails[detailKey]
+    ?? currentGameState.objectDetails[legacyDetailKey];
+  if (!savedDetailState) {
+    return;
+  }
+  if (!currentGameState.objectDetails[detailKey] && legacyDetailKey) {
+    currentGameState.objectDetails[detailKey] = savedDetailState;
+    delete currentGameState.objectDetails[legacyDetailKey];
+  }
+
+  const currentState = detail.objectDetailHexState ?? {};
+  detail.objectDetailHexState = {
+    ...currentState,
+    buildings: normalizeObjectDetailBuildings(savedDetailState.buildings),
+  };
+}
+
+function syncObjectDetailBuildingsToGameState(detail) {
+  const detailKey = getObjectDetailStateKey(detail);
+  if (!detailKey) {
+    return;
+  }
+
+  if (!currentGameState.objectDetails) {
+    currentGameState.objectDetails = {};
+  }
+  const buildings = serializeObjectDetailBuildings(detail.objectDetailHexState?.buildings);
+  if (buildings.length === 0) {
+    delete currentGameState.objectDetails[detailKey];
+    return;
+  }
+
+  currentGameState.objectDetails[detailKey] = { buildings };
+}
+
+function syncActiveObjectDetailToGameState() {
+  if (!objectDetail3D?.hexGrid?.detail) {
+    return;
+  }
+  syncObjectDetailBuildingsToGameState(objectDetail3D.hexGrid.detail);
 }
 
 function renderObjectDetailFrame(detail) {
@@ -5744,6 +6246,7 @@ function renderObjectDetailFlatHexGrid(detail) {
 function closeObjectDetailScreen({ preserveTransitionOverlay = false, keepSystemHidden = false } = {}) {
   isObjectDetailOpen = false;
   objectDetailToken += 1;
+  activeObjectDetail = null;
   if (!keepSystemHidden) {
     starWindow.classList.remove("object-detail-open");
   }
@@ -6467,12 +6970,17 @@ function getObjectDetailBuildMenuOptionAt(hexGrid, canvasX, canvasY) {
     return null;
   }
 
-  return getObjectDetailBuildMenuLayout(hex, easeOutCubic(state.menuProgress))
+  return getObjectDetailBuildMenuLayout(hexGrid, hex, easeOutCubic(state.menuProgress))
     .find((option) => Math.hypot(canvasX - option.x, canvasY - option.y) <= option.radius) ?? null;
 }
 
 function handleObjectDetailBuildMenuOptionClick(hexGrid, hex, option) {
-  if (option.id !== "town" || hexGrid.state.towns.has(hex.address)) {
+  if (option.id === "demolish") {
+    removeObjectDetailBuilding(hexGrid, hex);
+    return;
+  }
+
+  if (option.id !== "town" || getObjectDetailBuilding(hexGrid.state, hex.address)) {
     return;
   }
 
@@ -6480,8 +6988,24 @@ function handleObjectDetailBuildMenuOptionClick(hexGrid, hex, option) {
     return;
   }
 
-  hexGrid.state.towns.add(hex.address);
+  setObjectDetailBuilding(hexGrid, hex.address, createObjectDetailTownBuilding(hex.address));
   markObjectDetailCityLayerDirty(hexGrid);
+  syncObjectDetailBuildingsToGameState(hexGrid.detail);
+  persistRuntimeSession("detail");
+  closeObjectDetailBuildMenu(hexGrid);
+  redrawObjectDetailHexGrid(hexGrid);
+  renderObjectDetail3D();
+}
+
+function removeObjectDetailBuilding(hexGrid, hex) {
+  if (!getObjectDetailBuilding(hexGrid.state, hex.address)) {
+    return;
+  }
+
+  deleteObjectDetailBuilding(hexGrid, hex.address);
+  markObjectDetailCityLayerDirty(hexGrid);
+  syncObjectDetailBuildingsToGameState(hexGrid.detail);
+  persistRuntimeSession("detail");
   closeObjectDetailBuildMenu(hexGrid);
   redrawObjectDetailHexGrid(hexGrid);
   renderObjectDetail3D();
@@ -7088,7 +7612,8 @@ function isObjectDetailHexFullyVisible(centerX, centerY, radius, halfHeight, wid
 
 function getObjectDetailHexState(detail) {
   const state = detail.objectDetailHexState ?? {};
-  state.towns = state.towns instanceof Set ? state.towns : new Set(state.towns ?? []);
+  state.buildings = normalizeObjectDetailBuildings(state.buildings, state.towns);
+  state.towns = getObjectDetailTownAddressSet(state.buildings);
   state.waterRatios = state.waterRatios instanceof Map ? state.waterRatios : new Map();
   state.cityPlacements = normalizeObjectDetailCityPlacements(state.cityPlacements);
   state.hoverAddress = state.hoverAddress ?? null;
@@ -7099,6 +7624,106 @@ function getObjectDetailHexState(detail) {
   state.cityStage = normalizeObjectDetailCityStage(state.cityStage);
   detail.objectDetailHexState = state;
   return state;
+}
+
+function normalizeObjectDetailBuildings(buildings, legacyTowns = null) {
+  const normalized = new Map();
+  const addBuilding = (address, building) => {
+    const normalizedBuilding = normalizeObjectDetailBuilding(address, building);
+    if (normalizedBuilding) {
+      normalized.set(normalizedBuilding.address, normalizedBuilding);
+    }
+  };
+
+  if (buildings instanceof Map) {
+    buildings.forEach((building, address) => addBuilding(address, building));
+  } else if (Array.isArray(buildings)) {
+    buildings.forEach((entry) => {
+      if (Array.isArray(entry)) {
+        addBuilding(entry[0], entry[1]);
+      } else {
+        addBuilding(entry?.address, entry);
+      }
+    });
+  } else if (buildings && typeof buildings === "object") {
+    Object.entries(buildings).forEach(([address, building]) => addBuilding(address, building));
+  }
+
+  const legacyTownAddresses = legacyTowns instanceof Set
+    ? Array.from(legacyTowns)
+    : Array.isArray(legacyTowns)
+      ? legacyTowns
+      : [];
+  legacyTownAddresses.forEach((address) => {
+    if (!normalized.has(address)) {
+      normalized.set(address, createObjectDetailTownBuilding(address));
+    }
+  });
+
+  return normalized;
+}
+
+function normalizeObjectDetailBuilding(address, building) {
+  const normalizedAddress = String(building?.address ?? address ?? "").trim();
+  if (!normalizedAddress) {
+    return null;
+  }
+
+  const type = String(building?.type ?? "town").trim().toLowerCase();
+  if (type === "town") {
+    return {
+      address: normalizedAddress,
+      type: "town",
+      name: String(building?.name ?? "New Town"),
+      population: Math.max(0, Math.floor(Number(building?.population ?? 0))),
+    };
+  }
+
+  return {
+    address: normalizedAddress,
+    type,
+  };
+}
+
+function serializeObjectDetailBuildings(buildings) {
+  return Array.from(normalizeObjectDetailBuildings(buildings).values())
+    .map((building) => ({ ...building }));
+}
+
+function getObjectDetailTownAddressSet(buildings) {
+  return new Set(
+    Array.from(buildings.values())
+      .filter((building) => building.type === "town")
+      .map((building) => building.address),
+  );
+}
+
+function getObjectDetailBuilding(state, address) {
+  return state.buildings instanceof Map ? state.buildings.get(address) ?? null : null;
+}
+
+function createObjectDetailTownBuilding(address) {
+  return {
+    address,
+    type: "town",
+    name: "New Town",
+    population: 0,
+  };
+}
+
+function setObjectDetailBuilding(hexGrid, address, building) {
+  const normalized = normalizeObjectDetailBuilding(address, building);
+  if (!normalized) {
+    return;
+  }
+
+  hexGrid.state.buildings.set(normalized.address, normalized);
+  hexGrid.state.towns = getObjectDetailTownAddressSet(hexGrid.state.buildings);
+}
+
+function deleteObjectDetailBuilding(hexGrid, address) {
+  hexGrid.state.buildings.delete(address);
+  hexGrid.state.towns = getObjectDetailTownAddressSet(hexGrid.state.buildings);
 }
 
 function resetObjectDetailHexWaterCache(detail, state) {
@@ -7158,7 +7783,7 @@ function redrawObjectDetailCityLayer(hexGrid) {
   const townDrawItems = [];
   let hasNightLights = false;
   for (const hex of hexes) {
-    if (state.towns.has(hex.address)) {
+    if (getObjectDetailBuilding(state, hex.address)?.type === "town") {
       const drawData = getObjectDetailTownDrawData(hex, hexGrid);
       if (drawData) {
         townDrawItems.push({ hex, drawData });
@@ -7214,22 +7839,24 @@ function drawObjectDetailBuildMenu(context, hexGrid) {
     return;
   }
 
-  const isBlocked = getObjectDetailHexWaterRatio(hexGrid, hex) > OBJECT_DETAIL_HEX_WATER_LIMIT;
+  const hasBuilding = Boolean(getObjectDetailBuilding(state, hex.address));
+  const isBlocked = !hasBuilding && getObjectDetailHexWaterRatio(hexGrid, hex) > OBJECT_DETAIL_HEX_WATER_LIMIT;
   const easedProgress = easeOutCubic(progress);
-  for (const option of getObjectDetailBuildMenuLayout(hex, easedProgress)) {
+  for (const option of getObjectDetailBuildMenuLayout(hexGrid, hex, easedProgress)) {
     drawObjectDetailBuildMenuOption(context, option, {
       alpha: progress,
       blocked: isBlocked,
-      clickable: option.id === "town" && !isBlocked && !state.towns.has(hex.address),
+      clickable: isObjectDetailMenuOptionClickable(hexGrid, hex, option, isBlocked),
     });
   }
 }
 
-function getObjectDetailBuildMenuLayout(hex, progress = 1) {
+function getObjectDetailBuildMenuLayout(hexGrid, hex, progress = 1) {
+  const options = getObjectDetailRadialMenuOptions(hexGrid, hex);
   const distance = hex.radius * 0.78 * progress;
   const radius = Math.max(9, Math.min(15, hex.radius * 0.18));
-  return OBJECT_DETAIL_BUILD_MENU_OPTIONS.map((option, index) => {
-    const angle = -Math.PI / 2 + index * (Math.PI * 2 / OBJECT_DETAIL_BUILD_MENU_OPTIONS.length);
+  return options.map((option, index) => {
+    const angle = -Math.PI / 2 + index * (Math.PI * 2 / options.length);
     return {
       ...option,
       x: hex.px + Math.cos(angle) * distance,
@@ -7237,6 +7864,23 @@ function getObjectDetailBuildMenuLayout(hex, progress = 1) {
       radius,
     };
   });
+}
+
+function getObjectDetailRadialMenuOptions(hexGrid, hex) {
+  return getObjectDetailBuilding(hexGrid.state, hex.address)
+    ? OBJECT_DETAIL_DEMOLISH_MENU_OPTIONS
+    : OBJECT_DETAIL_BUILD_MENU_OPTIONS;
+}
+
+function isObjectDetailMenuOptionClickable(hexGrid, hex, option, isBlocked) {
+  const hasBuilding = Boolean(getObjectDetailBuilding(hexGrid.state, hex.address));
+  if (option.id === "demolish") {
+    return hasBuilding;
+  }
+  if (isBlocked || hasBuilding) {
+    return false;
+  }
+  return option.id === "town";
 }
 
 function drawObjectDetailBuildMenuOption(context, option, { alpha, blocked, clickable }) {
@@ -7303,10 +7947,11 @@ function getObjectDetailTownDrawData(hex, hexGrid) {
 function drawObjectDetailTownFoundation(context, hex, hexGrid, drawData) {
   const { cityHex, cityStage, maxGrowthDistance, sampleData, unit } = drawData;
   const margin = OBJECT_DETAIL_CITY_FOUNDATION_MARGIN_CELLS * unit;
-  const minX = Math.floor((hex.px - hex.radius - margin) / unit) * unit;
-  const maxX = Math.ceil((hex.px + hex.radius + margin) / unit) * unit;
-  const minY = Math.floor((hex.py - hex.halfHeight - margin) / unit) * unit;
-  const maxY = Math.ceil((hex.py + hex.halfHeight + margin) / unit) * unit;
+  const foundationRadius = hex.radius * 1.72 + margin;
+  const minX = Math.floor((cityHex.px - foundationRadius) / unit) * unit;
+  const maxX = Math.ceil((cityHex.px + foundationRadius) / unit) * unit;
+  const minY = Math.floor((cityHex.py - foundationRadius) / unit) * unit;
+  const maxY = Math.ceil((cityHex.py + foundationRadius) / unit) * unit;
 
   context.save();
   context.shadowBlur = 0;
@@ -8117,6 +8762,7 @@ async function returnToOrbitFromObjectDetail() {
   resetTransitionSurfaces();
   snapObjectDetailHidden();
   await revealObjectDetailEntryOverlay(260);
+  persistRuntimeSession("planet");
 }
 
 async function returnToStarSystemFromObjectDetail() {
@@ -8146,6 +8792,7 @@ async function returnToStarSystemFromObjectDetail() {
   snapObjectDetailHidden();
   snapPlanetScreenHidden();
   await revealObjectDetailEntryOverlay(260);
+  persistRuntimeSession("system");
 }
 
 async function runPlanetScreenZoomOutTransition({ originX, originY }) {
@@ -9000,6 +9647,7 @@ async function startPlanetEntryTransition(planet, clientX, clientY) {
   starWindow.style.setProperty("--planet-entry-scale", "1");
   isPlanetEntryTransitioning = false;
   planetScreenController.updateParallax(lastClientPointer.x, lastClientPointer.y);
+  persistRuntimeSession("planet");
 }
 
 function setPlanetEntryOverlayContent(planet) {
@@ -9680,6 +10328,7 @@ function startSystemJumpTransition(targetNode, directionX, directionY, gate, cli
       systemScreenController.setTransitioning(false);
       updateSystemParallax(clientX, clientY);
       releaseSystemPointerLock();
+      persistRuntimeSession("system");
     };
 
     requestAnimationFrame(animateArrival);

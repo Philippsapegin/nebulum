@@ -710,6 +710,7 @@ function clipCanvasToMoonShape(context, size, shape) {
 
 function createPlanetScreenBodyDetail(planet, texture) {
   return {
+    systemId: planet.systemId,
     kind: planet.kind,
     name: planet.name,
     textureUrl: getPlanetScreenTextureUrl(texture),
@@ -756,6 +757,7 @@ function renderPlanetScreenObjectHit(root, { x, y, radius, depth, detail }) {
   hit.style.left = `${x - radius - 80}px`;
   hit.style.top = `${y - radius - 80}px`;
   hit.style.setProperty("--planet-screen-hit-depth", String(depth));
+  hit.userData = { detail };
   hit.addEventListener("click", (event) => {
     event.stopPropagation();
     openObjectDetail(detail, event.clientX, event.clientY);
@@ -811,6 +813,7 @@ function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, st
       moonElement.style.setProperty("--moon-texture-rotation", `${textureAngle.toFixed(4)}rad`);
     }
     const moonDetail = {
+      systemId: planet.systemId,
       kind: "MOON",
       name: moon.name,
       textureUrl: moonTexture.url,

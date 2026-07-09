@@ -1,5 +1,8 @@
 import * as THREE from "three";
 
+const MUSIC_PLAYER_STATE_STORAGE_KEY = "nebulum:music-player-state";
+const MUSIC_PLAYER_STATE_WRITE_INTERVAL_MS = 1000;
+
 export function createMusicPlayer({ tracks, canDragInSystem }) {
   const musicPrevButton = document.querySelector("#music-prev");
   const musicPlayButton = document.querySelector("#music-play");
@@ -22,6 +25,10 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
   let isDraggingMusicPlayer = false;
   let musicFadeFrame = null;
   let masterVolume = 1;
+  let desiredMusicPlaying = true;
+  let pendingRestoreTime = 0;
+  let isMusicPlayerInitialized = false;
+  let lastMusicStateWriteAt = 0;
   const musicPlayerDragOffset = new THREE.Vector2();
   const musicAudio = new Audio();
   musicAudio.preload = "metadata";
@@ -29,6 +36,17 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
   function init() {
     if (!musicTrackList || tracks.length === 0) {
       return;
+    }
+
+    const restoredState = readMusicPlayerState();
+    if (Number.isFinite(restoredState?.volume)) {
+      musicVolume.value = String(THREE.MathUtils.clamp(restoredState.volume, 0, 1));
+    }
+    musicMode = normalizeMusicMode(restoredState?.mode);
+    desiredMusicPlaying = restoredState?.isPlaying !== false;
+    pendingRestoreTime = normalizeMusicTime(restoredState?.currentTime);
+    if (restoredState?.position) {
+      systemMusicPlayerPosition = normalizeMusicPlayerPosition(restoredState.position);
     }
 
     tracks.forEach((file, index) => {
@@ -45,7 +63,11 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
 
     updateEffectiveMusicVolume();
     musicVolume.style.setProperty("--vol-frac", musicVolume.value);
-    setMusicTrack(0, false);
+    applyMusicModeUi();
+    setMusicTrack(restoredState?.trackIndex ?? 0, false, {
+      currentTime: pendingRestoreTime,
+      persist: false,
+    });
 
     musicPrevButton.addEventListener("click", () => playAdjacentTrack(-1));
     musicNextButton.addEventListener("click", () => playAdjacentTrack(1));
@@ -62,6 +84,7 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
     musicVolume.addEventListener("input", () => {
       updateEffectiveMusicVolume();
       musicVolume.style.setProperty("--vol-frac", musicVolume.value);
+      persistMusicPlayerState({ force: true });
     });
     musicTrackCurrent.addEventListener("pointerdown", (event) => {
       seekMusicFromTrackButton(event);
@@ -77,9 +100,17 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
 
     musicAudio.addEventListener("play", updateMusicPlayButton);
     musicAudio.addEventListener("pause", updateMusicPlayButton);
-    musicAudio.addEventListener("loadedmetadata", updateMusicProgress);
-    musicAudio.addEventListener("timeupdate", updateMusicProgress);
+    musicAudio.addEventListener("loadedmetadata", () => {
+      applyPendingRestoreTime();
+      updateMusicProgress();
+      persistMusicPlayerState();
+    });
+    musicAudio.addEventListener("timeupdate", () => {
+      updateMusicProgress();
+      persistMusicPlayerState();
+    });
     musicAudio.addEventListener("ended", handleMusicEnded);
+    window.addEventListener("pagehide", () => persistMusicPlayerState({ force: true }));
     document.addEventListener("pointerdown", (event) => {
       if (
         musicTrackList.hidden ||
@@ -92,10 +123,13 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
       }
       setMusicDropdownOpen(false);
     });
+    isMusicPlayerInitialized = true;
+    persistMusicPlayerState({ force: true });
   }
 
-  function setMusicTrack(index, shouldPlay) {
+  function setMusicTrack(index, shouldPlay, options = {}) {
     musicTrackIndex = THREE.MathUtils.euclideanModulo(index, tracks.length);
+    pendingRestoreTime = normalizeMusicTime(options.currentTime);
     const file = tracks[musicTrackIndex];
     musicAudio.src = `/Music/${encodeURIComponent(file)}`;
     musicTrackCurrent.textContent = getMusicTrackTitle(file);
@@ -103,27 +137,45 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
     musicTrackCurrent.style.setProperty("--music-progress", "0%");
 
     if (shouldPlay) {
-      musicAudio.play().catch(() => {});
+      play({ persist: false });
     }
 
     updateMusicPlayButton();
+    if (options.persist !== false) {
+      persistMusicPlayerState({ force: true });
+    }
   }
 
   function toggleMusicPlayback() {
     if (musicAudio.paused) {
       play();
     } else {
+      desiredMusicPlaying = false;
       musicAudio.pause();
+      persistMusicPlayerState({ force: true });
     }
   }
 
-  function play() {
+  function play({ persist = true } = {}) {
+    desiredMusicPlaying = true;
     if (musicFadeFrame !== null) {
       cancelAnimationFrame(musicFadeFrame);
       musicFadeFrame = null;
     }
     updateEffectiveMusicVolume();
-    return musicAudio.play().catch(() => {});
+    const playPromise = musicAudio.play().catch(() => {});
+    if (persist) {
+      persistMusicPlayerState({ force: true });
+    }
+    return playPromise;
+  }
+
+  function resumeInitialPlayback() {
+    if (!desiredMusicPlaying) {
+      updateMusicPlayButton();
+      return Promise.resolve();
+    }
+    return play({ persist: false });
   }
 
   function updateEffectiveMusicVolume() {
@@ -150,6 +202,7 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
     if (musicMode === "repeat") {
       musicAudio.currentTime = 0;
       musicAudio.play().catch(() => {});
+      persistMusicPlayerState({ force: true });
       return;
     }
 
@@ -176,6 +229,11 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
 
   function cycleMusicMode() {
     musicMode = musicMode === "order" ? "repeat" : musicMode === "repeat" ? "shuffle" : "order";
+    applyMusicModeUi();
+    persistMusicPlayerState({ force: true });
+  }
+
+  function applyMusicModeUi() {
     const icons = {
       order: "/Musplayer/order.svg",
       repeat: "/Musplayer/repeat.svg",
@@ -183,6 +241,10 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
     };
     musicModeIcon.src = icons[musicMode];
     musicModeButton.dataset.mode = musicMode;
+  }
+
+  function normalizeMusicMode(mode) {
+    return ["order", "repeat", "shuffle"].includes(mode) ? mode : "order";
   }
 
   function updateMusicPlayButton() {
@@ -287,7 +349,7 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
     window.addEventListener("pointercancel", onUp);
   }
 
-  function setSystemMusicPlayerPosition(left, top) {
+  function setSystemMusicPlayerPosition(left, top, { persist = true } = {}) {
     if (!musicPlayer) {
       return;
     }
@@ -299,6 +361,9 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
     systemMusicPlayerPosition = { left: clampedLeft, top: clampedTop };
     musicPlayer.style.setProperty("--system-player-left", `${clampedLeft}px`);
     musicPlayer.style.setProperty("--system-player-top", `${clampedTop}px`);
+    if (persist) {
+      persistMusicPlayerState();
+    }
   }
 
   function ensureSystemMusicPlayerPosition() {
@@ -313,7 +378,7 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
       return;
     }
 
-    setSystemMusicPlayerPosition(systemMusicPlayerPosition.left, systemMusicPlayerPosition.top);
+    setSystemMusicPlayerPosition(systemMusicPlayerPosition.left, systemMusicPlayerPosition.top, { persist: false });
   }
 
   function onMusicScrollbarPointerDown(event) {
@@ -365,6 +430,7 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
     const progress = THREE.MathUtils.clamp((event.clientX - rect.left) / rect.width, 0, 1);
     musicAudio.currentTime = progress * musicAudio.duration;
     musicTrackCurrent.style.setProperty("--music-progress", `${progress * 100}%`);
+    persistMusicPlayerState({ force: true });
   }
 
   function stop() {
@@ -411,6 +477,83 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
     });
   }
 
+  function readMusicPlayerState() {
+    try {
+      const state = JSON.parse(localStorage.getItem(MUSIC_PLAYER_STATE_STORAGE_KEY) || "null");
+      if (!state || typeof state !== "object") {
+        return null;
+      }
+      return {
+        trackIndex: Number.isFinite(Number(state.trackIndex))
+          ? THREE.MathUtils.euclideanModulo(Number(state.trackIndex), tracks.length)
+          : 0,
+        currentTime: normalizeMusicTime(state.currentTime),
+        mode: normalizeMusicMode(state.mode),
+        volume: Number(state.volume),
+        isPlaying: state.isPlaying !== false,
+        position: normalizeMusicPlayerPosition(state.position),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  function persistMusicPlayerState({ force = false } = {}) {
+    if (!isMusicPlayerInitialized && !force) {
+      return;
+    }
+
+    const now = performance.now();
+    if (!force && now - lastMusicStateWriteAt < MUSIC_PLAYER_STATE_WRITE_INTERVAL_MS) {
+      return;
+    }
+    lastMusicStateWriteAt = now;
+
+    try {
+      localStorage.setItem(MUSIC_PLAYER_STATE_STORAGE_KEY, JSON.stringify({
+        version: 1,
+        trackIndex: musicTrackIndex,
+        currentTime: normalizeMusicTime(musicAudio.currentTime || pendingRestoreTime),
+        mode: musicMode,
+        volume: THREE.MathUtils.clamp(Number(musicVolume.value), 0, 1),
+        isPlaying: desiredMusicPlaying,
+        position: systemMusicPlayerPosition,
+        updatedAt: new Date().toISOString(),
+      }));
+    } catch {}
+  }
+
+  function applyPendingRestoreTime() {
+    if (
+      pendingRestoreTime <= 0 ||
+      !Number.isFinite(musicAudio.duration) ||
+      musicAudio.duration <= 0
+    ) {
+      return;
+    }
+
+    musicAudio.currentTime = THREE.MathUtils.clamp(pendingRestoreTime, 0, Math.max(0, musicAudio.duration - 0.05));
+    pendingRestoreTime = 0;
+  }
+
+  function normalizeMusicTime(value) {
+    const time = Number(value);
+    return Number.isFinite(time) && time > 0 ? time : 0;
+  }
+
+  function normalizeMusicPlayerPosition(position) {
+    if (!position || typeof position !== "object") {
+      return null;
+    }
+
+    const left = Number(position.left);
+    const top = Number(position.top);
+    if (!Number.isFinite(left) || !Number.isFinite(top)) {
+      return null;
+    }
+    return { left, top };
+  }
+
   return {
     init,
     closeDropdown: () => setMusicDropdownOpen(false),
@@ -419,7 +562,9 @@ export function createMusicPlayer({ tracks, canDragInSystem }) {
     },
     ensureSystemPosition: ensureSystemMusicPlayerPosition,
     fadeOutStop,
+    persistState: () => persistMusicPlayerState({ force: true }),
     play,
+    resumeInitialPlayback,
     setMasterVolume,
     stop,
     updateScrollbar: updateMusicTrackScrollbar,
