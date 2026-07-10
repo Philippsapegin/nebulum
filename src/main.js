@@ -289,17 +289,20 @@ const NEW_GAME_GOVERNMENTS = {
   company: {
     id: "company",
     label: "COMPANY",
-    text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer vitae nibh at ipsum fermentum cursus. Sed luctus, neque at aliquet dignissim, sem erat cursus sem, vitae dictum lorem lectus id mi.",
+    image: "/pics/governments/COMPANY.png",
+    text: "A company provides a set of rules and confident management of resources between planets while preserving the autonomy of local administrations. This is the most common form of governance across the vast expanse of humanity.",
   },
   monarcy: {
     id: "monarcy",
     label: "MONARCY",
-    text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Proin auctor tellus non neque fermentum, vitae varius velit posuere. Suspendisse potenti. Integer sed arcu at erat blandit pretium.",
+    image: "/pics/governments/MONARCY.png",
+    text: "A monarchy is power. Your power. You can do anything as long as your people obey you. All your planets belong to you personally. Local currencies are your money. Every forest, ocean, mountain, gas giant, and star within your borders — all of it is yours. If you can manage to keep it.",
   },
   community: {
     id: "community",
     label: "COMMUNITY",
-    text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis posuere enim et ipsum posuere, vitae egestas massa pretium. Aliquam erat volutpat. Praesent eu libero vitae justo volutpat.",
+    image: "/pics/governments/COMMUNITY.png",
+    text: "This is anarchy. You are more of an administrator and a conduit for the will of the people. What kind of loyalty are we even talking about here? It is less a unified state and more a group of communities that have joined together simply to avoid being swept away by some stronger player. You will have to work with whatever the people are willing to give you.",
   },
 };
 const NEW_GAME_SCENARIOS = {
@@ -309,7 +312,6 @@ const NEW_GAME_SCENARIOS = {
     image: "/pics/scenarios/basic.png",
     text: "Welcome to the new Nebulum: empty and unexplored. Of course, the history of humanity is vast, and perhaps people have been here before at some point, but certainly not in the present day. All paths are open, and no one knows what awaits you in this constellation.\n\nYour fleet, your people, and the technologies you brought with you from wherever you came from into this new Nebulum are the only things you have. The first thing you must do is find a planet you can call home.\n\nComplete freedom. No one lays claim to this region of space except you and others like you: fleets of cosmic wanderers drifting through wormholes, hoping that one day they will look out upon their vast space empire.",
     maxFactions: (seed) => getBasicScenarioFactionLimit(seed),
-    canStart: true,
   },
   homeworld: {
     id: "homeworld",
@@ -317,7 +319,6 @@ const NEW_GAME_SCENARIOS = {
     image: "/pics/scenarios/homeworld.png",
     text: "You have lived here for a long time. Your home is what it is. The truth is, you never had the means to build a spaceport and reach the stars.\nAt last, you have succeeded.\nNow you can look up with pride at the tiny sparks of spacecraft above: the ships of your first fleet.\n\nYour native Nebulum... who else dwells here? Others like you, fragments of humanity forgotten on wretched planets? Or were some more fortunate? The time has come to find out. The time has come to call the entire Nebulum your home, not just one tiny point on the map.\n\nOr at least to try.",
     maxFactions: () => Infinity,
-    canStart: false,
   },
 };
 
@@ -3001,16 +3002,25 @@ function renderNewGameGovernment() {
   const government = NEW_GAME_GOVERNMENTS[selectedNewGameGovernmentId]
     ?? NEW_GAME_GOVERNMENTS[NEW_GAME_DEFAULT_GOVERNMENT_ID];
   menuGovernmentCurrent.textContent = government.label;
-  menuGovernmentImage.textContent = government.label;
+  if (government.image) {
+    menuGovernmentImage.textContent = "";
+    menuGovernmentImage.style.setProperty("--new-game-government-image", `url("${government.image}")`);
+    menuGovernmentImage.classList.add("new-game__government-image--filled");
+  } else {
+    menuGovernmentImage.textContent = government.label;
+    menuGovernmentImage.style.removeProperty("--new-game-government-image");
+    menuGovernmentImage.classList.remove("new-game__government-image--filled");
+  }
   menuGovernmentText.textContent = government.text;
 }
 
 function updateNewGameActions() {
   const scenario = NEW_GAME_SCENARIOS[selectedNewGameScenarioId] ?? NEW_GAME_SCENARIOS[NEW_GAME_BASIC_SCENARIO_ID];
   const isOnline = newGameSessionMode === NEW_GAME_MODE_ONLINE;
+  const canStart = isNewGameScenarioStartable(scenario);
   menuNewGameApply.hidden = !isOnline;
-  menuNewGameApply.disabled = !isOnline || !scenario.canStart || !isNewGameSetupDirty;
-  menuSeedConfirm.disabled = !scenario.canStart || (isOnline && (!newGameAppliedState || isNewGameSetupDirty));
+  menuNewGameApply.disabled = !isOnline || !canStart || !isNewGameSetupDirty;
+  menuSeedConfirm.disabled = !canStart || (isOnline && (!newGameAppliedState || isNewGameSetupDirty));
 }
 
 function markNewGameSetupDirty() {
@@ -3210,7 +3220,11 @@ function getNewGameSeed() {
 }
 
 function getNewGameScenarioMaxFactions(scenario, seed) {
-  return scenario.maxFactions(seed);
+  return typeof scenario.maxFactions === "function" ? scenario.maxFactions(seed) : Infinity;
+}
+
+function isNewGameScenarioStartable(scenario) {
+  return scenario?.canStart !== false;
 }
 
 function getBasicScenarioFactionLimit(seed) {
@@ -3234,7 +3248,7 @@ function parseFactionCount(value) {
 
 function confirmNewGameSeed() {
   const scenario = NEW_GAME_SCENARIOS[selectedNewGameScenarioId] ?? NEW_GAME_SCENARIOS[NEW_GAME_BASIC_SCENARIO_ID];
-  if (!scenario.canStart) {
+  if (!isNewGameScenarioStartable(scenario)) {
     return;
   }
 
@@ -3254,7 +3268,7 @@ function confirmNewGameSeed() {
 
 function applyOnlineNewGameSetup() {
   const scenario = NEW_GAME_SCENARIOS[selectedNewGameScenarioId] ?? NEW_GAME_SCENARIOS[NEW_GAME_BASIC_SCENARIO_ID];
-  if (newGameSessionMode !== NEW_GAME_MODE_ONLINE || !scenario.canStart) {
+  if (newGameSessionMode !== NEW_GAME_MODE_ONLINE || !isNewGameScenarioStartable(scenario)) {
     return;
   }
 
@@ -4349,7 +4363,7 @@ function normalizeGameState(gameState) {
     : {};
   for (const [detailKey, detailState] of Object.entries(objectDetails)) {
     const buildings = serializeObjectDetailBuildings(
-      normalizeObjectDetailBuildings(detailState?.buildings, detailState?.towns),
+      normalizeObjectDetailBuildings(detailState?.buildings, detailState?.towns, detailState?.cityStage),
     );
     if (buildings.length > 0) {
       normalized.objectDetails[detailKey] = { buildings };
@@ -6556,7 +6570,7 @@ function applySavedObjectDetailState(detail) {
   const currentState = detail.objectDetailHexState ?? {};
   detail.objectDetailHexState = {
     ...currentState,
-    buildings: normalizeObjectDetailBuildings(savedDetailState.buildings),
+    buildings: normalizeObjectDetailBuildings(savedDetailState.buildings, savedDetailState.towns, savedDetailState.cityStage),
   };
 }
 
@@ -6629,9 +6643,6 @@ function createObjectDetailOptionControls() {
     createObjectDetailOptionControl("LIGHT", "light"),
     createObjectDetailOptionControl("CLOUDS", "clouds"),
   );
-  if (objectDetail3D?.hexGrid) {
-    controls.append(createObjectDetailCityStageControl());
-  }
   return controls;
 }
 
@@ -6656,45 +6667,6 @@ function createObjectDetailOptionControl(labelText, optionKey) {
   return row;
 }
 
-function createObjectDetailCityStageControl() {
-  const row = document.createElement("label");
-  row.className = "object-detail-screen__city-stage";
-  row.addEventListener("pointerdown", (event) => event.stopPropagation());
-  row.addEventListener("pointermove", (event) => event.stopPropagation());
-  row.addEventListener("click", (event) => event.stopPropagation());
-
-  const label = document.createElement("span");
-  label.className = "object-detail-screen__city-stage-label";
-  label.textContent = "CITY STATE";
-
-  const value = document.createElement("span");
-  value.className = "object-detail-screen__city-stage-value";
-  value.textContent = String(getObjectDetailCityStage(objectDetail3D?.hexGrid));
-
-  const input = document.createElement("input");
-  input.className = "object-detail-screen__city-stage-range";
-  input.type = "range";
-  input.min = String(OBJECT_DETAIL_CITY_STAGE_MIN);
-  input.max = String(OBJECT_DETAIL_CITY_STAGE_MAX);
-  input.step = "1";
-  input.value = value.textContent;
-  input.setAttribute("aria-label", "City state");
-  const commitInput = (event) => {
-    event.stopPropagation();
-    setObjectDetailCityStage(Number(event.currentTarget.value));
-  };
-  input.addEventListener("input", commitInput);
-  input.addEventListener("change", commitInput);
-  input.addEventListener("pointerdown", (event) => {
-    event.stopPropagation();
-  });
-  input.addEventListener("pointermove", (event) => event.stopPropagation());
-  input.addEventListener("click", (event) => event.stopPropagation());
-
-  row.append(label, value, input);
-  return row;
-}
-
 function setObjectDetailOption(optionKey, isEnabled) {
   objectDetailOptions[optionKey] = Boolean(isEnabled);
   objectDetailTexture
@@ -6706,33 +6678,6 @@ function setObjectDetailOption(optionKey, isEnabled) {
     objectDetail3D.targetLightMix = objectDetailOptions.light ? 1 : 0;
     objectDetail3D.targetCloudMix = objectDetailOptions.clouds ? 1 : 0;
   }
-}
-
-function setObjectDetailCityStage(stage) {
-  const hexGrid = objectDetail3D?.hexGrid;
-  if (!hexGrid) {
-    return;
-  }
-
-  const nextStage = normalizeObjectDetailCityStage(stage);
-  if (hexGrid.state.cityStage === nextStage) {
-    return;
-  }
-
-  hexGrid.state.cityStage = nextStage;
-  markObjectDetailCityLayerDirty(hexGrid);
-  objectDetailTexture
-    .querySelectorAll(".object-detail-screen__city-stage-value")
-    .forEach((value) => {
-      value.textContent = String(nextStage);
-    });
-  objectDetailTexture
-    .querySelectorAll(".object-detail-screen__city-stage-range")
-    .forEach((input) => {
-      input.value = String(nextStage);
-    });
-  redrawObjectDetailHexGrid(hexGrid);
-  renderObjectDetail3D();
 }
 
 function createObjectDetailInfo(detail) {
@@ -8272,7 +8217,9 @@ function isObjectDetailHexFullyVisible(centerX, centerY, radius, halfHeight, wid
 
 function getObjectDetailHexState(detail) {
   const state = detail.objectDetailHexState ?? {};
-  state.buildings = normalizeObjectDetailBuildings(state.buildings, state.towns);
+  const legacyCityStage = state.cityStage;
+  state.buildings = normalizeObjectDetailBuildings(state.buildings, state.towns, legacyCityStage);
+  delete state.cityStage;
   state.towns = getObjectDetailTownAddressSet(state.buildings);
   state.waterRatios = state.waterRatios instanceof Map ? state.waterRatios : new Map();
   state.cityPlacements = normalizeObjectDetailCityPlacements(state.cityPlacements);
@@ -8281,15 +8228,14 @@ function getObjectDetailHexState(detail) {
   state.menuProgress = Number.isFinite(state.menuProgress) ? state.menuProgress : 0;
   state.menuTarget = Number.isFinite(state.menuTarget) ? state.menuTarget : 0;
   state.menuUpdatedAt = Number.isFinite(state.menuUpdatedAt) ? state.menuUpdatedAt : performance.now();
-  state.cityStage = normalizeObjectDetailCityStage(state.cityStage);
   detail.objectDetailHexState = state;
   return state;
 }
 
-function normalizeObjectDetailBuildings(buildings, legacyTowns = null) {
+function normalizeObjectDetailBuildings(buildings, legacyTowns = null, legacyStage = null) {
   const normalized = new Map();
   const addBuilding = (address, building) => {
-    const normalizedBuilding = normalizeObjectDetailBuilding(address, building);
+    const normalizedBuilding = normalizeObjectDetailBuilding(address, building, legacyStage);
     if (normalizedBuilding) {
       normalized.set(normalizedBuilding.address, normalizedBuilding);
     }
@@ -8316,14 +8262,14 @@ function normalizeObjectDetailBuildings(buildings, legacyTowns = null) {
       : [];
   legacyTownAddresses.forEach((address) => {
     if (!normalized.has(address)) {
-      normalized.set(address, createObjectDetailTownBuilding(address));
+      normalized.set(address, createObjectDetailTownBuilding(address, legacyStage));
     }
   });
 
   return normalized;
 }
 
-function normalizeObjectDetailBuilding(address, building) {
+function normalizeObjectDetailBuilding(address, building, fallbackStage = null) {
   const normalizedAddress = String(building?.address ?? address ?? "").trim();
   if (!normalizedAddress) {
     return null;
@@ -8336,12 +8282,25 @@ function normalizeObjectDetailBuilding(address, building) {
       type: "town",
       name: String(building?.name ?? "New Town"),
       population: Math.max(0, Math.floor(Number(building?.population ?? 0))),
+      state: normalizeObjectDetailBuildingState(building, fallbackStage),
     };
   }
 
   return {
     address: normalizedAddress,
     type,
+    state: normalizeObjectDetailBuildingState(building, fallbackStage),
+  };
+}
+
+function normalizeObjectDetailBuildingState(building, fallbackStage = null) {
+  const source = building?.state && typeof building.state === "object"
+    ? building.state
+    : building;
+  return {
+    stage: normalizeObjectDetailCityStage(
+      source?.stage ?? source?.cityStage ?? source?.state ?? fallbackStage ?? OBJECT_DETAIL_CITY_STAGE_MIN,
+    ),
   };
 }
 
@@ -8362,12 +8321,15 @@ function getObjectDetailBuilding(state, address) {
   return state.buildings instanceof Map ? state.buildings.get(address) ?? null : null;
 }
 
-function createObjectDetailTownBuilding(address) {
+function createObjectDetailTownBuilding(address, stage = OBJECT_DETAIL_CITY_STAGE_MIN) {
   return {
     address,
     type: "town",
     name: "New Town",
     population: 0,
+    state: {
+      stage: normalizeObjectDetailCityStage(stage),
+    },
   };
 }
 
@@ -8587,7 +8549,8 @@ function drawObjectDetailBuildMenuOption(context, option, { alpha, blocked, clic
 
 function getObjectDetailTownDrawData(hex, hexGrid) {
   const sampleData = getObjectDetailWaterSampleData(hexGrid);
-  const cityStage = getObjectDetailCityStage(hexGrid);
+  const building = getObjectDetailBuilding(hexGrid.state, hex.address);
+  const cityStage = getObjectDetailBuildingCityStage(building);
   const unit = Math.max(OBJECT_DETAIL_CITY_MIN_PIXEL_SIZE, Math.round(hex.radius / 26));
   const placement = getObjectDetailCityPlacementCenter(hexGrid, hex, sampleData);
   if (!placement) {
@@ -8826,8 +8789,8 @@ function drawObjectDetailCityNightLight(context, x, y, unit, cellX, cellY, mask)
   return true;
 }
 
-function getObjectDetailCityStage(hexGrid) {
-  return normalizeObjectDetailCityStage(hexGrid?.state?.cityStage);
+function getObjectDetailBuildingCityStage(building) {
+  return normalizeObjectDetailCityStage(building?.state?.stage ?? building?.stage);
 }
 
 function normalizeObjectDetailCityStage(stage) {
