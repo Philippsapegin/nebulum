@@ -312,6 +312,12 @@ const NEW_GAME_GOVERNMENTS = {
     image: "/pics/governments/COMMUNITY.png",
     text: "This is anarchy. You are more of an administrator and a conduit for the will of the people. What kind of loyalty are we even talking about here? It is less a unified state and more a group of communities that have joined together simply to avoid being swept away by some stronger player. You will have to work with whatever the people are willing to give you.",
   },
+  raiders: {
+    id: "raiders",
+    label: "RAIDERS",
+    image: "/pics/governments/RAIDERS.png",
+    text: "Raiders do not need planets. They need what planets produce. Well, technically, you do need one planet. Preferably somewhere your enemies will never find it.\n\nPillage is your way of life. Steal and take everything you can get your hands on. Find yourself a hidden corner of the galaxy, establish your own personal Tortuga, and live free!",
+  },
 };
 const NEW_GAME_SCENARIOS = {
   basic: {
