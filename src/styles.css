@@ -820,7 +820,7 @@ body.start-menu-open .hover-panel {
 .new-game__scenario-lower {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 12px;
+  gap: 7px;
   min-height: 0;
 }
 
@@ -852,7 +852,7 @@ body.start-menu-open .hover-panel {
 .new-game__config {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: 6px;
   align-items: center;
 }
 
@@ -874,17 +874,17 @@ body.start-menu-open .hover-panel {
 
 .new-game__your-faction {
   display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 22px;
   gap: 6px;
-}
-
-.new-game__your-faction-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 22px;
-  gap: 8px;
   align-items: center;
 }
 
+.new-game__your-faction-row {
+  display: contents;
+}
+
 .new-game__faction-name-input {
+  min-width: 0;
   text-transform: none;
 }
 
@@ -898,7 +898,8 @@ body.start-menu-open .hover-panel {
   display: grid;
   grid-template-columns: minmax(96px, 34%) minmax(0, 1fr);
   grid-template-rows: auto auto;
-  gap: 8px;
+  gap: 7px;
+  align-content: start;
   container-type: inline-size;
   min-height: 0;
 }
@@ -911,7 +912,7 @@ body.start-menu-open .hover-panel {
 .new-game__section-header {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
 }
 
@@ -987,35 +988,87 @@ body.start-menu-open .hover-panel {
 }
 
 .new-game__faction-card {
+  position: relative;
+  isolation: isolate;
   display: grid;
   align-content: start;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
   padding: 8px;
-  border: 1px solid color-mix(in srgb, var(--side-color, #ffffff) 54%, transparent);
+  border: 0;
   border-radius: 3px;
   background:
-    radial-gradient(circle at 18% 12%, color-mix(in srgb, var(--side-color, #ffffff) 18%, transparent), transparent 58%),
-    color-mix(in srgb, var(--side-color, #ffffff) 10%, rgba(255, 255, 255, 0.035));
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--side-color, #ffffff) 16%, transparent) 0%,
+      color-mix(in srgb, var(--side-color, #ffffff) 8%, transparent) 28%,
+      transparent 50%
+    ),
+    rgba(255, 255, 255, 0.035);
   color: rgba(255, 255, 255, 0.62);
   font: inherit;
   text-align: left;
   cursor: pointer;
   box-shadow:
-    inset 0 0 18px color-mix(in srgb, var(--side-color, #ffffff) 8%, transparent),
-    0 0 10px color-mix(in srgb, var(--side-color, #ffffff) 10%, transparent);
+    inset 0 0 14px color-mix(in srgb, var(--side-color, #ffffff) 5%, transparent),
+    0 0 8px color-mix(in srgb, var(--side-color, #ffffff) 6%, transparent);
+}
+
+.new-game__faction-card::before {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--side-color, #ffffff) 54%, transparent) 0%,
+      color-mix(in srgb, var(--side-color, #ffffff) 26%, transparent) 28%,
+      transparent 50%
+    );
+  content: "";
+  pointer-events: none;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.new-game__faction-card > * {
+  position: relative;
+  z-index: 1;
 }
 
 .new-game__faction-card:hover,
-.new-game__faction-card--player {
-  border-color: color-mix(in srgb, var(--side-color, #ffffff) 72%, white);
+.new-game__faction-card--selected {
   background:
-    radial-gradient(circle at 18% 12%, color-mix(in srgb, var(--side-color, #ffffff) 26%, transparent), transparent 58%),
-    color-mix(in srgb, var(--side-color, #ffffff) 16%, rgba(255, 255, 255, 0.045));
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--side-color, #ffffff) 24%, transparent) 0%,
+      color-mix(in srgb, var(--side-color, #ffffff) 12%, transparent) 28%,
+      transparent 50%
+    ),
+    rgba(255, 255, 255, 0.045);
   color: rgba(255, 255, 255, 0.86);
 }
 
+.new-game__faction-card:hover::before,
+.new-game__faction-card--selected::before {
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--side-color, #ffffff) 74%, transparent) 0%,
+      color-mix(in srgb, var(--side-color, #ffffff) 34%, transparent) 28%,
+      transparent 50%
+    );
+}
+
 .new-game__faction-card:focus-visible,
+.new-game__faction-card-name-input:focus-visible,
+.new-game__faction-government-current:focus-visible,
+.new-game__faction-government-item:focus-visible,
 .new-game__inline-button:focus-visible,
 .new-game__mode-toggle:focus-visible,
 .new-game__government-current:focus-visible,
@@ -1029,8 +1082,22 @@ body.start-menu-open .hover-panel {
   font-weight: 500;
   line-height: 1.2;
   text-overflow: ellipsis;
-  text-transform: uppercase;
   white-space: nowrap;
+}
+
+.new-game__faction-card-name-input {
+  width: 100%;
+  min-width: 0;
+  height: 13px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.94);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 13px;
+  outline: none;
 }
 
 .new-game__faction-card-meta {
@@ -1038,6 +1105,72 @@ body.start-menu-open .hover-panel {
   font-size: 9px;
   line-height: 1.25;
   text-transform: uppercase;
+}
+
+.new-game__faction-government {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.new-game__faction-government-current {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.36);
+  font: inherit;
+  font-size: 9px;
+  line-height: 1.25;
+  text-align: left;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.new-game__faction-government-current:hover,
+.new-game__faction-government-current[aria-expanded="true"] {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.new-game__faction-government-list {
+  position: absolute;
+  left: 0;
+  top: 15px;
+  z-index: 8;
+  display: grid;
+  width: min(112px, calc(100vw - 32px));
+  padding: 4px;
+  border-radius: 3px;
+  background: rgba(10, 10, 11, 0.58);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+}
+
+.new-game__faction-government-list[hidden] {
+  display: none;
+}
+
+.new-game__faction-government-item {
+  height: 20px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.56);
+  font: inherit;
+  font-size: 10px;
+  line-height: 20px;
+  text-align: left;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.new-game__faction-government-item:hover,
+.new-game__faction-government-item.active {
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .new-game__faction-card--overflow {

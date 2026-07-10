@@ -87,6 +87,8 @@ const UI_HOVER_SOUND_SELECTOR = [
   ".new-game__government-item",
   ".new-game__inline-button",
   ".new-game__faction-card",
+  ".new-game__faction-government-current",
+  ".new-game__faction-government-item",
   ".menu-save-list__item",
   ".game-menu-button",
   ".game-breadcrumb-button",
@@ -105,10 +107,15 @@ const UI_MENU_CLICK_SOUND_SELECTOR = [
   ".new-game__government-item",
   ".new-game__inline-button",
   ".new-game__faction-card",
+  ".new-game__faction-government-current",
+  ".new-game__faction-government-item",
   ".menu-save-list__item",
 ].join(",");
 const UI_SCROLL_CLICK_SOUND_SELECTOR = [
   ".music-track-item",
+  ".new-game__scenario-item",
+  ".new-game__government-item",
+  ".new-game__faction-government-item",
 ].join(",");
 const UI_BASE_CLICK_SOUND_SELECTOR = [
   ".new-game__scenario-current",
@@ -120,6 +127,7 @@ const UI_BASE_CLICK_SOUND_SELECTOR = [
   ".new-game__government-item",
   ".new-game__faction-color",
   ".new-game__faction-card",
+  ".new-game__faction-government-current",
 ].join(",");
 const MENU_ENVIRONMENT_AUDIO_CHANNEL = "menuEnvironment";
 const LEGACY_ENVIRONMENT_AUDIO_CHANNEL = "environment";
@@ -358,6 +366,8 @@ let newGameFactionCount = NEW_GAME_DEFAULT_FACTION_COUNT;
 let newGamePlayerFactionName = NEW_GAME_DEFAULT_PLAYER_FACTION_NAME;
 let newGamePlayerFactionColor = NEW_GAME_DEFAULT_PLAYER_FACTION_COLOR;
 let selectedNewGamePlayerSideIndex = 0;
+let selectedNewGameSideIndex = 0;
+let pendingNewGameFactionNameFocusIndex = null;
 let newGameSessionMode = NEW_GAME_MODE_HOTSEAT;
 let selectedNewGameGovernmentId = NEW_GAME_DEFAULT_GOVERNMENT_ID;
 let newGameAppliedState = null;
@@ -2904,6 +2914,8 @@ function resetNewGameDialog() {
   newGamePlayerFactionName = NEW_GAME_DEFAULT_PLAYER_FACTION_NAME;
   newGamePlayerFactionColor = NEW_GAME_DEFAULT_PLAYER_FACTION_COLOR;
   selectedNewGamePlayerSideIndex = 0;
+  selectedNewGameSideIndex = 0;
+  pendingNewGameFactionNameFocusIndex = null;
   newGameSessionMode = NEW_GAME_MODE_HOTSEAT;
   selectedNewGameGovernmentId = NEW_GAME_DEFAULT_GOVERNMENT_ID;
   newGameAppliedState = null;
@@ -2969,6 +2981,7 @@ function renderNewGameDialog() {
   newGameFactionCount = getClampedNewGameFactionCount(newGameFactionCount, maxFactions);
   syncNewGameSideConfigs(newGameFactionCount, seed);
   selectedNewGamePlayerSideIndex = THREE.MathUtils.clamp(selectedNewGamePlayerSideIndex, 0, Math.max(0, newGameFactionCount - 1));
+  selectedNewGameSideIndex = THREE.MathUtils.clamp(selectedNewGameSideIndex, 0, Math.max(0, newGameFactionCount - 1));
 
   menuScenarioCurrent.textContent = scenario.label;
   menuScenarioImage.src = scenario.image;
@@ -3111,23 +3124,45 @@ function renderNewGameFactionGrid(factionCount) {
   const visibleCount = Math.min(factionCount, NEW_GAME_FACTION_RENDER_LIMIT);
   for (let index = 0; index < visibleCount; index += 1) {
     const side = getNewGameRenderedSide(index);
-    const card = document.createElement("button");
+    const isSelected = index === selectedNewGameSideIndex;
+    const isPlayer = index === selectedNewGamePlayerSideIndex;
+    const card = document.createElement("div");
     card.className = "new-game__faction-card";
-    card.classList.toggle("new-game__faction-card--player", index === selectedNewGamePlayerSideIndex);
+    card.classList.toggle("new-game__faction-card--player", isPlayer);
+    card.classList.toggle("new-game__faction-card--selected", isSelected);
     card.style.setProperty("--side-color", side.color);
-    card.type = "button";
-    const title = document.createElement("span");
-    title.className = "new-game__faction-card-title";
-    title.textContent = side.name;
-    const meta = document.createElement("span");
-    meta.className = "new-game__faction-card-meta";
-    meta.textContent = index === selectedNewGamePlayerSideIndex ? "YOUR FACTION" : "CONFIG PENDING";
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-pressed", String(isSelected));
+    const title = isSelected
+      ? createNewGameFactionNameInput(index, side.name)
+      : createNewGameFactionTitle(side.name);
+    const meta = createNewGameFactionGovernmentControl(index, side.government, { isPlayer, isSelected });
     card.append(title, meta);
-    card.addEventListener("click", () => {
-      selectedNewGamePlayerSideIndex = index;
-      markNewGameSetupDirty();
+    const selectCard = () => {
+      selectedNewGameSideIndex = index;
+      pendingNewGameFactionNameFocusIndex = index;
       renderNewGameFactionGrid(newGameFactionCount);
-      updateNewGameActions();
+    };
+    card.addEventListener("pointerdown", (event) => {
+      if (isNewGameFactionInteractiveTarget(event.target)) {
+        return;
+      }
+      event.preventDefault();
+      selectCard();
+    });
+    card.addEventListener("click", (event) => {
+      if (isNewGameFactionInteractiveTarget(event.target)) {
+        return;
+      }
+      selectCard();
+    });
+    card.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      selectCard();
     });
     menuFactionGrid.append(card);
   }
@@ -3140,19 +3175,178 @@ function renderNewGameFactionGrid(factionCount) {
   }
 }
 
+function isNewGameFactionInteractiveTarget(target) {
+  return target instanceof Element
+    && Boolean(target.closest(".new-game__faction-card-name-input, .new-game__faction-government"));
+}
+
+function createNewGameFactionTitle(name) {
+  const title = document.createElement("span");
+  title.className = "new-game__faction-card-title";
+  title.textContent = name;
+  return title;
+}
+
+function createNewGameFactionNameInput(index, name) {
+  const input = document.createElement("input");
+  input.className = "new-game__faction-card-name-input";
+  input.type = "text";
+  input.value = name;
+  input.autocomplete = "off";
+  input.spellcheck = false;
+  input.setAttribute("aria-label", "Faction name");
+  input.addEventListener("click", (event) => event.stopPropagation());
+  input.addEventListener("pointerdown", (event) => event.stopPropagation());
+  input.addEventListener("keydown", (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter") {
+      input.blur();
+    }
+  });
+  input.addEventListener("input", () => {
+    setNewGameSideName(index, input.value);
+    markNewGameSetupDirty();
+    updateNewGameActions();
+  });
+  input.addEventListener("blur", () => {
+    renderNewGameFactionGrid(newGameFactionCount);
+  });
+  if (pendingNewGameFactionNameFocusIndex === index) {
+    pendingNewGameFactionNameFocusIndex = null;
+    requestAnimationFrame(() => {
+      if (selectedNewGameSideIndex === index && document.contains(input)) {
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+    });
+  }
+  return input;
+}
+
+function createNewGameFactionGovernmentControl(index, governmentId, { isPlayer, isSelected }) {
+  if (isPlayer || !isSelected) {
+    const meta = document.createElement("span");
+    meta.className = "new-game__faction-card-meta";
+    meta.textContent = getNewGameGovernmentLabel(governmentId);
+    return meta;
+  }
+
+  const wrapper = document.createElement("span");
+  wrapper.className = "new-game__faction-government";
+
+  const current = document.createElement("button");
+  current.className = "new-game__faction-government-current";
+  current.type = "button";
+  current.textContent = getNewGameGovernmentLabel(governmentId);
+  current.setAttribute("aria-expanded", "false");
+
+  const list = document.createElement("span");
+  list.className = "new-game__faction-government-list";
+  list.hidden = true;
+
+  getNewGameGovernmentIds().forEach((id) => {
+    const item = document.createElement("button");
+    item.className = "new-game__faction-government-item";
+    item.type = "button";
+    item.textContent = getNewGameGovernmentLabel(id);
+    item.classList.toggle("active", id === governmentId);
+    item.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setNewGameSideGovernment(index, id);
+      markNewGameSetupDirty();
+      renderNewGameFactionGrid(newGameFactionCount);
+      updateNewGameActions();
+    });
+    item.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setNewGameSideGovernment(index, id);
+      markNewGameSetupDirty();
+      renderNewGameFactionGrid(newGameFactionCount);
+      updateNewGameActions();
+    });
+    item.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+    list.append(item);
+  });
+
+  const toggleList = () => {
+    const shouldOpen = list.hidden;
+    list.hidden = !shouldOpen;
+    current.setAttribute("aria-expanded", String(shouldOpen));
+  };
+  current.addEventListener("pointerdown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleList();
+  });
+  current.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    toggleList();
+  });
+  current.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+  wrapper.addEventListener("click", (event) => event.stopPropagation());
+  wrapper.append(current, list);
+  return wrapper;
+}
+
+function setNewGameSideName(index, name) {
+  if (index === selectedNewGamePlayerSideIndex) {
+    newGamePlayerFactionName = name;
+    menuPlayerFactionName.value = name;
+    return;
+  }
+
+  ensureNewGameSideConfig(index).name = name;
+}
+
+function setNewGameSideGovernment(index, governmentId) {
+  if (!NEW_GAME_GOVERNMENTS[governmentId]) {
+    return;
+  }
+  if (index === selectedNewGamePlayerSideIndex) {
+    selectedNewGameGovernmentId = governmentId;
+    return;
+  }
+
+  ensureNewGameSideConfig(index).government = governmentId;
+}
+
 function getNewGameRenderedSide(index) {
   if (index === selectedNewGamePlayerSideIndex) {
     return {
       name: getNewGamePlayerFactionDisplayName(),
       color: newGamePlayerFactionColor,
+      government: selectedNewGameGovernmentId,
     };
   }
 
   const side = newGameSideConfigs[index] ?? createNewGameSideConfig(index, getNewGameSeed());
   return {
-    name: side.name,
+    name: side.name.trim() || `SIDE ${index + 1}`,
     color: side.color,
+    government: side.government,
   };
+}
+
+function getNewGameGovernmentIds() {
+  return Object.keys(NEW_GAME_GOVERNMENTS);
+}
+
+function getNewGameGovernmentLabel(governmentId) {
+  return NEW_GAME_GOVERNMENTS[governmentId]?.label
+    ?? NEW_GAME_GOVERNMENTS[NEW_GAME_DEFAULT_GOVERNMENT_ID].label;
 }
 
 function getNewGamePlayerFactionDisplayName() {
@@ -3183,8 +3377,21 @@ function createNewGameSideConfig(index, seed) {
   return {
     name: `SIDE ${index + 1}`,
     color: createNewGameSideColor(index, seed),
-    government: NEW_GAME_DEFAULT_GOVERNMENT_ID,
+    government: createNewGameSideGovernment(index, seed),
   };
+}
+
+function ensureNewGameSideConfig(index) {
+  while (newGameSideConfigs.length <= index) {
+    newGameSideConfigs.push(createNewGameSideConfig(newGameSideConfigs.length, getNewGameSeed()));
+  }
+  return newGameSideConfigs[index];
+}
+
+function createNewGameSideGovernment(index, seed) {
+  const governmentIds = getNewGameGovernmentIds();
+  const random = createRandom(`${seed}:new-game-side-government:${index}`);
+  return governmentIds[Math.floor(random() * governmentIds.length)] ?? NEW_GAME_DEFAULT_GOVERNMENT_ID;
 }
 
 function createNewGameSideColor(index, seed) {
@@ -3308,9 +3515,7 @@ function collectNewGameSetupState() {
       index,
       name: rendered.name,
       color: rendered.color,
-      government: index === selectedNewGamePlayerSideIndex
-        ? selectedNewGameGovernmentId
-        : (newGameSideConfigs[index]?.government ?? NEW_GAME_DEFAULT_GOVERNMENT_ID),
+      government: rendered.government,
       isPlayer: index === selectedNewGamePlayerSideIndex,
     };
   });

@@ -36,7 +36,8 @@ Use this as the baseline for Nebulum UI work. The goal is quiet, thin, system-li
 - Use the in-game border swatch style for color choices: circular swatch, `currentColor`, radial fill, inset ring, and glow.
 - Reuse the shared `openColorPicker` popover for changing colors.
 - When a card represents a colored side/faction/border, drive both fill and stroke from the same CSS variable color.
-- Colored cards should keep the Nebulum translucent style: subtle tinted fill, 1px tinted border, and restrained glow.
+- Colored cards should keep the Nebulum translucent style: subtle tinted fill, restrained glow, and color concentrated on the left side rather than flooding the whole card.
+- When colored cards need a visible stroke, make it a 1px gradient stroke that follows the fill angle and fades to transparent by the middle of the card.
 
 ## Dropdowns
 
