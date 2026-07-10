@@ -55,6 +55,9 @@ const WINDOW_SETTINGS_STORAGE_KEY = "nebulum:window-settings";
 const PWA_INSTALL_STORAGE_KEY = "nebulum:pwa-installed";
 const LEGACY_SAVE_STORAGE_KEY = "nebulum:saves";
 const SAVE_STORAGE_KEY = "nebulum:saves:v2";
+const SAVE_INDEX_STORAGE_KEY = "nebulum:saves:index:v1";
+const SAVE_FILE_STORAGE_PREFIX = "nebulum:saves:file:";
+const SAVE_FOLDER_NAME = "saves";
 const RUNTIME_SESSION_STORAGE_KEY = "nebulum:runtime-session";
 const DEFAULT_TURN_NUMBER = 0;
 const DEFAULT_PLAYER_ID = "player-1";
@@ -78,6 +81,10 @@ const UI_HOVER_SOUND_SELECTOR = [
   ".new-game__scenario-current",
   ".new-game__scenario-dropdown",
   ".new-game__scenario-item",
+  ".new-game__mode-toggle",
+  ".new-game__government-current",
+  ".new-game__government-dropdown",
+  ".new-game__government-item",
   ".new-game__inline-button",
   ".new-game__faction-card",
   ".menu-save-list__item",
@@ -92,6 +99,10 @@ const UI_MENU_CLICK_SOUND_SELECTOR = [
   ".new-game__scenario-current",
   ".new-game__scenario-dropdown",
   ".new-game__scenario-item",
+  ".new-game__mode-toggle",
+  ".new-game__government-current",
+  ".new-game__government-dropdown",
+  ".new-game__government-item",
   ".new-game__inline-button",
   ".new-game__faction-card",
   ".menu-save-list__item",
@@ -103,6 +114,10 @@ const UI_BASE_CLICK_SOUND_SELECTOR = [
   ".new-game__scenario-current",
   ".new-game__scenario-dropdown",
   ".new-game__scenario-item",
+  ".new-game__mode-toggle",
+  ".new-game__government-current",
+  ".new-game__government-dropdown",
+  ".new-game__government-item",
   ".new-game__faction-color",
   ".new-game__faction-card",
 ].join(",");
@@ -133,6 +148,7 @@ const seedDialog = document.querySelector("#seed-dialog");
 const menuSeedInput = document.querySelector("#menu-seed-input");
 const menuSeedConfirm = document.querySelector("#menu-seed-confirm");
 const menuSeedCancel = document.querySelector("#menu-seed-cancel");
+const menuSessionMode = document.querySelector("#menu-session-mode");
 const menuScenarioCurrent = document.querySelector("#menu-scenario-current");
 const menuScenarioDropdown = document.querySelector("#menu-scenario-dropdown");
 const menuScenarioListBackdrop = document.querySelector("#menu-scenario-list-backdrop");
@@ -145,8 +161,11 @@ const menuFactionCount = document.querySelector("#menu-faction-count");
 const menuFactionLimit = document.querySelector("#menu-faction-limit");
 const menuPlayerFactionName = document.querySelector("#menu-player-faction-name");
 const menuPlayerFactionColor = document.querySelector("#menu-player-faction-color");
-const menuBonusesSetup = document.querySelector("#menu-bonuses-setup");
-const menuBonuses = document.querySelector("#menu-bonuses");
+const menuGovernmentCurrent = document.querySelector("#menu-government-current");
+const menuGovernmentDropdown = document.querySelector("#menu-government-dropdown");
+const menuGovernmentList = document.querySelector("#menu-government-list");
+const menuGovernmentImage = document.querySelector("#menu-government-image");
+const menuGovernmentText = document.querySelector("#menu-government-text");
 const menuFactionGrid = document.querySelector("#menu-faction-grid");
 const menuNewGameApply = document.querySelector("#menu-new-game-apply");
 const loadDialog = document.querySelector("#load-dialog");
@@ -263,13 +282,32 @@ const NEW_GAME_DEFAULT_FACTION_COUNT = 4;
 const NEW_GAME_FACTION_RENDER_LIMIT = 90;
 const NEW_GAME_DEFAULT_PLAYER_FACTION_NAME = "Wanderers";
 const NEW_GAME_DEFAULT_PLAYER_FACTION_COLOR = "#00e1ff";
+const NEW_GAME_MODE_HOTSEAT = "hotseat";
+const NEW_GAME_MODE_ONLINE = "online";
+const NEW_GAME_DEFAULT_GOVERNMENT_ID = "company";
+const NEW_GAME_GOVERNMENTS = {
+  company: {
+    id: "company",
+    label: "COMPANY",
+    text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Integer vitae nibh at ipsum fermentum cursus. Sed luctus, neque at aliquet dignissim, sem erat cursus sem, vitae dictum lorem lectus id mi.",
+  },
+  monarcy: {
+    id: "monarcy",
+    label: "MONARCY",
+    text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Proin auctor tellus non neque fermentum, vitae varius velit posuere. Suspendisse potenti. Integer sed arcu at erat blandit pretium.",
+  },
+  community: {
+    id: "community",
+    label: "COMMUNITY",
+    text: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Duis posuere enim et ipsum posuere, vitae egestas massa pretium. Aliquam erat volutpat. Praesent eu libero vitae justo volutpat.",
+  },
+};
 const NEW_GAME_SCENARIOS = {
   basic: {
     id: "basic",
     label: "BASIC",
     image: "/pics/scenarios/basic.png",
     text: "Welcome to the new Nebulum: empty and unexplored. Of course, the history of humanity is vast, and perhaps people have been here before at some point, but certainly not in the present day. All paths are open, and no one knows what awaits you in this constellation.\n\nYour fleet, your people, and the technologies you brought with you from wherever you came from into this new Nebulum are the only things you have. The first thing you must do is find a planet you can call home.\n\nComplete freedom. No one lays claim to this region of space except you and others like you: fleets of cosmic wanderers drifting through wormholes, hoping that one day they will look out upon their vast space empire.",
-    bonuses: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Donec non orci at nibh elementum commodo.",
     maxFactions: (seed) => getBasicScenarioFactionLimit(seed),
     canStart: true,
   },
@@ -278,7 +316,6 @@ const NEW_GAME_SCENARIOS = {
     label: "HOMEWORLD",
     image: "/pics/scenarios/homeworld.png",
     text: "You have lived here for a long time. Your home is what it is. The truth is, you never had the means to build a spaceport and reach the stars.\nAt last, you have succeeded.\nNow you can look up with pride at the tiny sparks of spacecraft above: the ships of your first fleet.\n\nYour native Nebulum... who else dwells here? Others like you, fragments of humanity forgotten on wretched planets? Or were some more fortunate? The time has come to find out. The time has come to call the entire Nebulum your home, not just one tiny point on the map.\n\nOr at least to try.",
-    bonuses: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla facilisi. Morbi suscipit lectus vel lacus blandit.",
     maxFactions: () => Infinity,
     canStart: false,
   },
@@ -320,6 +357,10 @@ let newGameFactionCount = NEW_GAME_DEFAULT_FACTION_COUNT;
 let newGamePlayerFactionName = NEW_GAME_DEFAULT_PLAYER_FACTION_NAME;
 let newGamePlayerFactionColor = NEW_GAME_DEFAULT_PLAYER_FACTION_COLOR;
 let selectedNewGamePlayerSideIndex = 0;
+let newGameSessionMode = NEW_GAME_MODE_HOTSEAT;
+let selectedNewGameGovernmentId = NEW_GAME_DEFAULT_GOVERNMENT_ID;
+let newGameAppliedState = null;
+let isNewGameSetupDirty = true;
 let newGameSideConfigs = [];
 let newGameSideConfigSeed = "";
 let menuScene = null;
@@ -781,6 +822,7 @@ function initStartMenu() {
   gameBreadcrumbStarmap?.addEventListener("click", navigateGameBreadcrumbToStarmap);
   gameBreadcrumbSystem?.addEventListener("click", navigateGameBreadcrumbToSystem);
   gameBreadcrumbOrbit?.addEventListener("click", navigateGameBreadcrumbToOrbit);
+  signTurnButton?.addEventListener("click", signCurrentTurn);
   startMenu.addEventListener("pointermove", onStartMenuPointerMove);
   startMenu.addEventListener("pointerleave", clearStartMenuPointer);
   startMenu.addEventListener("click", onStartMenuClick);
@@ -797,24 +839,40 @@ function initStartMenu() {
   });
   menuScenarioList.addEventListener("scroll", updateNewGameScenarioScrollbar);
   menuScenarioScrollbar.addEventListener("pointerdown", onNewGameScenarioScrollbarPointerDown);
+  menuSessionMode.addEventListener("click", toggleNewGameSessionMode);
   menuFactionCount.addEventListener("input", () => {
     newGameFactionCount = parseFactionCount(menuFactionCount.value);
+    markNewGameSetupDirty();
     renderNewGameDialog();
   });
   menuPlayerFactionName.addEventListener("input", () => {
     newGamePlayerFactionName = menuPlayerFactionName.value;
+    markNewGameSetupDirty();
     renderNewGameFactionGrid(newGameFactionCount);
+    updateNewGameActions();
   });
   menuPlayerFactionColor.addEventListener("click", () => {
     openColorPicker(menuPlayerFactionColor, newGamePlayerFactionColor, (color) => {
       newGamePlayerFactionColor = color;
+      markNewGameSetupDirty();
       updateNewGamePlayerFactionColor();
       renderNewGameFactionGrid(newGameFactionCount);
+      updateNewGameActions();
     });
   });
-  menuBonusesSetup.addEventListener("click", () => {});
-  menuNewGameApply.addEventListener("click", () => {});
-  menuSeedInput.addEventListener("input", renderNewGameDialog);
+  menuGovernmentCurrent.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setNewGameGovernmentDropdownOpen(menuGovernmentList.hidden);
+  });
+  menuGovernmentDropdown.addEventListener("click", (event) => {
+    event.stopPropagation();
+    setNewGameGovernmentDropdownOpen(menuGovernmentList.hidden);
+  });
+  menuNewGameApply.addEventListener("click", applyOnlineNewGameSetup);
+  menuSeedInput.addEventListener("input", () => {
+    markNewGameSetupDirty();
+    renderNewGameDialog();
+  });
   menuSeedInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       confirmNewGameSeed();
@@ -844,6 +902,7 @@ function initStartMenu() {
   seedDialog.addEventListener("pointerdown", (event) => {
     if (event.target === seedDialog) {
       setNewGameScenarioDropdownOpen(false);
+      setNewGameGovernmentDropdownOpen(false);
     }
   });
   loadDialog.addEventListener("pointerdown", (event) => {
@@ -867,6 +926,17 @@ function initStartMenu() {
       return;
     }
     setNewGameScenarioDropdownOpen(false);
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (
+      menuGovernmentList.hidden ||
+      menuGovernmentList.contains(event.target) ||
+      menuGovernmentCurrent.contains(event.target) ||
+      menuGovernmentDropdown.contains(event.target)
+    ) {
+      return;
+    }
+    setNewGameGovernmentDropdownOpen(false);
   });
   gameMenuDialog.addEventListener("pointerdown", (event) => {
     if (event.target === gameMenuDialog) {
@@ -901,6 +971,7 @@ function initStartMenu() {
   syncSettingsDialog();
   syncWindowSettingsFromServer();
   initNewGameScenarioDropdown();
+  initNewGameGovernmentDropdown();
   resetNewGameDialog();
   applyAudioSettings();
   applyWindowSettings();
@@ -2202,6 +2273,45 @@ function navigateGameBreadcrumbToOrbit() {
   returnToOrbitFromObjectDetail();
 }
 
+function signCurrentTurn() {
+  if (isStartMenuOpen || isEditorMode || isGameDialogOpen()) {
+    return;
+  }
+
+  const nextTurn = Math.max(DEFAULT_TURN_NUMBER, Number.parseInt(currentGameState.turn ?? DEFAULT_TURN_NUMBER, 10) || 0) + 1;
+  currentGameState = normalizeGameState({
+    ...currentGameState,
+    turn: nextTurn,
+  });
+  autosaveCurrentTurnState();
+  persistRuntimeSession();
+}
+
+function autosaveCurrentTurnState() {
+  const timestamp = new Date().toISOString();
+  const state = serializeCurrentGameState();
+  const saves = readMenuSaves();
+  const activeFileName = state.saveFileName;
+  const existingIndex = activeFileName
+    ? saves.findIndex((save) => save.fileName === activeFileName)
+    : -1;
+
+  if (existingIndex >= 0) {
+    const previousSave = saves[existingIndex];
+    const save = createGameSaveFromState(previousSave.name, previousSave.seed, state, timestamp, previousSave);
+    saves[existingIndex] = save;
+    currentGameState = normalizeGameState(save.gameState);
+    writeMenuSaves(saves);
+    return;
+  }
+
+  const seed = state.setup?.seed ?? SEED;
+  const save = createGameSaveFromState(`${seed} AUTOSAVE`, seed, state, timestamp);
+  saves.push(save);
+  currentGameState = normalizeGameState(save.gameState);
+  writeMenuSaves(saves);
+}
+
 function isGameBreadcrumbEnabled(button) {
   return Boolean(button && button.getAttribute("aria-disabled") !== "true");
 }
@@ -2771,12 +2881,32 @@ function initNewGameScenarioDropdown() {
   });
 }
 
+function initNewGameGovernmentDropdown() {
+  menuGovernmentList.replaceChildren();
+  Object.values(NEW_GAME_GOVERNMENTS).forEach((government) => {
+    const item = document.createElement("button");
+    item.className = "new-game__government-item";
+    item.type = "button";
+    item.dataset.governmentId = government.id;
+    item.textContent = government.label;
+    item.addEventListener("click", () => {
+      setNewGameGovernment(government.id);
+      setNewGameGovernmentDropdownOpen(false);
+    });
+    menuGovernmentList.append(item);
+  });
+}
+
 function resetNewGameDialog() {
   selectedNewGameScenarioId = NEW_GAME_BASIC_SCENARIO_ID;
   menuSeedInput.value = MENU_DEFAULT_SEED;
   newGamePlayerFactionName = NEW_GAME_DEFAULT_PLAYER_FACTION_NAME;
   newGamePlayerFactionColor = NEW_GAME_DEFAULT_PLAYER_FACTION_COLOR;
   selectedNewGamePlayerSideIndex = 0;
+  newGameSessionMode = NEW_GAME_MODE_HOTSEAT;
+  selectedNewGameGovernmentId = NEW_GAME_DEFAULT_GOVERNMENT_ID;
+  newGameAppliedState = null;
+  isNewGameSetupDirty = true;
   newGameFactionCount = getClampedNewGameFactionCount(
     NEW_GAME_DEFAULT_FACTION_COUNT,
     getNewGameScenarioMaxFactions(NEW_GAME_SCENARIOS[selectedNewGameScenarioId], MENU_DEFAULT_SEED),
@@ -2792,7 +2922,32 @@ function setNewGameScenario(scenarioId) {
   }
 
   selectedNewGameScenarioId = scenarioId;
+  markNewGameSetupDirty();
   renderNewGameDialog();
+}
+
+function toggleNewGameSessionMode() {
+  newGameSessionMode = newGameSessionMode === NEW_GAME_MODE_ONLINE
+    ? NEW_GAME_MODE_HOTSEAT
+    : NEW_GAME_MODE_ONLINE;
+  markNewGameSetupDirty();
+  renderNewGameDialog();
+}
+
+function setNewGameGovernment(governmentId) {
+  if (!NEW_GAME_GOVERNMENTS[governmentId]) {
+    return;
+  }
+
+  selectedNewGameGovernmentId = governmentId;
+  markNewGameSetupDirty();
+  renderNewGameDialog();
+}
+
+function setNewGameGovernmentDropdownOpen(isOpen) {
+  menuGovernmentList.hidden = !isOpen;
+  menuGovernmentCurrent.setAttribute("aria-expanded", String(isOpen));
+  menuGovernmentDropdown.setAttribute("aria-expanded", String(isOpen));
 }
 
 function setNewGameScenarioDropdownOpen(isOpen) {
@@ -2818,7 +2973,8 @@ function renderNewGameDialog() {
   menuScenarioImage.src = scenario.image;
   menuScenarioImage.alt = scenario.label;
   menuScenarioText.textContent = scenario.text;
-  menuBonuses.textContent = scenario.bonuses;
+  renderNewGameModeToggle();
+  renderNewGameGovernment();
   menuFactionCount.value = String(newGameFactionCount);
   menuPlayerFactionName.value = newGamePlayerFactionName;
   updateNewGamePlayerFactionColor();
@@ -2829,9 +2985,37 @@ function renderNewGameDialog() {
     menuFactionCount.removeAttribute("max");
     menuFactionLimit.textContent = "NO LIMIT";
   }
-  menuSeedConfirm.disabled = !scenario.canStart;
   updateNewGameScenarioListUi();
+  updateNewGameGovernmentListUi();
+  updateNewGameActions();
   renderNewGameFactionGrid(newGameFactionCount);
+}
+
+function renderNewGameModeToggle() {
+  const isOnline = newGameSessionMode === NEW_GAME_MODE_ONLINE;
+  menuSessionMode.classList.toggle("new-game__mode-toggle--online", isOnline);
+  menuSessionMode.setAttribute("aria-pressed", String(isOnline));
+}
+
+function renderNewGameGovernment() {
+  const government = NEW_GAME_GOVERNMENTS[selectedNewGameGovernmentId]
+    ?? NEW_GAME_GOVERNMENTS[NEW_GAME_DEFAULT_GOVERNMENT_ID];
+  menuGovernmentCurrent.textContent = government.label;
+  menuGovernmentImage.textContent = government.label;
+  menuGovernmentText.textContent = government.text;
+}
+
+function updateNewGameActions() {
+  const scenario = NEW_GAME_SCENARIOS[selectedNewGameScenarioId] ?? NEW_GAME_SCENARIOS[NEW_GAME_BASIC_SCENARIO_ID];
+  const isOnline = newGameSessionMode === NEW_GAME_MODE_ONLINE;
+  menuNewGameApply.hidden = !isOnline;
+  menuNewGameApply.disabled = !isOnline || !scenario.canStart || !isNewGameSetupDirty;
+  menuSeedConfirm.disabled = !scenario.canStart || (isOnline && (!newGameAppliedState || isNewGameSetupDirty));
+}
+
+function markNewGameSetupDirty() {
+  isNewGameSetupDirty = true;
+  newGameAppliedState = null;
 }
 
 function updateNewGamePlayerFactionColor() {
@@ -2844,6 +3028,12 @@ function updateNewGameScenarioListUi() {
     item.classList.toggle("active", item.dataset.scenarioId === selectedNewGameScenarioId);
   });
   updateNewGameScenarioScrollbar();
+}
+
+function updateNewGameGovernmentListUi() {
+  menuGovernmentList.querySelectorAll(".new-game__government-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.governmentId === selectedNewGameGovernmentId);
+  });
 }
 
 function updateNewGameScenarioScrollbar() {
@@ -2925,7 +3115,9 @@ function renderNewGameFactionGrid(factionCount) {
     card.append(title, meta);
     card.addEventListener("click", () => {
       selectedNewGamePlayerSideIndex = index;
+      markNewGameSetupDirty();
       renderNewGameFactionGrid(newGameFactionCount);
+      updateNewGameActions();
     });
     menuFactionGrid.append(card);
   }
@@ -2981,6 +3173,7 @@ function createNewGameSideConfig(index, seed) {
   return {
     name: `SIDE ${index + 1}`,
     color: createNewGameSideColor(index, seed),
+    government: NEW_GAME_DEFAULT_GOVERNMENT_ID,
   };
 }
 
@@ -3046,7 +3239,79 @@ function confirmNewGameSeed() {
   }
 
   const nextSeed = menuSeedInput.value.trim() || MENU_DEFAULT_SEED;
-  startGameWithSeed(nextSeed);
+  const isOnline = newGameSessionMode === NEW_GAME_MODE_ONLINE;
+  if (isOnline) {
+    if (!newGameAppliedState || isNewGameSetupDirty) {
+      updateNewGameActions();
+      return;
+    }
+    startGameWithSeed(nextSeed, newGameAppliedState);
+    return;
+  }
+
+  startGameWithSeed(nextSeed, createNewGameInitialGameState());
+}
+
+function applyOnlineNewGameSetup() {
+  const scenario = NEW_GAME_SCENARIOS[selectedNewGameScenarioId] ?? NEW_GAME_SCENARIOS[NEW_GAME_BASIC_SCENARIO_ID];
+  if (newGameSessionMode !== NEW_GAME_MODE_ONLINE || !scenario.canStart) {
+    return;
+  }
+
+  const timestamp = new Date().toISOString();
+  const initialState = createNewGameInitialGameState();
+  const saveName = createNewGameInitialSaveName(initialState.setup);
+  const save = createGameSaveFromState(saveName, initialState.setup.seed, initialState, timestamp);
+  initialState.saveFileName = save.fileName;
+  save.gameState = normalizeGameState(initialState);
+  upsertMenuSave(save);
+  newGameAppliedState = normalizeGameState(initialState);
+  isNewGameSetupDirty = false;
+  renderNewGameDialog();
+}
+
+function createNewGameInitialSaveName(setup) {
+  return `${String(setup?.seed ?? MENU_DEFAULT_SEED).trim() || MENU_DEFAULT_SEED} INITIAL`;
+}
+
+function createNewGameInitialGameState() {
+  const setup = collectNewGameSetupState();
+  return normalizeGameState({
+    turn: DEFAULT_TURN_NUMBER,
+    playerId: setup.playerId,
+    setup,
+    objectDetails: {},
+  });
+}
+
+function collectNewGameSetupState() {
+  const scenario = NEW_GAME_SCENARIOS[selectedNewGameScenarioId] ?? NEW_GAME_SCENARIOS[NEW_GAME_BASIC_SCENARIO_ID];
+  const seed = getNewGameSeed();
+  const sides = Array.from({ length: newGameFactionCount }, (_, index) => {
+    const rendered = getNewGameRenderedSide(index);
+    return {
+      id: `side-${index + 1}`,
+      index,
+      name: rendered.name,
+      color: rendered.color,
+      government: index === selectedNewGamePlayerSideIndex
+        ? selectedNewGameGovernmentId
+        : (newGameSideConfigs[index]?.government ?? NEW_GAME_DEFAULT_GOVERNMENT_ID),
+      isPlayer: index === selectedNewGamePlayerSideIndex,
+    };
+  });
+
+  return {
+    version: 1,
+    seed,
+    scenarioId: scenario.id,
+    scenarioLabel: scenario.label,
+    mode: newGameSessionMode,
+    playerId: DEFAULT_PLAYER_ID,
+    playerSideId: sides[selectedNewGamePlayerSideIndex]?.id ?? "side-1",
+    sides,
+    createdAt: new Date().toISOString(),
+  };
 }
 
 function openEditorFromMenu() {
@@ -3667,16 +3932,143 @@ function clearLegacySaves() {
 }
 
 function readMenuSaves() {
+  const indexedSaves = readIndexedMenuSaves();
+  if (indexedSaves) {
+    return indexedSaves;
+  }
+
   try {
     const saves = JSON.parse(localStorage.getItem(SAVE_STORAGE_KEY) || "[]");
-    return Array.isArray(saves) ? saves.map(normalizeSave).filter(Boolean) : [];
+    const legacySaves = Array.isArray(saves) ? saves.map(normalizeSave).filter(Boolean) : [];
+    if (legacySaves.length > 0) {
+      writeMenuSaves(legacySaves);
+      return readIndexedMenuSaves() ?? legacySaves;
+    }
+    return [];
   } catch {
     return [];
   }
 }
 
 function writeMenuSaves(saves) {
-  localStorage.setItem(SAVE_STORAGE_KEY, JSON.stringify(saves.map(normalizeSave).filter(Boolean)));
+  const previousIndex = readSaveIndex();
+  previousIndex.forEach((entry) => {
+    if (entry?.fileName) {
+      localStorage.removeItem(getSaveFileStorageKey(entry.fileName));
+    }
+  });
+
+  const normalizedSaves = prepareSavesForWrite(saves);
+  const index = normalizedSaves.map((save) => ({
+    id: save.id,
+    name: save.name,
+    seed: save.seed,
+    fileName: save.fileName,
+    path: save.path,
+    createdAt: save.createdAt,
+    updatedAt: save.updatedAt,
+    turn: getSaveTurnNumber(save),
+  }));
+
+  normalizedSaves.forEach((save) => {
+    localStorage.setItem(getSaveFileStorageKey(save.fileName), JSON.stringify(save));
+  });
+  localStorage.setItem(SAVE_INDEX_STORAGE_KEY, JSON.stringify(index));
+}
+
+function readIndexedMenuSaves() {
+  if (localStorage.getItem(SAVE_INDEX_STORAGE_KEY) === null) {
+    return null;
+  }
+
+  return readSaveIndex()
+    .map((entry, index) => {
+      try {
+        const raw = localStorage.getItem(getSaveFileStorageKey(entry.fileName));
+        return normalizeSave(raw ? JSON.parse(raw) : entry, index);
+      } catch {
+        return normalizeSave(entry, index);
+      }
+    })
+    .filter(Boolean);
+}
+
+function readSaveIndex() {
+  try {
+    const index = JSON.parse(localStorage.getItem(SAVE_INDEX_STORAGE_KEY) || "[]");
+    return Array.isArray(index) ? index : [];
+  } catch {
+    return [];
+  }
+}
+
+function prepareSavesForWrite(saves) {
+  const usedFileNames = new Set();
+  return saves
+    .map(normalizeSave)
+    .filter(Boolean)
+    .map((save) => {
+      const fileName = createUniqueSaveFileName(save.name, usedFileNames);
+      const path = `${SAVE_FOLDER_NAME}/${fileName}`;
+      const gameState = normalizeGameState({
+        ...save.gameState,
+        saveFileName: fileName,
+      });
+      return {
+        ...save,
+        fileName,
+        path,
+        gameState,
+      };
+    });
+}
+
+function getSaveFileStorageKey(fileName) {
+  return `${SAVE_FILE_STORAGE_PREFIX}${SAVE_FOLDER_NAME}/${fileName}`;
+}
+
+function createUniqueSaveFileName(name, usedFileNames) {
+  const base = sanitizeSaveFileBase(name);
+  let fileName = `${base}.json`;
+  let index = 2;
+  while (usedFileNames.has(fileName.toLowerCase())) {
+    fileName = `${base} ${index}.json`;
+    index += 1;
+  }
+  usedFileNames.add(fileName.toLowerCase());
+  return fileName;
+}
+
+function sanitizeSaveFileBase(name) {
+  const base = String(name ?? "SAVE")
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/g, "");
+  return base || "SAVE";
+}
+
+function upsertMenuSave(save) {
+  const normalized = normalizeSave(save);
+  if (!normalized) {
+    return;
+  }
+
+  const saves = readMenuSaves();
+  const fileName = createUniqueSaveFileName(normalized.name, new Set());
+  const existingIndex = saves.findIndex((entry) => (
+    entry.fileName === fileName || entry.name.toUpperCase() === normalized.name.toUpperCase()
+  ));
+  if (existingIndex >= 0) {
+    saves[existingIndex] = {
+      ...normalized,
+      id: saves[existingIndex].id,
+      createdAt: saves[existingIndex].createdAt,
+    };
+  } else {
+    saves.push(normalized);
+  }
+  writeMenuSaves(saves);
 }
 
 function loadSelectedMenuSave() {
@@ -3685,7 +4077,7 @@ function loadSelectedMenuSave() {
     return;
   }
 
-  startGameWithSeed(save.seed, save.gameState);
+  startGameWithSeed(save.seed, createGameStateForSaveLoad(save));
 }
 
 function deleteSelectedMenuSave() {
@@ -3871,27 +4263,44 @@ function normalizeSave(save, index = 0) {
 
   const name = String(save.name ?? "").trim() || `SAVE ${index + 1}`;
   const now = new Date().toISOString();
+  const fileName = String(save.fileName ?? "").trim() || createUniqueSaveFileName(name, new Set());
   return {
     id: String(save.id ?? createSaveId()),
     version: Number(save.version ?? 3),
     name,
     seed,
+    fileName,
+    path: String(save.path ?? `${SAVE_FOLDER_NAME}/${fileName}`),
     createdAt: String(save.createdAt ?? save.updatedAt ?? now),
     updatedAt: String(save.updatedAt ?? now),
-    gameState: normalizeGameState(save.gameState ?? save.state),
+    gameState: normalizeGameState({
+      ...(save.gameState ?? save.state),
+      saveFileName: fileName,
+    }),
   };
 }
 
 function createCurrentGameSave(name, timestamp, previousSave = null) {
   const trimmedName = String(name ?? "").trim() || createDefaultSaveName(readMenuSaves());
+  return createGameSaveFromState(trimmedName, SEED, serializeCurrentGameState(), timestamp, previousSave);
+}
+
+function createGameSaveFromState(name, seed, gameState, timestamp, previousSave = null) {
+  const trimmedName = String(name ?? "").trim() || createDefaultSaveName(readMenuSaves());
+  const fileName = previousSave?.fileName ?? createUniqueSaveFileName(trimmedName, new Set());
   return {
     id: previousSave?.id ?? createSaveId(),
     version: 3,
     name: trimmedName,
-    seed: SEED,
+    seed,
+    fileName,
+    path: `${SAVE_FOLDER_NAME}/${fileName}`,
     createdAt: previousSave?.createdAt ?? timestamp,
     updatedAt: timestamp,
-    gameState: serializeCurrentGameState(),
+    gameState: normalizeGameState({
+      ...gameState,
+      saveFileName: fileName,
+    }),
   };
 }
 
@@ -3912,6 +4321,8 @@ function createEmptyGameState() {
   return {
     turn: DEFAULT_TURN_NUMBER,
     playerId: DEFAULT_PLAYER_ID,
+    saveFileName: null,
+    setup: null,
     objectDetails: {},
   };
 }
@@ -3928,6 +4339,10 @@ function normalizeGameState(gameState) {
     : DEFAULT_TURN_NUMBER;
   normalized.playerId = String(gameState.playerId ?? gameState.player ?? DEFAULT_PLAYER_ID).trim()
     || DEFAULT_PLAYER_ID;
+  normalized.saveFileName = gameState.saveFileName === null || gameState.saveFileName === undefined
+    ? null
+    : String(gameState.saveFileName).trim() || null;
+  normalized.setup = normalizeNewGameSetupState(gameState.setup ?? gameState.initialSetup);
 
   const objectDetails = gameState.objectDetails && typeof gameState.objectDetails === "object"
     ? gameState.objectDetails
@@ -3941,6 +4356,46 @@ function normalizeGameState(gameState) {
     }
   }
   return normalized;
+}
+
+function normalizeNewGameSetupState(setup) {
+  if (!setup || typeof setup !== "object") {
+    return null;
+  }
+
+  const seed = String(setup.seed ?? MENU_DEFAULT_SEED).trim() || MENU_DEFAULT_SEED;
+  const scenarioId = String(setup.scenarioId ?? NEW_GAME_BASIC_SCENARIO_ID).trim() || NEW_GAME_BASIC_SCENARIO_ID;
+  const mode = setup.mode === NEW_GAME_MODE_ONLINE ? NEW_GAME_MODE_ONLINE : NEW_GAME_MODE_HOTSEAT;
+  const sidesSource = Array.isArray(setup.sides) ? setup.sides : [];
+  const sides = sidesSource.map((side, index) => ({
+    id: String(side?.id ?? `side-${index + 1}`),
+    index,
+    name: String(side?.name ?? `SIDE ${index + 1}`).trim() || `SIDE ${index + 1}`,
+    color: String(side?.color ?? createNewGameSideColor(index, seed)),
+    government: NEW_GAME_GOVERNMENTS[side?.government]
+      ? side.government
+      : NEW_GAME_DEFAULT_GOVERNMENT_ID,
+    isPlayer: side?.isPlayer === true,
+  }));
+
+  return {
+    version: 1,
+    seed,
+    scenarioId,
+    scenarioLabel: String(setup.scenarioLabel ?? NEW_GAME_SCENARIOS[scenarioId]?.label ?? scenarioId).trim(),
+    mode,
+    playerId: String(setup.playerId ?? DEFAULT_PLAYER_ID).trim() || DEFAULT_PLAYER_ID,
+    playerSideId: String(setup.playerSideId ?? sides.find((side) => side.isPlayer)?.id ?? "side-1"),
+    sides,
+    createdAt: String(setup.createdAt ?? new Date().toISOString()),
+  };
+}
+
+function createGameStateForSaveLoad(save) {
+  return normalizeGameState({
+    ...save.gameState,
+    saveFileName: save.fileName,
+  });
 }
 
 function serializeCurrentGameState() {

@@ -137,6 +137,13 @@
                   <span class="menu-dialog__label">Seed</span>
                   <input id="menu-seed-input" class="menu-dialog__input new-game__seed-input" type="text" autocomplete="off" />
                 </label>
+                <div class="new-game__mode-field" aria-label="Game mode">
+                  <button id="menu-session-mode" class="new-game__mode-toggle" type="button" aria-pressed="false">
+                    <span class="new-game__mode-thumb" aria-hidden="true"></span>
+                    <span class="new-game__mode-option new-game__mode-option--hotseat">HOT SEAT</span>
+                    <span class="new-game__mode-option new-game__mode-option--online">ONLINE</span>
+                  </button>
+                </div>
                 <label class="new-game__control-row new-game__scenario-field">
                   <span class="menu-dialog__label">Scenario</span>
                   <div class="new-game__scenario-picker">
@@ -173,12 +180,19 @@
                         <button id="menu-player-faction-color" class="swatch swatch--large new-game__faction-color" type="button" title="Pick faction border color"></button>
                       </div>
                     </div>
-                    <div class="new-game__bonuses">
+                    <div class="new-game__government">
                       <div class="new-game__section-header">
-                        <span class="menu-dialog__label">Bonuses</span>
-                        <button id="menu-bonuses-setup" class="new-game__inline-button" type="button">SETUP</button>
+                        <span class="menu-dialog__label">Government</span>
+                        <div class="new-game__government-picker">
+                          <button id="menu-government-current" class="new-game__government-current" type="button" aria-expanded="false">COMPANY</button>
+                          <button id="menu-government-dropdown" class="new-game__government-dropdown" type="button" aria-expanded="false" title="Select government">
+                            <img src="/Musplayer/dropdown.svg" alt="" />
+                          </button>
+                          <div id="menu-government-list" class="new-game__government-list" hidden></div>
+                        </div>
                       </div>
-                      <div id="menu-bonuses" class="new-game__bonus-zone"></div>
+                      <div id="menu-government-image" class="new-game__government-image" aria-hidden="true"></div>
+                      <p id="menu-government-text" class="new-game__government-text"></p>
                     </div>
                   </div>
                 </div>

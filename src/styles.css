@@ -542,7 +542,7 @@ body.start-menu-open .hover-panel {
 
 .new-game__top {
   display: grid;
-  grid-template-columns: minmax(360px, 0.72fr) minmax(0, 1fr);
+  grid-template-columns: minmax(250px, 0.48fr) 170px minmax(0, 1fr);
   gap: 14px;
   align-items: center;
 }
@@ -563,7 +563,58 @@ body.start-menu-open .hover-panel {
   min-width: 70px;
 }
 
-.new-game__scenario-picker {
+.new-game__mode-field {
+  min-width: 0;
+}
+
+.new-game__mode-toggle {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(10, 10, 11, 0.48);
+  color: rgba(255, 255, 255, 0.56);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  line-height: 20px;
+  overflow: hidden;
+  text-transform: uppercase;
+}
+
+.new-game__mode-thumb {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  z-index: 0;
+  width: calc(50% - 3px);
+  height: 16px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  transition: transform 150ms ease;
+}
+
+.new-game__mode-toggle--online .new-game__mode-thumb {
+  transform: translateX(calc(100% + 2px));
+}
+
+.new-game__mode-option {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+}
+
+.new-game__mode-toggle:not(.new-game__mode-toggle--online) .new-game__mode-option--hotseat,
+.new-game__mode-toggle--online .new-game__mode-option--online {
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.new-game__scenario-picker,
+.new-game__government-picker {
   position: relative;
   display: flex;
   min-width: 0;
@@ -571,7 +622,9 @@ body.start-menu-open .hover-panel {
 }
 
 .new-game__scenario-current,
-.new-game__scenario-dropdown {
+.new-game__scenario-dropdown,
+.new-game__government-current,
+.new-game__government-dropdown {
   height: 20px;
   border: 0;
   border-radius: 3px;
@@ -585,7 +638,8 @@ body.start-menu-open .hover-panel {
   text-transform: uppercase;
 }
 
-.new-game__scenario-current {
+.new-game__scenario-current,
+.new-game__government-current {
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
@@ -596,7 +650,8 @@ body.start-menu-open .hover-panel {
   white-space: nowrap;
 }
 
-.new-game__scenario-dropdown {
+.new-game__scenario-dropdown,
+.new-game__government-dropdown {
   display: grid;
   place-items: center;
   flex: 0 0 13px;
@@ -607,7 +662,8 @@ body.start-menu-open .hover-panel {
   padding: 0;
 }
 
-.new-game__scenario-dropdown img {
+.new-game__scenario-dropdown img,
+.new-game__government-dropdown img {
   display: block;
   width: 4px;
   height: 7px;
@@ -617,12 +673,17 @@ body.start-menu-open .hover-panel {
 .new-game__scenario-current:hover,
 .new-game__scenario-dropdown:hover,
 .new-game__scenario-current[aria-expanded="true"],
-.new-game__scenario-dropdown[aria-expanded="true"] {
+.new-game__scenario-dropdown[aria-expanded="true"],
+.new-game__government-current:hover,
+.new-game__government-dropdown:hover,
+.new-game__government-current[aria-expanded="true"],
+.new-game__government-dropdown[aria-expanded="true"] {
   background: rgba(255, 255, 255, 0.095);
   color: rgb(255, 255, 255);
 }
 
-.new-game__scenario-list {
+.new-game__scenario-list,
+.new-game__government-list {
   position: absolute;
   left: 0;
   top: 24px;
@@ -637,6 +698,10 @@ body.start-menu-open .hover-panel {
   -webkit-backdrop-filter: blur(18px);
   isolation: isolate;
   scrollbar-width: none;
+}
+
+.new-game__government-list {
+  padding: 4px;
 }
 
 .new-game__scenario-list-backdrop {
@@ -657,6 +722,7 @@ body.start-menu-open .hover-panel {
 }
 
 .new-game__scenario-list[hidden],
+.new-game__government-list[hidden],
 .new-game__scenario-list-backdrop[hidden],
 .new-game__scenario-scrollbar[hidden] {
   display: none;
@@ -697,7 +763,8 @@ body.start-menu-open .hover-panel {
   will-change: transform;
 }
 
-.new-game__scenario-item {
+.new-game__scenario-item,
+.new-game__government-item {
   display: block;
   width: 100%;
   height: 20px;
@@ -718,7 +785,9 @@ body.start-menu-open .hover-panel {
 }
 
 .new-game__scenario-item:hover,
-.new-game__scenario-item.active {
+.new-game__scenario-item.active,
+.new-game__government-item:hover,
+.new-game__government-item.active {
   background: rgba(255, 255, 255, 0.045);
   color: rgba(255, 255, 255, 0.9);
 }
@@ -823,9 +892,9 @@ body.start-menu-open .hover-panel {
   height: 22px;
 }
 
-.new-game__bonuses {
+.new-game__government {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(78px, 0.65fr) auto;
   gap: 6px;
   min-height: 0;
 }
@@ -856,11 +925,24 @@ body.start-menu-open .hover-panel {
   color: rgb(255, 255, 255);
 }
 
-.new-game__bonus-zone {
-  min-height: 0;
-  padding: 8px;
+.new-game__government-image {
+  display: grid;
+  min-height: 78px;
+  place-items: center;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.045);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.055), transparent 44%),
+    rgba(255, 255, 255, 0.045);
+  color: rgba(255, 255, 255, 0.28);
+  font-size: 16px;
+  text-transform: uppercase;
+}
+
+.new-game__government-text {
+  min-height: 0;
+  margin: 0;
+  padding: 0 2px;
+  border-radius: 3px;
   color: rgba(255, 255, 255, 0.5);
   font-size: 10px;
   line-height: 1.5;
@@ -914,7 +996,10 @@ body.start-menu-open .hover-panel {
 }
 
 .new-game__faction-card:focus-visible,
-.new-game__inline-button:focus-visible {
+.new-game__inline-button:focus-visible,
+.new-game__mode-toggle:focus-visible,
+.new-game__government-current:focus-visible,
+.new-game__government-dropdown:focus-visible {
   outline: none;
 }
 
@@ -1020,6 +1105,10 @@ body.start-menu-open .hover-panel {
 .menu-dialog__actions--new-game {
   justify-content: center;
   grid-template-columns: repeat(3, 150px);
+}
+
+.menu-dialog__actions--new-game:has(#menu-new-game-apply[hidden]) {
+  grid-template-columns: repeat(2, 150px);
 }
 
 .menu-dialog__surface--wide .menu-dialog__actions {
