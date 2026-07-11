@@ -365,6 +365,9 @@ let gameSaveDraftName = "";
 let pendingStartGameState = null;
 let pendingRuntimeSession = null;
 let currentGameState = createEmptyGameState();
+let selectedFleetId = null;
+let activeSystemFleetAnchors = [];
+let starmapFleetMarkerElements = [];
 let shouldStartGameAfterInit = false;
 let isRuntimeSessionRedirecting = false;
 let runtimeLoadingHideTimer = null;
@@ -2298,8 +2301,13 @@ function signCurrentTurn() {
   }
 
   currentGameState = advanceGameTurnState(currentGameState);
+  clearSelectedFleetIfInactive();
   autosaveCurrentTurnState();
   renderTurnOrderUi();
+  refreshSystemGateAccess();
+  rerenderActiveSystemFleetMarkers();
+  updateStarmapFleetMarkers();
+  enforceCurrentViewExplorationAccess();
   persistRuntimeSession();
 }
 
@@ -3585,10 +3593,13 @@ function createNewGameInitialSaveName(setup) {
 
 function createNewGameInitialGameState() {
   const setup = collectNewGameSetupState();
+  const initialProgress = createInitialGameProgressState(setup);
   return normalizeGameState({
     turn: DEFAULT_TURN_NUMBER,
     playerId: setup.playerId,
     setup,
+    fleets: initialProgress.fleets,
+    exploration: initialProgress.exploration,
     objectDetails: {},
   });
 }
@@ -4006,6 +4017,8 @@ function startGameFromMenu({ editorMode = false, gameState = null } = {}) {
   pendingRuntimeSession = null;
   isEditorMode = runtimeSessionToRestore?.editorMode ?? editorMode;
   currentGameState = normalizeGameState(gameState ?? pendingStartGameState ?? runtimeSessionToRestore?.gameState);
+  selectedFleetId = null;
+  activeSystemFleetAnchors = [];
   pendingStartGameState = null;
   closeMenuDialogs();
   setMenuStatus("STARTING");
@@ -4057,7 +4070,7 @@ async function restoreRuntimeSessionView(session) {
   }
 
   const activeNode = getRuntimeNodeById(normalized.systemId);
-  if (!activeNode) {
+  if (!activeNode || !isSystemAccessibleForActiveSide(activeNode)) {
     renderStarmapFrame();
     persistRuntimeSession(isEditorMode ? "editor" : "starmap");
     return;
@@ -4074,7 +4087,7 @@ async function restoreRuntimeSessionView(session) {
   }
 
   const activePlanet = findRenderedSystemPlanetByKey(normalized.planetKey);
-  if (!activePlanet) {
+  if (!activePlanet || !isPlanetAccessibleForActiveSide(activePlanet)) {
     starWindow.classList.remove("planet-screen-open");
     persistRuntimeSession("system");
     return;
@@ -4634,6 +4647,8 @@ function createEmptyGameState() {
     playerId: DEFAULT_PLAYER_ID,
     saveFileName: null,
     setup: null,
+    fleets: [],
+    exploration: createEmptyExplorationState(),
     objectDetails: {},
   };
 }
@@ -4660,6 +4675,12 @@ function normalizeGameState(gameState) {
     gameState.completedSideIndices ?? gameState.completedSides ?? gameState.signedSideIndices,
     sideCount,
   ).filter((index) => index !== normalized.activeSideIndex);
+  normalized.fleets = normalizeGameFleets(gameState.fleets ?? gameState.ships, normalized.setup);
+  normalized.exploration = normalizeGameExploration(
+    gameState.exploration ?? gameState.explored,
+    normalized.setup,
+    normalized.fleets,
+  );
 
   const objectDetails = gameState.objectDetails && typeof gameState.objectDetails === "object"
     ? gameState.objectDetails
@@ -4673,6 +4694,207 @@ function normalizeGameState(gameState) {
     }
   }
   return normalized;
+}
+
+function createEmptyExplorationState() {
+  return {
+    systems: {},
+    planets: {},
+  };
+}
+
+function createInitialGameProgressState(setup) {
+  const progress = {
+    fleets: [],
+    exploration: createEmptyExplorationState(),
+  };
+  const normalizedSetup = normalizeNewGameSetupState(setup);
+  if (normalizedSetup?.scenarioId !== NEW_GAME_BASIC_SCENARIO_ID) {
+    return progress;
+  }
+
+  const starts = createBasicScenarioFleetStarts(normalizedSetup.seed);
+  if (starts.length === 0) {
+    return progress;
+  }
+
+  const random = createRandom(`${normalizedSetup.seed}:basic-fleet-starts`);
+  const shuffledStarts = shuffleSeeded(starts, random);
+  const sides = getGameStateSides({ setup: normalizedSetup });
+  sides.forEach((side, index) => {
+    const start = shuffledStarts[index % shuffledStarts.length];
+    const fleetId = `fleet-${side.id}-1`;
+    progress.fleets.push({
+      id: fleetId,
+      ownerSideId: side.id,
+      name: `${side.name} FLEET`,
+      location: {
+        type: "wormhole",
+        systemId: start.systemId,
+        wormholeKey: start.wormholeKey,
+      },
+    });
+    appendExplorationValue(progress.exploration.systems, side.id, start.systemId);
+  });
+
+  return progress;
+}
+
+function createBasicScenarioFleetStarts(seed) {
+  const previewNodes = createNodes(createRandom(seed));
+  return createOuterLinks(previewNodes, createRandom(`${seed}:outer-links`))
+    .map((link) => ({
+      systemId: String(link.parentId),
+      wormholeKey: createOuterLinkKey(link),
+    }));
+}
+
+function createOuterLinkKey(link) {
+  if (!link) {
+    return "";
+  }
+  const end = link.end ?? {};
+  return [
+    link.parentId,
+    Number(end.x ?? 0).toFixed(4),
+    Number(end.y ?? 0).toFixed(4),
+    Number(end.z ?? 0).toFixed(4),
+  ].map((part) => encodeURIComponent(String(part))).join(":");
+}
+
+function shuffleSeeded(items, random) {
+  const result = items.slice();
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(random() * (index + 1));
+    [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
+  }
+  return result;
+}
+
+function normalizeGameFleets(fleets, setup) {
+  if (!Array.isArray(fleets)) {
+    return [];
+  }
+
+  const sides = getGameStateSides({ setup });
+  const sideIds = new Set(sides.map((side) => side.id));
+  return fleets
+    .map((fleet, index) => {
+      if (!fleet || typeof fleet !== "object") {
+        return null;
+      }
+
+      const requestedSideIndex = Number.parseInt(fleet.ownerSideIndex ?? fleet.sideIndex ?? index, 10);
+      const fallbackSide = Number.isFinite(requestedSideIndex)
+        ? sides[THREE.MathUtils.clamp(requestedSideIndex, 0, Math.max(0, sides.length - 1))]
+        : sides[0];
+      const ownerSideId = String(fleet.ownerSideId ?? fleet.sideId ?? fallbackSide?.id ?? "").trim();
+      if (!ownerSideId || !sideIds.has(ownerSideId)) {
+        return null;
+      }
+
+      const location = normalizeFleetLocation(fleet.location ?? fleet);
+      if (!location) {
+        return null;
+      }
+
+      const sideIndex = sides.findIndex((side) => side.id === ownerSideId);
+      const id = String(fleet.id ?? `fleet-${ownerSideId}-${index + 1}`).trim() || `fleet-${ownerSideId}-${index + 1}`;
+      return {
+        id,
+        ownerSideId,
+        ownerSideIndex: sideIndex >= 0 ? sideIndex : 0,
+        name: String(fleet.name ?? `${sides[sideIndex]?.name ?? "SIDE"} FLEET`).trim() || "FLEET",
+        location,
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeFleetLocation(location) {
+  if (!location || typeof location !== "object") {
+    return null;
+  }
+
+  const systemId = normalizeRuntimeNullableString(
+    location.systemId ?? location.nodeId ?? location.parentId,
+  );
+  if (!systemId) {
+    return null;
+  }
+
+  const type = String(location.type ?? "system").trim().toLowerCase();
+  if (type === "planet") {
+    const planetKey = normalizeRuntimeNullableString(location.planetKey ?? location.objectKey ?? location.key);
+    return planetKey
+      ? { type: "planet", systemId, planetKey }
+      : { type: "system", systemId };
+  }
+
+  if (type === "wormhole") {
+    const wormholeKey = normalizeRuntimeNullableString(location.wormholeKey ?? location.key);
+    return wormholeKey
+      ? { type: "wormhole", systemId, wormholeKey }
+      : { type: "system", systemId };
+  }
+
+  if (type === "link") {
+    const targetSystemId = normalizeRuntimeNullableString(location.targetSystemId ?? location.targetId);
+    return targetSystemId
+      ? { type: "link", systemId, targetSystemId }
+      : { type: "system", systemId };
+  }
+
+  return { type: "system", systemId };
+}
+
+function normalizeGameExploration(exploration, setup, fleets) {
+  const normalized = createEmptyExplorationState();
+  const sides = getGameStateSides({ setup });
+  const sideIds = new Set(sides.map((side) => side.id));
+  normalizeExplorationBucket(exploration?.systems, sideIds, normalized.systems);
+  normalizeExplorationBucket(exploration?.planets, sideIds, normalized.planets);
+
+  for (const fleet of fleets) {
+    appendExplorationValue(normalized.systems, fleet.ownerSideId, fleet.location.systemId);
+    if (fleet.location.type === "planet" && fleet.location.planetKey) {
+      appendExplorationValue(normalized.planets, fleet.ownerSideId, fleet.location.planetKey);
+    }
+  }
+
+  return normalized;
+}
+
+function normalizeExplorationBucket(source, sideIds, target) {
+  if (!source || typeof source !== "object") {
+    return;
+  }
+
+  for (const [sideId, values] of Object.entries(source)) {
+    const normalizedSideId = String(sideId).trim();
+    if (!sideIds.has(normalizedSideId) || !Array.isArray(values)) {
+      continue;
+    }
+
+    values.forEach((value) => {
+      appendExplorationValue(target, normalizedSideId, value);
+    });
+  }
+}
+
+function appendExplorationValue(bucket, sideId, value) {
+  const normalizedSideId = String(sideId ?? "").trim();
+  const normalizedValue = normalizeRuntimeNullableString(value);
+  if (!normalizedSideId || !normalizedValue) {
+    return;
+  }
+
+  if (!Array.isArray(bucket[normalizedSideId])) {
+    bucket[normalizedSideId] = [];
+  }
+  if (!bucket[normalizedSideId].includes(normalizedValue)) {
+    bucket[normalizedSideId].push(normalizedValue);
+  }
 }
 
 function getGameTurnNumber(gameState) {
@@ -4712,6 +4934,268 @@ function normalizeCompletedSideIndices(value, sideCount) {
   return Array.from(new Set(source
     .map((index) => Number.parseInt(index, 10))
     .filter((index) => Number.isFinite(index) && index >= 0 && index < sideCount)));
+}
+
+function getActiveGameSide(gameState = currentGameState) {
+  const state = gameState ?? createEmptyGameState();
+  const sides = getGameStateSides(state);
+  if (sides.length === 0) {
+    return null;
+  }
+  return sides[normalizeTurnSideIndex(state.activeSideIndex, sides.length)] ?? null;
+}
+
+function getActiveGameSideId(gameState = currentGameState) {
+  return getActiveGameSide(gameState)?.id ?? null;
+}
+
+function getGameSideById(sideId, gameState = currentGameState) {
+  const normalizedSideId = String(sideId ?? "").trim();
+  if (!normalizedSideId) {
+    return null;
+  }
+  return getGameStateSides(gameState).find((side) => side.id === normalizedSideId) ?? null;
+}
+
+function getSideColorById(sideId, gameState = currentGameState) {
+  const side = getGameSideById(sideId, gameState);
+  if (!side) {
+    return "#ffffff";
+  }
+  const fallback = createNewGameSideColor(side.index ?? 0, gameState?.setup?.seed ?? SEED);
+  return normalizeCssColor(side.color, fallback);
+}
+
+function shouldEnforceExploration() {
+  return !isEditorMode &&
+    getGameStateSideCount(currentGameState) > 0 &&
+    Array.isArray(currentGameState.fleets) &&
+    currentGameState.fleets.length > 0;
+}
+
+function getExplorationValues(kind, sideId, gameState = currentGameState) {
+  const bucket = gameState?.exploration?.[kind];
+  const values = bucket?.[sideId];
+  return new Set(Array.isArray(values) ? values.map((value) => String(value)) : []);
+}
+
+function isSystemExploredForSide(systemId, sideId, gameState = currentGameState) {
+  const normalizedSystemId = normalizeRuntimeNullableString(systemId);
+  if (!normalizedSystemId || !sideId) {
+    return false;
+  }
+  return getExplorationValues("systems", sideId, gameState).has(normalizedSystemId);
+}
+
+function isSystemAccessibleForActiveSide(nodeOrId) {
+  if (!shouldEnforceExploration()) {
+    return true;
+  }
+
+  const systemId = normalizeRuntimeNullableString(nodeOrId?.id ?? nodeOrId);
+  return isSystemExploredForSide(systemId, getActiveGameSideId(), currentGameState);
+}
+
+function getPlanetExplorationKey(planet) {
+  return getRuntimeObjectKey(planet);
+}
+
+function isPlanetExploredForSide(planetOrKey, sideId, gameState = currentGameState) {
+  const planetKey = typeof planetOrKey === "string"
+    ? planetOrKey
+    : getPlanetExplorationKey(planetOrKey);
+  if (!planetKey || !sideId) {
+    return false;
+  }
+  return getExplorationValues("planets", sideId, gameState).has(planetKey);
+}
+
+function isPlanetAccessibleForActiveSide(planetOrKey) {
+  if (!shouldEnforceExploration()) {
+    return true;
+  }
+  return isPlanetExploredForSide(planetOrKey, getActiveGameSideId(), currentGameState);
+}
+
+function markExploredForSide(sideId, { systemId = null, planetKey = null } = {}) {
+  const normalizedSideId = String(sideId ?? "").trim();
+  if (!normalizedSideId) {
+    return;
+  }
+
+  if (!currentGameState.exploration || typeof currentGameState.exploration !== "object") {
+    currentGameState.exploration = createEmptyExplorationState();
+  }
+  if (!currentGameState.exploration.systems) {
+    currentGameState.exploration.systems = {};
+  }
+  if (!currentGameState.exploration.planets) {
+    currentGameState.exploration.planets = {};
+  }
+
+  appendExplorationValue(currentGameState.exploration.systems, normalizedSideId, systemId);
+  appendExplorationValue(currentGameState.exploration.planets, normalizedSideId, planetKey);
+}
+
+function getFleetById(fleetId, gameState = currentGameState) {
+  const normalizedFleetId = String(fleetId ?? "").trim();
+  if (!normalizedFleetId) {
+    return null;
+  }
+  return gameState?.fleets?.find((fleet) => fleet.id === normalizedFleetId) ?? null;
+}
+
+function isFleetControlledByActiveSide(fleet, gameState = currentGameState) {
+  return Boolean(fleet && fleet.ownerSideId === getActiveGameSideId(gameState));
+}
+
+function getSelectedFleet() {
+  const fleet = getFleetById(selectedFleetId);
+  return isFleetControlledByActiveSide(fleet) ? fleet : null;
+}
+
+function getVisibleFleetsForSystem(systemId) {
+  const activeSideId = getActiveGameSideId();
+  const normalizedSystemId = normalizeRuntimeNullableString(systemId);
+  if (!activeSideId || !normalizedSystemId) {
+    return [];
+  }
+
+  return currentGameState.fleets.filter((fleet) => (
+    fleet.ownerSideId === activeSideId &&
+    fleet.location?.systemId === normalizedSystemId
+  ));
+}
+
+function selectFleet(fleetId) {
+  const fleet = getFleetById(fleetId);
+  if (!isFleetControlledByActiveSide(fleet)) {
+    return false;
+  }
+
+  selectedFleetId = selectedFleetId === fleet.id ? null : fleet.id;
+  rerenderActiveSystemFleetMarkers();
+  updateStarmapFleetMarkers();
+  return true;
+}
+
+function clearSelectedFleetIfInactive() {
+  if (!selectedFleetId || getSelectedFleet()) {
+    return;
+  }
+  selectedFleetId = null;
+}
+
+function moveSelectedFleetToPlanet(planet) {
+  const fleet = getSelectedFleet();
+  const planetKey = getPlanetExplorationKey(planet);
+  if (!fleet || !planet?.systemId || !planetKey) {
+    return false;
+  }
+
+  updateFleetLocation(fleet.id, {
+    type: "planet",
+    systemId: planet.systemId,
+    planetKey,
+  });
+  markExploredForSide(fleet.ownerSideId, {
+    systemId: planet.systemId,
+    planetKey,
+  });
+  finalizeFleetStateChange();
+  return true;
+}
+
+function moveSelectedFleetToSystem(systemId) {
+  const fleet = getSelectedFleet();
+  const normalizedSystemId = normalizeRuntimeNullableString(systemId);
+  if (!fleet || !normalizedSystemId) {
+    return false;
+  }
+
+  const activeSystemId = normalizeRuntimeNullableString(systemScreenController?.state?.activeNode?.id);
+  updateFleetLocation(fleet.id, {
+    type: "system",
+    systemId: normalizedSystemId,
+  });
+  markExploredForSide(fleet.ownerSideId, { systemId: normalizedSystemId });
+  if (activeSystemId && activeSystemId !== normalizedSystemId) {
+    selectedFleetId = null;
+  }
+  finalizeFleetStateChange();
+  return true;
+}
+
+function moveSelectedFleetToWormhole(systemId, wormholeKey) {
+  const fleet = getSelectedFleet();
+  const normalizedSystemId = normalizeRuntimeNullableString(systemId);
+  const normalizedWormholeKey = normalizeRuntimeNullableString(wormholeKey);
+  if (!fleet || !normalizedSystemId || !normalizedWormholeKey) {
+    return false;
+  }
+
+  updateFleetLocation(fleet.id, {
+    type: "wormhole",
+    systemId: normalizedSystemId,
+    wormholeKey: normalizedWormholeKey,
+  });
+  markExploredForSide(fleet.ownerSideId, { systemId: normalizedSystemId });
+  finalizeFleetStateChange();
+  return true;
+}
+
+function updateFleetLocation(fleetId, location) {
+  const fleet = getFleetById(fleetId);
+  if (!fleet) {
+    return;
+  }
+  fleet.location = normalizeFleetLocation(location) ?? fleet.location;
+}
+
+function finalizeFleetStateChange() {
+  currentGameState = normalizeGameState(currentGameState);
+  clearSelectedFleetIfInactive();
+  refreshSystemGateAccess();
+  rerenderActiveSystemFleetMarkers();
+  updateStarmapFleetMarkers();
+  persistRuntimeSession();
+}
+
+function refreshSystemGateAccess() {
+  if (!systemScreenController?.isOpen?.()) {
+    return;
+  }
+
+  starSystem.querySelectorAll(".system-jump[data-target-system-id]").forEach((gate) => {
+    const targetNode = getRuntimeNodeById(gate.dataset.targetSystemId);
+    const isAccessible = isSystemAccessibleForActiveSide(targetNode);
+    gate.classList.toggle("system-jump--locked", !isAccessible);
+    gate.setAttribute("aria-disabled", String(!isAccessible));
+  });
+}
+
+function enforceCurrentViewExplorationAccess() {
+  if (!shouldEnforceExploration()) {
+    return;
+  }
+
+  const activeNode = systemScreenController?.state?.activeNode ?? null;
+  if (activeNode && !isSystemAccessibleForActiveSide(activeNode)) {
+    closeStarWindow();
+    updateGameNavigationUi(true);
+    return;
+  }
+
+  const activePlanet = getActiveRuntimePlanet();
+  if (activePlanet && !isPlanetAccessibleForActiveSide(activePlanet)) {
+    if (isObjectDetailOpen) {
+      returnToOrbitFromObjectDetail();
+      return;
+    }
+    if (planetScreenController?.isOpen?.()) {
+      returnToStarSystemFromPlanet();
+    }
+  }
 }
 
 function normalizeNewGameSetupState(setup) {
@@ -6372,6 +6856,9 @@ function selectNodeAt(clientX, clientY) {
   }
 
   if (!isMaskToolEnabled) {
+    if (!isSystemAccessibleForActiveSide(hit.userData.node)) {
+      return;
+    }
     startGraphToSystemTransition(hit.userData.node, clientX, clientY);
     return;
   }
@@ -6400,6 +6887,9 @@ function selectNodeAt(clientX, clientY) {
 
 function startGraphToSystemTransition(node, clientX, clientY) {
   if (systemScreenController.isGraphEntering() || systemScreenController.isOpen()) {
+    return;
+  }
+  if (!isSystemAccessibleForActiveSide(node)) {
     return;
   }
 
@@ -6530,6 +7020,7 @@ function closeStarWindow() {
   systemStars.replaceChildren();
   systemStarLayer.replaceChildren();
   systemParticles.replaceChildren();
+  activeSystemFleetAnchors = [];
   pointer.set(10, 10);
   persistRuntimeSession(isEditorMode ? "editor" : "starmap");
 }
@@ -6564,6 +7055,9 @@ function disposeNebulumRuntime() {
   systemStarLayer.replaceChildren();
   systemParticles.replaceChildren();
   labelElements.length = 0;
+  starmapFleetMarkerElements.length = 0;
+  activeSystemFleetAnchors = [];
+  selectedFleetId = null;
   nodeMeshes.length = 0;
   hitTargets.length = 0;
 
@@ -6709,6 +7203,9 @@ async function returnToStarSystemFromPlanet() {
 
 async function openObjectDetailFromPlanetView(detail, clientX = window.innerWidth / 2, clientY = window.innerHeight / 2) {
   if (!detail || !openPlanetData) {
+    return;
+  }
+  if (!isPlanetAccessibleForActiveSide(openPlanetData)) {
     return;
   }
 
@@ -9976,6 +10473,7 @@ function resetSystemGlowCache() {
 function renderStarSystem(node) {
   starSystem.replaceChildren();
   systemStarLayer.replaceChildren();
+  activeSystemFleetAnchors = [];
   resetSystemParallaxCache();
   resetSystemGlowCache();
   gasGiantTextureLayers.clear();
@@ -9997,6 +10495,14 @@ function renderStarSystem(node) {
     radius: starRadius,
     glowColor: node.glowColor,
   };
+  activeSystemFleetAnchors.push({
+    anchorKey: "system",
+    type: "system",
+    systemId: String(node.id),
+    x: Math.max(22, starX + starRadius + 22),
+    y: centerY - Math.min(72, starRadius * 0.32),
+    radius: 14,
+  });
   const star = document.createElement("div");
   star.className = "system-star";
   star.classList.toggle("black-hole", Boolean(node.blackCore));
@@ -10249,6 +10755,17 @@ function renderStarSystem(node) {
       lore: createPlanetLore(createRandom(`${SEED}:planet-lore:${node.id}:${index}`)),
     };
     hitTarget.userData = { label, planet: planetInfo };
+    const planetKey = getPlanetExplorationKey(planetInfo);
+    hitTarget.classList.toggle("system-planet-hit--locked", !isPlanetAccessibleForActiveSide(planetInfo));
+    activeSystemFleetAnchors.push({
+      anchorKey: `planet:${planetKey}`,
+      type: "planet",
+      systemId: String(node.id),
+      planetKey,
+      x: planetX + hitTargetRadius + 14,
+      y: planetY,
+      radius: 12,
+    });
     hitTarget.addEventListener("pointerenter", (event) => {
       if (isGameDialogOpen()) {
         return;
@@ -10274,6 +10791,12 @@ function renderStarSystem(node) {
       }
       event.stopPropagation();
       lastClientPointer.set(event.clientX, event.clientY);
+      if (moveSelectedFleetToPlanet(planetInfo)) {
+        return;
+      }
+      if (!isPlanetAccessibleForActiveSide(planetInfo)) {
+        return;
+      }
       startPlanetEntryTransition(planetInfo, event.clientX, event.clientY);
     });
     starSystem.append(hitTarget);
@@ -10293,7 +10816,9 @@ function renderStarSystem(node) {
     orbitRadii,
     occupiedPlanets,
     random,
+    fleetAnchors: activeSystemFleetAnchors,
   });
+  renderSystemFleetMarkers(node, activeSystemFleetAnchors);
 }
 
 function renderSystemZones(node, starX, centerY, minOrbit, maxOrbit) {
@@ -10548,6 +11073,9 @@ function formatTemperatureValue(temperature) {
 
 async function startPlanetEntryTransition(planet, clientX, clientY) {
   if (!planet || isPlanetEntryTransitioning || planetScreenController.isOpen() || systemScreenController.isTransitioning()) {
+    return;
+  }
+  if (!isPlanetAccessibleForActiveSide(planet)) {
     return;
   }
 
@@ -10900,6 +11428,7 @@ function renderSystemJumps({
   orbitRadii,
   occupiedPlanets,
   random,
+  fleetAnchors = [],
 }) {
   const neighbors = Array.from(adjacency.get(node.id) ?? [])
     .map((id) => nodes[id])
@@ -10934,10 +11463,19 @@ function renderSystemJumps({
       stepX,
       stepY,
     });
+    gate.classList.toggle("system-jump--locked", !isSystemAccessibleForActiveSide(neighbor));
+    gate.setAttribute("aria-disabled", String(!isSystemAccessibleForActiveSide(neighbor)));
+    gate.dataset.targetSystemId = String(neighbor.id);
     gate.dataset.kind = neighbor.starType;
     gate.dataset.planets = String(neighbor.planets);
     gate.addEventListener("click", (event) => {
       event.stopPropagation();
+      if (moveSelectedFleetToSystem(neighbor.id)) {
+        return;
+      }
+      if (!isSystemAccessibleForActiveSide(neighbor)) {
+        return;
+      }
       startSystemJumpTransition(neighbor, stepX / 10, stepY / 10, gate, event.clientX, event.clientY);
     });
     starSystem.append(gate);
@@ -10974,6 +11512,17 @@ function renderSystemJumps({
       stepY,
       echoCount: 12,
     });
+    const wormholeKey = createOuterLinkKey(link);
+    gate.dataset.wormholeKey = wormholeKey;
+    fleetAnchors.push({
+      anchorKey: `wormhole:${wormholeKey}`,
+      type: "wormhole",
+      systemId: String(node.id),
+      wormholeKey,
+      x: position.x + 24,
+      y: position.y,
+      radius: 12,
+    });
     gate.querySelectorAll(".system-jump__echo").forEach((ring, ringIndex) => {
       const index = ringIndex + 1;
       const progress = (index - 1) / 11;
@@ -10994,8 +11543,92 @@ function renderSystemJumps({
     });
     gate.type = "button";
     gate.tabIndex = -1;
+    gate.addEventListener("click", (event) => {
+      event.stopPropagation();
+      moveSelectedFleetToWormhole(node.id, wormholeKey);
+    });
     starSystem.append(gate);
   });
+}
+
+function rerenderActiveSystemFleetMarkers() {
+  const activeNode = systemScreenController?.state?.activeNode ?? null;
+  if (!activeNode || !systemScreenController?.isOpen?.()) {
+    return;
+  }
+  renderSystemFleetMarkers(activeNode, activeSystemFleetAnchors);
+}
+
+function renderSystemFleetMarkers(node, anchors = []) {
+  starSystem.querySelectorAll(".system-fleet-marker").forEach((marker) => marker.remove());
+  if (!node) {
+    return;
+  }
+
+  const fleets = getVisibleFleetsForSystem(node.id);
+  const anchorUseCount = new Map();
+  fleets.forEach((fleet) => {
+    const anchor = getFleetSystemAnchor(fleet, anchors);
+    if (!anchor) {
+      return;
+    }
+
+    const useIndex = anchorUseCount.get(anchor.anchorKey) ?? 0;
+    anchorUseCount.set(anchor.anchorKey, useIndex + 1);
+    const marker = createSystemFleetMarker(fleet);
+    const offsetY = (useIndex - Math.max(0, anchorUseCount.get(anchor.anchorKey) - 1) / 2) * 18;
+    marker.style.left = `${Math.round(anchor.x - 12)}px`;
+    marker.style.top = `${Math.round(anchor.y - 8 + offsetY)}px`;
+    starSystem.append(marker);
+  });
+}
+
+function getFleetSystemAnchor(fleet, anchors) {
+  const location = fleet?.location;
+  if (!location) {
+    return null;
+  }
+
+  const anchorKey = getFleetLocationAnchorKey(location);
+  return anchors.find((anchor) => anchor.anchorKey === anchorKey)
+    ?? anchors.find((anchor) => anchor.anchorKey === "system")
+    ?? null;
+}
+
+function getFleetLocationAnchorKey(location) {
+  if (location?.type === "planet" && location.planetKey) {
+    return `planet:${location.planetKey}`;
+  }
+  if (location?.type === "wormhole" && location.wormholeKey) {
+    return `wormhole:${location.wormholeKey}`;
+  }
+  return "system";
+}
+
+function createSystemFleetMarker(fleet) {
+  const marker = document.createElement("button");
+  marker.className = "system-fleet-marker";
+  marker.type = "button";
+  marker.dataset.fleetId = fleet.id;
+  marker.dataset.ownerSideId = fleet.ownerSideId;
+  marker.classList.toggle("system-fleet-marker--selected", selectedFleetId === fleet.id);
+  marker.style.setProperty("--fleet-color", getSideColorById(fleet.ownerSideId));
+  marker.setAttribute("aria-label", fleet.name);
+  marker.title = fleet.name;
+
+  const stripe = document.createElement("span");
+  stripe.className = "system-fleet-marker__stripe";
+  const glyph = document.createElement("span");
+  glyph.className = "system-fleet-marker__glyph";
+  marker.append(stripe, glyph);
+  marker.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (isGameDialogOpen()) {
+      return;
+    }
+    selectFleet(fleet.id);
+  });
+  return marker;
 }
 
 function createSystemGate({ className, labelText, radius, x, y, stepX, stepY, echoCount = 5 }) {
@@ -11221,6 +11854,9 @@ function isSystemGateOnPlanet(position, occupiedPlanets, gateRadius) {
 
 function startSystemJumpTransition(targetNode, directionX, directionY, gate, clientX, clientY) {
   if (systemScreenController.isTransitioning() || !systemScreenController.isOpen()) {
+    return;
+  }
+  if (!isSystemAccessibleForActiveSide(targetNode)) {
     return;
   }
 
@@ -12665,6 +13301,58 @@ function updateStarLabels() {
     label.style.left = `${x}px`;
     label.style.top = `${y}px`;
     label.classList.toggle("hidden", !visible || hoveredNode?.userData.node.id === node.id);
+  }
+  updateStarmapFleetMarkers();
+}
+
+function updateStarmapFleetMarkers() {
+  if (!starLabels || !isGameRuntimeReady || isStartMenuOpen) {
+    return;
+  }
+
+  const activeSideId = getActiveGameSideId();
+  const exploredSystems = getExplorationValues("systems", activeSideId, currentGameState);
+  const fleets = currentGameState.fleets
+    .filter((fleet) => fleet.ownerSideId === activeSideId)
+    .filter((fleet) => exploredSystems.has(String(fleet.location?.systemId)));
+  while (starmapFleetMarkerElements.length < fleets.length) {
+    const marker = document.createElement("div");
+    marker.className = "starmap-fleet-marker hidden";
+    marker.setAttribute("aria-hidden", "true");
+    marker.innerHTML = '<span class="starmap-fleet-marker__stripe"></span><span class="starmap-fleet-marker__body"></span>';
+    starLabels.append(marker);
+    starmapFleetMarkerElements.push(marker);
+  }
+
+  for (let index = 0; index < starmapFleetMarkerElements.length; index += 1) {
+    const marker = starmapFleetMarkerElements[index];
+    const fleet = fleets[index];
+    if (!fleet) {
+      marker.classList.add("hidden");
+      continue;
+    }
+
+    const node = getRuntimeNodeById(fleet.location.systemId);
+    if (!node) {
+      marker.classList.add("hidden");
+      continue;
+    }
+
+    starLabelProjection.copy(node.position).applyMatrix4(graphRoot.matrixWorld).project(camera);
+    const visible =
+      starLabelProjection.z > -1 &&
+      starLabelProjection.z < 1 &&
+      starLabelProjection.x > -1.08 &&
+      starLabelProjection.x < 1.08 &&
+      starLabelProjection.y > -1.08 &&
+      starLabelProjection.y < 1.08;
+    const x = (starLabelProjection.x * 0.5 + 0.5) * window.innerWidth;
+    const y = (-starLabelProjection.y * 0.5 + 0.5) * window.innerHeight;
+    marker.style.left = `${Math.round(x - 28 - (index % 3) * 8)}px`;
+    marker.style.top = `${Math.round(y)}px`;
+    marker.style.setProperty("--fleet-color", getSideColorById(fleet.ownerSideId));
+    marker.classList.toggle("starmap-fleet-marker--selected", selectedFleetId === fleet.id);
+    marker.classList.toggle("hidden", !visible);
   }
 }
 

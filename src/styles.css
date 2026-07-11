@@ -1518,6 +1518,53 @@ body.graph-entry-moving .hover-panel {
   opacity: 0;
 }
 
+.starmap-fleet-marker {
+  position: fixed;
+  width: 18px;
+  height: 12px;
+  border-radius: 2px;
+  background: rgba(10, 10, 11, 0.74);
+  box-shadow:
+    0 0 9px color-mix(in srgb, var(--fleet-color, #fff) 42%, transparent),
+    0 8px 22px rgba(0, 0, 0, 0.36);
+  opacity: 1;
+  transform: translate(-100%, -50%);
+  transition: opacity 160ms ease;
+  pointer-events: none;
+}
+
+.starmap-fleet-marker.hidden {
+  opacity: 0;
+}
+
+.starmap-fleet-marker__stripe {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 3px;
+  height: 100%;
+  border-radius: 2px 0 0 2px;
+  background: var(--fleet-color, #fff);
+}
+
+.starmap-fleet-marker__body {
+  position: absolute;
+  left: 6px;
+  top: 3px;
+  width: 8px;
+  height: 6px;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.82) 0 2px, transparent 2px 3px),
+    linear-gradient(90deg, transparent 0 4px, rgba(255, 255, 255, 0.62) 4px 6px, transparent 6px);
+}
+
+.starmap-fleet-marker--selected {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.86),
+    0 0 14px color-mix(in srgb, var(--fleet-color, #fff) 82%, transparent),
+    0 8px 22px rgba(0, 0, 0, 0.36);
+}
+
 .hover-name-wrap,
 .hover-panel {
   position: fixed;
@@ -2341,6 +2388,57 @@ body.editor-mode .music-player {
   pointer-events: auto;
 }
 
+.system-planet-hit--locked {
+  cursor: default;
+}
+
+.system-fleet-marker {
+  position: absolute;
+  z-index: 16;
+  width: 24px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(10, 10, 11, 0.74);
+  box-shadow:
+    0 0 10px color-mix(in srgb, var(--fleet-color, #fff) 36%, transparent),
+    0 10px 26px rgba(0, 0, 0, 0.38);
+  color: rgba(255, 255, 255, 0.88);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.system-fleet-marker__stripe {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 4px;
+  height: 100%;
+  border-radius: 3px 0 0 3px;
+  background: var(--fleet-color, #fff);
+}
+
+.system-fleet-marker__glyph {
+  position: absolute;
+  left: 8px;
+  top: 4px;
+  width: 11px;
+  height: 8px;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.88) 0 3px, transparent 3px 4px),
+    linear-gradient(90deg, transparent 0 5px, rgba(255, 255, 255, 0.58) 5px 8px, transparent 8px),
+    linear-gradient(90deg, transparent 0 9px, rgba(255, 255, 255, 0.74) 9px 11px);
+}
+
+.system-fleet-marker--selected {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.92),
+    0 0 16px color-mix(in srgb, var(--fleet-color, #fff) 82%, transparent),
+    0 0 30px color-mix(in srgb, var(--fleet-color, #fff) 44%, transparent),
+    0 10px 26px rgba(0, 0, 0, 0.38);
+}
+
 .system-jump {
   z-index: 8;
   display: block;
@@ -2350,6 +2448,10 @@ body.editor-mode .music-player {
   background: transparent;
   color: rgba(255, 255, 255, 0.88);
   pointer-events: auto;
+}
+
+.system-jump--locked {
+  opacity: 0.34;
 }
 
 .system-jump__echo {
