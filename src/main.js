@@ -5061,10 +5061,25 @@ function getVisibleFleetsForSystem(systemId) {
     return [];
   }
 
-  return currentGameState.fleets.filter((fleet) => (
+  const hasActiveFleetInSystem = currentGameState.fleets.some((fleet) => (
     fleet.ownerSideId === activeSideId &&
     fleet.location?.systemId === normalizedSystemId
   ));
+  return currentGameState.fleets.filter((fleet) => (
+    fleet.location?.systemId === normalizedSystemId &&
+    (fleet.ownerSideId === activeSideId || hasActiveFleetInSystem)
+  )).sort(compareVisibleFleets(activeSideId));
+}
+
+function compareVisibleFleets(activeSideId) {
+  return (left, right) => {
+    const leftActive = left.ownerSideId === activeSideId ? 0 : 1;
+    const rightActive = right.ownerSideId === activeSideId ? 0 : 1;
+    if (leftActive !== rightActive) {
+      return leftActive - rightActive;
+    }
+    return String(left.name).localeCompare(String(right.name));
+  };
 }
 
 function selectFleet(fleetId) {
@@ -5122,6 +5137,39 @@ function moveSelectedFleetToSystem(systemId) {
   if (activeSystemId && activeSystemId !== normalizedSystemId) {
     selectedFleetId = null;
   }
+  finalizeFleetStateChange();
+  return true;
+}
+
+function commandSelectedFleetToLink(systemId, targetSystemId) {
+  const fleet = getSelectedFleet();
+  const normalizedSystemId = normalizeRuntimeNullableString(systemId);
+  const normalizedTargetSystemId = normalizeRuntimeNullableString(targetSystemId);
+  if (!fleet || !normalizedSystemId || !normalizedTargetSystemId) {
+    return false;
+  }
+
+  const isAlreadyAtLink = fleet.location?.type === "link" &&
+    fleet.location.systemId === normalizedSystemId &&
+    fleet.location.targetSystemId === normalizedTargetSystemId;
+  if (isAlreadyAtLink) {
+    updateFleetLocation(fleet.id, {
+      type: "link",
+      systemId: normalizedTargetSystemId,
+      targetSystemId: normalizedSystemId,
+    });
+    markExploredForSide(fleet.ownerSideId, { systemId: normalizedTargetSystemId });
+    selectedFleetId = null;
+    finalizeFleetStateChange();
+    return true;
+  }
+
+  updateFleetLocation(fleet.id, {
+    type: "link",
+    systemId: normalizedSystemId,
+    targetSystemId: normalizedTargetSystemId,
+  });
+  markExploredForSide(fleet.ownerSideId, { systemId: normalizedSystemId });
   finalizeFleetStateChange();
   return true;
 }
@@ -11468,9 +11516,18 @@ function renderSystemJumps({
     gate.dataset.targetSystemId = String(neighbor.id);
     gate.dataset.kind = neighbor.starType;
     gate.dataset.planets = String(neighbor.planets);
+    fleetAnchors.push({
+      anchorKey: `link:${neighbor.id}`,
+      type: "link",
+      systemId: String(node.id),
+      targetSystemId: String(neighbor.id),
+      x: position.x + gateRadius + 16,
+      y: position.y,
+      radius: 12,
+    });
     gate.addEventListener("click", (event) => {
       event.stopPropagation();
-      if (moveSelectedFleetToSystem(neighbor.id)) {
+      if (commandSelectedFleetToLink(node.id, neighbor.id)) {
         return;
       }
       if (!isSystemAccessibleForActiveSide(neighbor)) {
@@ -11577,7 +11634,7 @@ function renderSystemFleetMarkers(node, anchors = []) {
     anchorUseCount.set(anchor.anchorKey, useIndex + 1);
     const marker = createSystemFleetMarker(fleet);
     const offsetY = (useIndex - Math.max(0, anchorUseCount.get(anchor.anchorKey) - 1) / 2) * 18;
-    marker.style.left = `${Math.round(anchor.x - 12)}px`;
+    marker.style.left = `${Math.round(anchor.x - 14)}px`;
     marker.style.top = `${Math.round(anchor.y - 8 + offsetY)}px`;
     starSystem.append(marker);
   });
@@ -11602,28 +11659,36 @@ function getFleetLocationAnchorKey(location) {
   if (location?.type === "wormhole" && location.wormholeKey) {
     return `wormhole:${location.wormholeKey}`;
   }
+  if (location?.type === "link" && location.targetSystemId) {
+    return `link:${location.targetSystemId}`;
+  }
   return "system";
 }
 
 function createSystemFleetMarker(fleet) {
   const marker = document.createElement("button");
+  const isControlled = isFleetControlledByActiveSide(fleet);
   marker.className = "system-fleet-marker";
   marker.type = "button";
   marker.dataset.fleetId = fleet.id;
   marker.dataset.ownerSideId = fleet.ownerSideId;
+  marker.classList.toggle("system-fleet-marker--foreign", !isControlled);
   marker.classList.toggle("system-fleet-marker--selected", selectedFleetId === fleet.id);
+  marker.tabIndex = isControlled ? 0 : -1;
   marker.style.setProperty("--fleet-color", getSideColorById(fleet.ownerSideId));
   marker.setAttribute("aria-label", fleet.name);
   marker.title = fleet.name;
 
   const stripe = document.createElement("span");
   stripe.className = "system-fleet-marker__stripe";
-  const glyph = document.createElement("span");
-  glyph.className = "system-fleet-marker__glyph";
-  marker.append(stripe, glyph);
+  const icon = document.createElement("img");
+  icon.className = "system-fleet-marker__icon";
+  icon.src = "/MainUI/Fleet_marker.svg";
+  icon.alt = "";
+  marker.append(stripe, icon);
   marker.addEventListener("click", (event) => {
     event.stopPropagation();
-    if (isGameDialogOpen()) {
+    if (isGameDialogOpen() || !isControlled) {
       return;
     }
     selectFleet(fleet.id);
@@ -13311,19 +13376,23 @@ function updateStarmapFleetMarkers() {
   }
 
   const activeSideId = getActiveGameSideId();
-  const exploredSystems = getExplorationValues("systems", activeSideId, currentGameState);
-  const fleets = currentGameState.fleets
+  const activeFleetSystemIds = new Set(currentGameState.fleets
     .filter((fleet) => fleet.ownerSideId === activeSideId)
-    .filter((fleet) => exploredSystems.has(String(fleet.location?.systemId)));
+    .map((fleet) => String(fleet.location?.systemId ?? ""))
+    .filter(Boolean));
+  const fleets = currentGameState.fleets
+    .filter((fleet) => fleet.ownerSideId === activeSideId || activeFleetSystemIds.has(String(fleet.location?.systemId)))
+    .sort(compareVisibleFleets(activeSideId));
   while (starmapFleetMarkerElements.length < fleets.length) {
     const marker = document.createElement("div");
     marker.className = "starmap-fleet-marker hidden";
     marker.setAttribute("aria-hidden", "true");
-    marker.innerHTML = '<span class="starmap-fleet-marker__stripe"></span><span class="starmap-fleet-marker__body"></span>';
+    marker.innerHTML = '<span class="starmap-fleet-marker__stripe"></span><img class="starmap-fleet-marker__icon" src="/MainUI/Fleet_marker.svg" alt="">';
     starLabels.append(marker);
     starmapFleetMarkerElements.push(marker);
   }
 
+  const systemMarkerUseCount = new Map();
   for (let index = 0; index < starmapFleetMarkerElements.length; index += 1) {
     const marker = starmapFleetMarkerElements[index];
     const fleet = fleets[index];
@@ -13348,9 +13417,13 @@ function updateStarmapFleetMarkers() {
       starLabelProjection.y < 1.08;
     const x = (starLabelProjection.x * 0.5 + 0.5) * window.innerWidth;
     const y = (-starLabelProjection.y * 0.5 + 0.5) * window.innerHeight;
-    marker.style.left = `${Math.round(x - 28 - (index % 3) * 8)}px`;
-    marker.style.top = `${Math.round(y)}px`;
+    const systemKey = String(fleet.location.systemId);
+    const useIndex = systemMarkerUseCount.get(systemKey) ?? 0;
+    systemMarkerUseCount.set(systemKey, useIndex + 1);
+    marker.style.left = `${Math.round(x - 8)}px`;
+    marker.style.top = `${Math.round(y + (useIndex - 0.5) * 11)}px`;
     marker.style.setProperty("--fleet-color", getSideColorById(fleet.ownerSideId));
+    marker.classList.toggle("starmap-fleet-marker--foreign", fleet.ownerSideId !== activeSideId);
     marker.classList.toggle("starmap-fleet-marker--selected", selectedFleetId === fleet.id);
     marker.classList.toggle("hidden", !visible);
   }
