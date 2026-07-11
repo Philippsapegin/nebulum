@@ -59,7 +59,7 @@ const SAVE_INDEX_STORAGE_KEY = "nebulum:saves:index:v1";
 const SAVE_FILE_STORAGE_PREFIX = "nebulum:saves:file:";
 const SAVE_FOLDER_NAME = "saves";
 const RUNTIME_SESSION_STORAGE_KEY = "nebulum:runtime-session";
-const DEFAULT_TURN_NUMBER = 0;
+const DEFAULT_TURN_NUMBER = 1;
 const DEFAULT_PLAYER_ID = "player-1";
 const UI_HOVER_SOUND = "ui.hover.quiet";
 const UI_MENU_CLICK_SOUND = "ui.menu.click";
@@ -210,6 +210,7 @@ const gameSpaceGradientEnabled = document.querySelector("#game-space-gradient-en
 const gameBorderlessWindow = document.querySelector("#game-borderless-window");
 const gameSettingsClose = document.querySelector("#game-settings-close");
 const signTurnButton = document.querySelector("#sign-turn-button");
+const turnOrderTrack = document.querySelector("#turn-order-track");
 const gameBreadcrumbStarmap = document.querySelector("#game-breadcrumb-starmap");
 const gameBreadcrumbSystem = document.querySelector("#game-breadcrumb-system");
 const gameBreadcrumbOrbit = document.querySelector("#game-breadcrumb-orbit");
@@ -287,7 +288,8 @@ document.querySelector("#app").append(objectDetailEntryOverlay);
 
 const NEW_GAME_BASIC_SCENARIO_ID = "basic";
 const NEW_GAME_DEFAULT_FACTION_COUNT = 4;
-const NEW_GAME_FACTION_RENDER_LIMIT = 90;
+const NEW_GAME_MAX_SIDE_COUNT = 16;
+const NEW_GAME_FACTION_RENDER_LIMIT = NEW_GAME_MAX_SIDE_COUNT;
 const NEW_GAME_DEFAULT_PLAYER_FACTION_NAME = "Wanderers";
 const NEW_GAME_DEFAULT_PLAYER_FACTION_COLOR = "#00e1ff";
 const NEW_GAME_MODE_HOTSEAT = "hotseat";
@@ -2295,13 +2297,50 @@ function signCurrentTurn() {
     return;
   }
 
-  const nextTurn = Math.max(DEFAULT_TURN_NUMBER, Number.parseInt(currentGameState.turn ?? DEFAULT_TURN_NUMBER, 10) || 0) + 1;
-  currentGameState = normalizeGameState({
-    ...currentGameState,
-    turn: nextTurn,
-  });
+  currentGameState = advanceGameTurnState(currentGameState);
   autosaveCurrentTurnState();
+  renderTurnOrderUi();
   persistRuntimeSession();
+}
+
+function advanceGameTurnState(gameState) {
+  const state = normalizeGameState(gameState);
+  const sideCount = getGameStateSideCount(state);
+  if (sideCount <= 0) {
+    return normalizeGameState({
+      ...state,
+      turn: getGameTurnNumber(state) + 1,
+    });
+  }
+
+  const activeSideIndex = normalizeTurnSideIndex(state.activeSideIndex, sideCount);
+  const completedSideIndices = new Set(normalizeCompletedSideIndices(state.completedSideIndices, sideCount));
+  completedSideIndices.add(activeSideIndex);
+
+  if (completedSideIndices.size >= sideCount) {
+    return normalizeGameState({
+      ...state,
+      turn: getGameTurnNumber(state) + 1,
+      activeSideIndex: 0,
+      completedSideIndices: [],
+    });
+  }
+
+  return normalizeGameState({
+    ...state,
+    activeSideIndex: getNextPendingSideIndex(activeSideIndex, completedSideIndices, sideCount),
+    completedSideIndices: Array.from(completedSideIndices),
+  });
+}
+
+function getNextPendingSideIndex(activeSideIndex, completedSideIndices, sideCount) {
+  for (let offset = 1; offset <= sideCount; offset += 1) {
+    const index = (activeSideIndex + offset) % sideCount;
+    if (!completedSideIndices.has(index)) {
+      return index;
+    }
+  }
+  return 0;
 }
 
 function autosaveCurrentTurnState() {
@@ -2365,6 +2404,46 @@ function setGameBreadcrumbState(button, isEnabled) {
 
   button.setAttribute("aria-disabled", String(!isEnabled));
   button.tabIndex = isEnabled ? 0 : -1;
+}
+
+function renderTurnOrderUi() {
+  if (!turnOrderTrack) {
+    return;
+  }
+
+  const state = normalizeGameState(currentGameState);
+  const sides = getGameStateSides(state);
+  turnOrderTrack.replaceChildren();
+  turnOrderTrack.hidden = sides.length === 0;
+  turnOrderTrack.classList.toggle("turn-order-track--full", sides.length >= NEW_GAME_MAX_SIDE_COUNT);
+  turnOrderTrack.style.setProperty("--turn-side-count", String(Math.max(1, sides.length)));
+  if (sides.length === 0) {
+    turnOrderTrack.removeAttribute("aria-label");
+    return;
+  }
+
+  const activeSideIndex = normalizeTurnSideIndex(state.activeSideIndex, sides.length);
+  const completedSideIndices = new Set(normalizeCompletedSideIndices(state.completedSideIndices, sides.length));
+  sides.forEach((side, index) => {
+    const token = document.createElement("span");
+    const isCompleted = completedSideIndices.has(index);
+    token.className = "turn-order-token";
+    token.classList.toggle("turn-order-token--active", index === activeSideIndex);
+    token.classList.toggle("turn-order-token--completed", isCompleted);
+    token.style.setProperty("--turn-side-color", normalizeCssColor(side.color, createNewGameSideColor(index, state.setup?.seed ?? SEED)));
+    token.title = `${side.name} - ${isCompleted ? "SIGNED" : index === activeSideIndex ? "ACTIVE" : "WAITING"}`;
+    token.setAttribute("aria-label", token.title);
+    turnOrderTrack.append(token);
+  });
+  turnOrderTrack.setAttribute(
+    "aria-label",
+    `Turn ${getGameTurnNumber(state)}, active side ${activeSideIndex + 1} of ${sides.length}`,
+  );
+}
+
+function normalizeCssColor(value, fallback = "#ffffff") {
+  const normalized = String(value ?? "").trim();
+  return normalized || fallback;
 }
 
 function initAudioMixer() {
@@ -3433,7 +3512,10 @@ function getNewGameSeed() {
 }
 
 function getNewGameScenarioMaxFactions(scenario, seed) {
-  return typeof scenario.maxFactions === "function" ? scenario.maxFactions(seed) : Infinity;
+  const scenarioMax = typeof scenario.maxFactions === "function" ? scenario.maxFactions(seed) : Infinity;
+  return Number.isFinite(scenarioMax)
+    ? Math.min(NEW_GAME_MAX_SIDE_COUNT, scenarioMax)
+    : NEW_GAME_MAX_SIDE_COUNT;
 }
 
 function isNewGameScenarioStartable(scenario) {
@@ -3514,7 +3596,8 @@ function createNewGameInitialGameState() {
 function collectNewGameSetupState() {
   const scenario = NEW_GAME_SCENARIOS[selectedNewGameScenarioId] ?? NEW_GAME_SCENARIOS[NEW_GAME_BASIC_SCENARIO_ID];
   const seed = getNewGameSeed();
-  const sides = Array.from({ length: newGameFactionCount }, (_, index) => {
+  const sideCount = Math.min(NEW_GAME_MAX_SIDE_COUNT, newGameFactionCount);
+  const sides = Array.from({ length: sideCount }, (_, index) => {
     const rendered = getNewGameRenderedSide(index);
     return {
       id: `side-${index + 1}`,
@@ -3934,6 +4017,7 @@ function startGameFromMenu({ editorMode = false, gameState = null } = {}) {
   document.body.classList.add("game-running");
   document.body.classList.toggle("editor-mode", isEditorMode);
   applyGameUiSettings();
+  renderTurnOrderUi();
   startMenu.classList.add("start-menu--hidden");
   startMenu.setAttribute("aria-hidden", "true");
   initializeNebulumRuntime();
@@ -4460,7 +4544,7 @@ function getSaveDisplayName(save, index) {
 
 function getSaveTurnNumber(save) {
   const turn = Number.parseInt(save?.gameState?.turn ?? DEFAULT_TURN_NUMBER, 10);
-  return Number.isFinite(turn) && turn >= 0 ? turn : DEFAULT_TURN_NUMBER;
+  return Number.isFinite(turn) && turn >= DEFAULT_TURN_NUMBER ? turn : DEFAULT_TURN_NUMBER;
 }
 
 function formatSaveCreatedAt(save) {
@@ -4545,6 +4629,8 @@ function createSaveId() {
 function createEmptyGameState() {
   return {
     turn: DEFAULT_TURN_NUMBER,
+    activeSideIndex: 0,
+    completedSideIndices: [],
     playerId: DEFAULT_PLAYER_ID,
     saveFileName: null,
     setup: null,
@@ -4558,16 +4644,22 @@ function normalizeGameState(gameState) {
     return normalized;
   }
 
-  const turn = Number.parseInt(gameState.turn ?? gameState.turnNumber ?? DEFAULT_TURN_NUMBER, 10);
-  normalized.turn = Number.isFinite(turn) && turn >= 0
-    ? turn
-    : DEFAULT_TURN_NUMBER;
+  normalized.turn = getGameTurnNumber(gameState);
   normalized.playerId = String(gameState.playerId ?? gameState.player ?? DEFAULT_PLAYER_ID).trim()
     || DEFAULT_PLAYER_ID;
   normalized.saveFileName = gameState.saveFileName === null || gameState.saveFileName === undefined
     ? null
     : String(gameState.saveFileName).trim() || null;
   normalized.setup = normalizeNewGameSetupState(gameState.setup ?? gameState.initialSetup);
+  const sideCount = getGameStateSideCount(normalized);
+  normalized.activeSideIndex = normalizeTurnSideIndex(
+    gameState.activeSideIndex ?? gameState.currentSideIndex ?? gameState.sideIndex,
+    sideCount,
+  );
+  normalized.completedSideIndices = normalizeCompletedSideIndices(
+    gameState.completedSideIndices ?? gameState.completedSides ?? gameState.signedSideIndices,
+    sideCount,
+  ).filter((index) => index !== normalized.activeSideIndex);
 
   const objectDetails = gameState.objectDetails && typeof gameState.objectDetails === "object"
     ? gameState.objectDetails
@@ -4583,6 +4675,45 @@ function normalizeGameState(gameState) {
   return normalized;
 }
 
+function getGameTurnNumber(gameState) {
+  const turn = Number.parseInt(gameState?.turn ?? gameState?.turnNumber ?? DEFAULT_TURN_NUMBER, 10);
+  return Number.isFinite(turn) && turn >= DEFAULT_TURN_NUMBER
+    ? turn
+    : DEFAULT_TURN_NUMBER;
+}
+
+function getGameStateSides(gameState) {
+  return Array.isArray(gameState?.setup?.sides)
+    ? gameState.setup.sides.slice(0, NEW_GAME_MAX_SIDE_COUNT)
+    : [];
+}
+
+function getGameStateSideCount(gameState) {
+  return getGameStateSides(gameState).length;
+}
+
+function normalizeTurnSideIndex(value, sideCount) {
+  if (sideCount <= 0) {
+    return 0;
+  }
+
+  const index = Number.parseInt(value ?? 0, 10);
+  return Number.isFinite(index)
+    ? THREE.MathUtils.clamp(index, 0, sideCount - 1)
+    : 0;
+}
+
+function normalizeCompletedSideIndices(value, sideCount) {
+  if (sideCount <= 0) {
+    return [];
+  }
+
+  const source = Array.isArray(value) ? value : [];
+  return Array.from(new Set(source
+    .map((index) => Number.parseInt(index, 10))
+    .filter((index) => Number.isFinite(index) && index >= 0 && index < sideCount)));
+}
+
 function normalizeNewGameSetupState(setup) {
   if (!setup || typeof setup !== "object") {
     return null;
@@ -4591,7 +4722,7 @@ function normalizeNewGameSetupState(setup) {
   const seed = String(setup.seed ?? MENU_DEFAULT_SEED).trim() || MENU_DEFAULT_SEED;
   const scenarioId = String(setup.scenarioId ?? NEW_GAME_BASIC_SCENARIO_ID).trim() || NEW_GAME_BASIC_SCENARIO_ID;
   const mode = setup.mode === NEW_GAME_MODE_ONLINE ? NEW_GAME_MODE_ONLINE : NEW_GAME_MODE_HOTSEAT;
-  const sidesSource = Array.isArray(setup.sides) ? setup.sides : [];
+  const sidesSource = Array.isArray(setup.sides) ? setup.sides.slice(0, NEW_GAME_MAX_SIDE_COUNT) : [];
   const sides = sidesSource.map((side, index) => ({
     id: String(side?.id ?? `side-${index + 1}`),
     index,

@@ -229,6 +229,8 @@ body.editor-mode .game-bottom-ui {
 }
 
 .sign-turn-panel {
+  display: grid;
+  gap: 5px;
   padding: 0;
 }
 
@@ -253,6 +255,53 @@ body.editor-mode .game-bottom-ui {
 
 .sign-turn-button span {
   display: block;
+}
+
+.turn-order-track {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  min-height: 8px;
+  gap: 2px;
+}
+
+.turn-order-track[hidden] {
+  display: none;
+}
+
+.turn-order-track--full {
+  display: grid;
+  grid-template-columns: repeat(var(--turn-side-count, 16), minmax(0, 1fr));
+}
+
+.turn-order-token {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--turn-side-color, rgba(255, 255, 255, 0.82));
+  border-radius: 3px;
+  background: var(--turn-side-color, rgba(255, 255, 255, 0.82));
+  box-shadow: 0 0 7px color-mix(in srgb, var(--turn-side-color, #ffffff) 30%, transparent);
+}
+
+.turn-order-track--full .turn-order-token {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+}
+
+.turn-order-token--completed {
+  background: transparent;
+  box-shadow: none;
+}
+
+.turn-order-token--active {
+  z-index: 2;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.9),
+    0 0 8px color-mix(in srgb, var(--turn-side-color, #ffffff) 90%, transparent),
+    0 0 18px color-mix(in srgb, var(--turn-side-color, #ffffff) 72%, transparent),
+    0 0 30px color-mix(in srgb, var(--turn-side-color, #ffffff) 42%, transparent);
 }
 
 .game-breadcrumb-button[aria-disabled="false"]:hover,
