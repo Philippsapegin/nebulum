@@ -2437,6 +2437,10 @@ body.editor-mode .music-player {
   cursor: default;
 }
 
+.system-fleet-marker--moving {
+  will-change: left, top;
+}
+
 .system-fleet-marker--selected {
   box-shadow:
     0 0 16px color-mix(in srgb, var(--fleet-color, #fff) 82%, transparent),

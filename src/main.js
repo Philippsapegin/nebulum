@@ -367,6 +367,10 @@ let pendingRuntimeSession = null;
 let currentGameState = createEmptyGameState();
 let selectedFleetId = null;
 let activeSystemFleetAnchors = [];
+let fleetMarkerPositions = new Map();
+let fleetMarkerAnimations = new Map();
+let fleetMovementSerial = 0;
+let suppressFleetMarkerAnimation = false;
 let starmapFleetMarkerElements = [];
 let shouldStartGameAfterInit = false;
 let isRuntimeSessionRedirecting = false;
@@ -4019,6 +4023,8 @@ function startGameFromMenu({ editorMode = false, gameState = null } = {}) {
   currentGameState = normalizeGameState(gameState ?? pendingStartGameState ?? runtimeSessionToRestore?.gameState);
   selectedFleetId = null;
   activeSystemFleetAnchors = [];
+  fleetMarkerPositions.clear();
+  cancelFleetMarkerAnimations();
   pendingStartGameState = null;
   closeMenuDialogs();
   setMenuStatus("STARTING");
@@ -7051,6 +7057,8 @@ function openStarWindow(node) {
 
 function closeStarWindow() {
   cancelPlanetEntryTransition();
+  captureSystemFleetMarkerPositions();
+  cancelFleetMarkerAnimations();
   systemScreenController.close();
   musicPlayerController.cancelDrag();
   musicPlayerController.closeDropdown();
@@ -7087,6 +7095,7 @@ function disposeNebulumRuntime() {
 
   cancelGraphDrag();
   cancelPlanetEntryTransition();
+  cancelFleetMarkerAnimations();
   closeStarWindow();
   planetScreenController.close();
   closeObjectDetailScreen({ preserveTransitionOverlay: true });
@@ -7105,6 +7114,7 @@ function disposeNebulumRuntime() {
   labelElements.length = 0;
   starmapFleetMarkerElements.length = 0;
   activeSystemFleetAnchors = [];
+  fleetMarkerPositions.clear();
   selectedFleetId = null;
   nodeMeshes.length = 0;
   hitTargets.length = 0;
@@ -10519,6 +10529,8 @@ function resetSystemGlowCache() {
 }
 
 function renderStarSystem(node) {
+  captureSystemFleetMarkerPositions();
+  cancelFleetMarkerAnimations();
   starSystem.replaceChildren();
   systemStarLayer.replaceChildren();
   activeSystemFleetAnchors = [];
@@ -11617,7 +11629,11 @@ function rerenderActiveSystemFleetMarkers() {
 }
 
 function renderSystemFleetMarkers(node, anchors = []) {
-  starSystem.querySelectorAll(".system-fleet-marker").forEach((marker) => marker.remove());
+  starSystem.querySelectorAll(".system-fleet-marker").forEach((marker) => {
+    captureSystemFleetMarkerPosition(marker);
+    cancelFleetMarkerAnimation(marker.dataset.fleetId);
+    marker.remove();
+  });
   if (!node) {
     return;
   }
@@ -11634,10 +11650,222 @@ function renderSystemFleetMarkers(node, anchors = []) {
     anchorUseCount.set(anchor.anchorKey, useIndex + 1);
     const marker = createSystemFleetMarker(fleet);
     const offsetY = (useIndex - Math.max(0, anchorUseCount.get(anchor.anchorKey) - 1) / 2) * 18;
-    marker.style.left = `${Math.round(anchor.x - 14)}px`;
-    marker.style.top = `${Math.round(anchor.y - 8 + offsetY)}px`;
+    marker.dataset.systemId = String(node.id);
+    marker.dataset.anchorKey = anchor.anchorKey;
+    const targetPosition = {
+      systemId: String(node.id),
+      anchorKey: anchor.anchorKey,
+      left: anchor.x - 14,
+      top: anchor.y - 8 + offsetY,
+    };
+    const previousPosition = fleetMarkerPositions.get(fleet.id);
+    const shouldAnimate = shouldAnimateFleetMarker(previousPosition, targetPosition);
+    marker.style.left = `${Math.round(shouldAnimate ? previousPosition.left : targetPosition.left)}px`;
+    marker.style.top = `${Math.round(shouldAnimate ? previousPosition.top : targetPosition.top)}px`;
     starSystem.append(marker);
+    if (shouldAnimate) {
+      animateFleetMarker(marker, fleet, previousPosition, targetPosition);
+    } else {
+      setFleetMarkerStoredPosition(fleet.id, targetPosition);
+    }
   });
+}
+
+function shouldAnimateFleetMarker(previousPosition, targetPosition) {
+  if (suppressFleetMarkerAnimation || !previousPosition || !targetPosition) {
+    return false;
+  }
+  if (previousPosition.systemId !== targetPosition.systemId ||
+    previousPosition.anchorKey === targetPosition.anchorKey) {
+    return false;
+  }
+
+  return Math.hypot(
+    previousPosition.left - targetPosition.left,
+    previousPosition.top - targetPosition.top,
+  ) > 6;
+}
+
+function captureSystemFleetMarkerPositions() {
+  starSystem.querySelectorAll(".system-fleet-marker").forEach(captureSystemFleetMarkerPosition);
+}
+
+function captureSystemFleetMarkerPosition(marker) {
+  if (!marker?.dataset?.fleetId) {
+    return;
+  }
+
+  const left = Number.parseFloat(marker.style.left);
+  const top = Number.parseFloat(marker.style.top);
+  if (!Number.isFinite(left) || !Number.isFinite(top)) {
+    return;
+  }
+
+  setFleetMarkerStoredPosition(marker.dataset.fleetId, {
+    systemId: marker.dataset.systemId ?? normalizeRuntimeNullableString(systemScreenController?.state?.activeNode?.id),
+    anchorKey: marker.dataset.anchorKey ?? "",
+    left,
+    top,
+  });
+}
+
+function setFleetMarkerStoredPosition(fleetId, position) {
+  const normalizedFleetId = String(fleetId ?? "").trim();
+  if (!normalizedFleetId || !position) {
+    return;
+  }
+
+  fleetMarkerPositions.set(normalizedFleetId, {
+    systemId: String(position.systemId ?? ""),
+    anchorKey: String(position.anchorKey ?? ""),
+    left: Number(position.left) || 0,
+    top: Number(position.top) || 0,
+  });
+}
+
+function animateFleetMarker(marker, fleet, from, to) {
+  cancelFleetMarkerAnimation(fleet.id);
+  const movement = createFleetMovement(from, to, fleet.id);
+  const startedAt = performance.now();
+  marker.classList.add("system-fleet-marker--moving");
+
+  const tick = (now) => {
+    if (!marker.isConnected) {
+      cancelFleetMarkerAnimation(fleet.id);
+      return;
+    }
+
+    const progress = THREE.MathUtils.clamp((now - startedAt) / movement.duration, 0, 1);
+    const easedProgress = easeFleetMovement(progress);
+    const point = getCubicBezierPoint(
+      movement.start,
+      movement.controlA,
+      movement.controlB,
+      movement.end,
+      easedProgress,
+    );
+    marker.style.left = `${point.x.toFixed(2)}px`;
+    marker.style.top = `${point.y.toFixed(2)}px`;
+    setFleetMarkerStoredPosition(fleet.id, {
+      ...to,
+      left: point.x,
+      top: point.y,
+    });
+
+    if (progress < 1) {
+      const frameId = requestAnimationFrame(tick);
+      fleetMarkerAnimations.set(fleet.id, { frameId, marker });
+      return;
+    }
+
+    marker.style.left = `${Math.round(to.left)}px`;
+    marker.style.top = `${Math.round(to.top)}px`;
+    marker.classList.remove("system-fleet-marker--moving");
+    setFleetMarkerStoredPosition(fleet.id, to);
+    fleetMarkerAnimations.delete(fleet.id);
+  };
+
+  const frameId = requestAnimationFrame(tick);
+  fleetMarkerAnimations.set(fleet.id, { frameId, marker });
+}
+
+function createFleetMovement(from, to, fleetId) {
+  const start = { x: from.left, y: from.top };
+  const end = { x: to.left, y: to.top };
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.max(1, Math.hypot(dx, dy));
+  const baseAngle = Math.atan2(dy, dx);
+  const random = createRandom([
+    SEED,
+    "fleet-move",
+    fleetId,
+    ++fleetMovementSerial,
+    from.anchorKey,
+    to.anchorKey,
+    Math.round(start.x),
+    Math.round(start.y),
+    Math.round(end.x),
+    Math.round(end.y),
+  ].join(":"));
+  const side = random() < 0.5 ? -1 : 1;
+  const bendA = THREE.MathUtils.degToRad(4 + random() * 21) * side;
+  const bendB = THREE.MathUtils.degToRad(4 + random() * 21) * side;
+  const shoulder = length * 0.25;
+
+  return {
+    start,
+    end,
+    controlA: {
+      x: start.x + Math.cos(baseAngle + bendA) * shoulder,
+      y: start.y + Math.sin(baseAngle + bendA) * shoulder,
+    },
+    controlB: {
+      x: end.x - Math.cos(baseAngle + bendB) * shoulder,
+      y: end.y - Math.sin(baseAngle + bendB) * shoulder,
+    },
+    duration: getFleetMovementDuration(length),
+  };
+}
+
+function getFleetMovementDuration(length) {
+  return THREE.MathUtils.clamp(720 + length * 4.6, 860, 3600);
+}
+
+function easeFleetMovement(progress) {
+  const accelerationShare = 0.34;
+  const cruiseShare = 0.32;
+  const decelerationShare = 0.34;
+  const accelerationDistance = 0.25;
+  const cruiseDistance = 0.5;
+  const decelerationDistance = 0.25;
+
+  if (progress < accelerationShare) {
+    const localProgress = progress / accelerationShare;
+    return accelerationDistance * localProgress * localProgress * localProgress;
+  }
+
+  if (progress < accelerationShare + cruiseShare) {
+    const localProgress = (progress - accelerationShare) / cruiseShare;
+    return accelerationDistance + cruiseDistance * localProgress;
+  }
+
+  const localProgress = (progress - accelerationShare - cruiseShare) / decelerationShare;
+  return accelerationDistance +
+    cruiseDistance +
+    decelerationDistance * (1 - Math.pow(1 - localProgress, 3));
+}
+
+function getCubicBezierPoint(start, controlA, controlB, end, progress) {
+  const inverse = 1 - progress;
+  const inverseSquared = inverse * inverse;
+  const progressSquared = progress * progress;
+  const startWeight = inverseSquared * inverse;
+  const controlAWeight = 3 * inverseSquared * progress;
+  const controlBWeight = 3 * inverse * progressSquared;
+  const endWeight = progressSquared * progress;
+  return {
+    x: start.x * startWeight + controlA.x * controlAWeight + controlB.x * controlBWeight + end.x * endWeight,
+    y: start.y * startWeight + controlA.y * controlAWeight + controlB.y * controlBWeight + end.y * endWeight,
+  };
+}
+
+function cancelFleetMarkerAnimation(fleetId) {
+  const normalizedFleetId = String(fleetId ?? "").trim();
+  const animation = fleetMarkerAnimations.get(normalizedFleetId);
+  if (!animation) {
+    return;
+  }
+
+  cancelAnimationFrame(animation.frameId);
+  animation.marker?.classList?.remove("system-fleet-marker--moving");
+  fleetMarkerAnimations.delete(normalizedFleetId);
+}
+
+function cancelFleetMarkerAnimations() {
+  for (const fleetId of Array.from(fleetMarkerAnimations.keys())) {
+    cancelFleetMarkerAnimation(fleetId);
+  }
 }
 
 function getFleetSystemAnchor(fleet, anchors) {
@@ -13477,7 +13705,12 @@ function resize() {
     systemScreenController.isOpen() &&
     systemScreenController.state.activeNode
   ) {
-    renderStarSystem(systemScreenController.state.activeNode);
+    suppressFleetMarkerAnimation = true;
+    try {
+      renderStarSystem(systemScreenController.state.activeNode);
+    } finally {
+      suppressFleetMarkerAnimation = false;
+    }
     renderSystemStars(systemScreenController.state.activeNode);
     renderSystemParticles(systemScreenController.state.activeNode);
     updateSystemGlow(width / 2, height / 2, 0, 0);
