@@ -623,6 +623,7 @@ let objectDetailHexAnimationFrame = null;
 const objectDetailOptions = {
   light: true,
   clouds: true,
+  borders: true,
 };
 let isDraggingPlanetWindow = false;
 const planetWindowOffset = { x: 0, y: 0 };
@@ -814,6 +815,7 @@ function initializeNebulumRuntime() {
   buildOuterLinks(outerLinks);
   buildNodes(nodes);
   graphRoot.add(linkPulse.sprite);
+  syncVisibleSystemOwnershipColors();
   resize();
   renderStarmapFrame();
 }
@@ -2309,8 +2311,9 @@ function signCurrentTurn() {
   autosaveCurrentTurnState();
   renderTurnOrderUi();
   refreshSystemGateAccess();
+  refreshSystemPlanetAccess();
   rerenderActiveSystemFleetMarkers();
-  updateStarmapFleetMarkers();
+  refreshOwnershipVisualsAfterGameStateChange();
   enforceCurrentViewExplorationAccess();
   persistRuntimeSession();
 }
@@ -4175,6 +4178,7 @@ function restoreObjectDetailScreenFromSession(planet, detailKey) {
   isObjectDetailOpen = true;
   objectDetailOptions.light = true;
   objectDetailOptions.clouds = true;
+  objectDetailOptions.borders = true;
   starWindow.classList.add("object-detail-open");
   const detailToken = ++objectDetailToken;
   cancelPlanetEntryTransition();
@@ -5043,6 +5047,151 @@ function markExploredForSide(sideId, { systemId = null, planetKey = null } = {})
   appendExplorationValue(currentGameState.exploration.planets, normalizedSideId, planetKey);
 }
 
+function getObjectDetailStateByKey(detailKey, gameState = currentGameState) {
+  const normalizedKey = normalizeRuntimeNullableString(detailKey);
+  return normalizedKey && gameState?.objectDetails
+    ? gameState.objectDetails[normalizedKey] ?? null
+    : null;
+}
+
+function getVisiblePlanetOwnership(planetOrKey, gameState = currentGameState) {
+  const planetKey = typeof planetOrKey === "string"
+    ? planetOrKey
+    : getPlanetExplorationKey(planetOrKey);
+  if (!planetKey) {
+    return null;
+  }
+
+  return getDominantVisibleOwnershipForDetailKey(planetKey, gameState);
+}
+
+function getDominantVisibleOwnershipForDetailKey(detailKey, gameState = currentGameState) {
+  const detailState = getObjectDetailStateByKey(detailKey, gameState);
+  if (!detailState) {
+    return null;
+  }
+
+  const activeSideId = getActiveGameSideId(gameState);
+  const isPlanetExplored = isPlanetExploredForSide(detailKey, activeSideId, gameState);
+  return getDominantOwnership(
+    getObjectDetailOwnershipCounts(detailState, (ownerSideId) => (
+      ownerSideId === activeSideId || isPlanetExplored
+    )),
+    gameState,
+  );
+}
+
+function getVisibleSystemOwnership(systemId, gameState = currentGameState) {
+  const normalizedSystemId = normalizeRuntimeNullableString(systemId);
+  if (!normalizedSystemId || !gameState?.objectDetails) {
+    return null;
+  }
+
+  const ownershipCounts = new Map();
+  for (const [detailKey, detailState] of Object.entries(gameState.objectDetails)) {
+    if (getObjectDetailStateKeySystemId(detailKey) !== normalizedSystemId) {
+      continue;
+    }
+    const visibleOwnership = getDominantVisibleOwnershipForDetailKey(detailKey, gameState);
+    if (!visibleOwnership) {
+      continue;
+    }
+    ownershipCounts.set(
+      visibleOwnership.sideId,
+      (ownershipCounts.get(visibleOwnership.sideId) ?? 0) + visibleOwnership.count,
+    );
+  }
+
+  return getDominantOwnership(ownershipCounts, gameState);
+}
+
+function getObjectDetailOwnershipCounts(detailState, isOwnerVisible = () => true) {
+  const ownershipCounts = new Map();
+  const buildings = normalizeObjectDetailBuildings(detailState?.buildings, detailState?.towns, detailState?.cityStage);
+  for (const building of buildings.values()) {
+    const ownerSideId = normalizeObjectDetailOwnerSideId(building.ownerSideId);
+    if (!ownerSideId || !isOwnerVisible(ownerSideId)) {
+      continue;
+    }
+    ownershipCounts.set(ownerSideId, (ownershipCounts.get(ownerSideId) ?? 0) + 1);
+  }
+  return ownershipCounts;
+}
+
+function getDominantOwnership(ownershipCounts, gameState = currentGameState) {
+  if (!ownershipCounts || ownershipCounts.size === 0) {
+    return null;
+  }
+
+  const activeSideId = getActiveGameSideId(gameState);
+  let bestSideId = null;
+  let bestCount = -1;
+  for (const [sideId, count] of ownershipCounts) {
+    if (count > bestCount || (count === bestCount && sideId === activeSideId)) {
+      bestSideId = sideId;
+      bestCount = count;
+    }
+  }
+
+  if (!bestSideId) {
+    return null;
+  }
+
+  return {
+    sideId: bestSideId,
+    side: getGameSideById(bestSideId, gameState),
+    color: getSideColorById(bestSideId, gameState),
+    count: bestCount,
+  };
+}
+
+function getObjectDetailStateKeySystemId(detailKey) {
+  const firstPart = String(detailKey ?? "").split(":")[0] ?? "";
+  try {
+    return decodeURIComponent(firstPart);
+  } catch {
+    return firstPart;
+  }
+}
+
+function syncVisibleSystemOwnershipColors() {
+  if (isEditorMode || !isGameRuntimeReady || nodes.length === 0) {
+    return;
+  }
+
+  const desiredColors = new Map();
+  for (const node of nodes) {
+    const ownership = getVisibleSystemOwnership(node.id);
+    if (ownership?.color) {
+      desiredColors.set(node.id, ownership.color);
+    }
+  }
+
+  for (const [nodeId, currentColor] of Array.from(nodeColors.entries())) {
+    const nextColor = desiredColors.get(nodeId);
+    if (nextColor === currentColor) {
+      desiredColors.delete(nodeId);
+      continue;
+    }
+    startNodeExitAnimation(nodeId, currentColor);
+    nodeColors.delete(nodeId);
+    nodeAnimationProgress.delete(nodeId);
+    removeEdgeAnimationsForNode(nodeId);
+  }
+
+  for (const [nodeId, color] of desiredColors) {
+    nodeColors.set(nodeId, color);
+    nodeAnimationProgress.set(nodeId, 0);
+    addEdgeAnimationsForNode(nodeId, color);
+  }
+}
+
+function refreshOwnershipVisualsAfterGameStateChange() {
+  syncVisibleSystemOwnershipColors();
+  refreshSystemOwnershipVisuals();
+  updateStarmapFleetMarkers();
+}
+
 function getFleetById(fleetId, gameState = currentGameState) {
   const normalizedFleetId = String(fleetId ?? "").trim();
   if (!normalizedFleetId) {
@@ -5210,8 +5359,9 @@ function finalizeFleetStateChange() {
   currentGameState = normalizeGameState(currentGameState);
   clearSelectedFleetIfInactive();
   refreshSystemGateAccess();
+  refreshSystemPlanetAccess();
   rerenderActiveSystemFleetMarkers();
-  updateStarmapFleetMarkers();
+  refreshOwnershipVisualsAfterGameStateChange();
   persistRuntimeSession();
 }
 
@@ -5225,6 +5375,17 @@ function refreshSystemGateAccess() {
     const isAccessible = isSystemAccessibleForActiveSide(targetNode);
     gate.classList.toggle("system-jump--locked", !isAccessible);
     gate.setAttribute("aria-disabled", String(!isAccessible));
+  });
+}
+
+function refreshSystemPlanetAccess() {
+  if (!systemScreenController?.isOpen?.()) {
+    return;
+  }
+
+  starSystem.querySelectorAll(".system-planet-hit").forEach((hitTarget) => {
+    const planet = hitTarget.userData?.planet;
+    hitTarget.classList.toggle("system-planet-hit--locked", !isPlanetAccessibleForActiveSide(planet));
   });
 }
 
@@ -6775,6 +6936,7 @@ function setSystemHover(body) {
   systemHoverPanel.classList.toggle("visible", Boolean(hoveredSystemBody));
   systemHoverNameWrap.setAttribute("aria-hidden", hoveredSystemBody ? "false" : "true");
   systemHoverPanel.setAttribute("aria-hidden", hoveredSystemBody ? "false" : "true");
+  applySystemHoverOwnershipColor(hoveredSystemBody);
 
   if (hoveredSystemBody) {
     clearSystemTooltipContentCleanup();
@@ -6783,6 +6945,18 @@ function setSystemHover(body) {
   }
 
   scheduleSystemTooltipTypewriter(hoveredSystemBody, useFastEnter);
+}
+
+function applySystemHoverOwnershipColor(body = hoveredSystemBody) {
+  const ownershipColor = body?.dataset?.ownershipColor ?? "";
+  if (ownershipColor) {
+    systemHoverNameWrap.style.setProperty("--system-hover-owner-color", ownershipColor);
+    systemHoverPanel.style.setProperty("--system-hover-owner-color", ownershipColor);
+    return;
+  }
+
+  systemHoverNameWrap.style.removeProperty("--system-hover-owner-color");
+  systemHoverPanel.style.removeProperty("--system-hover-owner-color");
 }
 
 function scheduleSystemTooltipTypewriter(body, immediate = false) {
@@ -7272,6 +7446,7 @@ async function openObjectDetailFromPlanetView(detail, clientX = window.innerWidt
   isObjectDetailOpen = true;
   objectDetailOptions.light = true;
   objectDetailOptions.clouds = true;
+  objectDetailOptions.borders = true;
   starWindow.classList.add("object-detail-open");
   const detailToken = ++objectDetailToken;
   cancelPlanetEntryTransition();
@@ -7539,6 +7714,7 @@ function createObjectDetailOptionControls() {
   controls.append(
     createObjectDetailOptionControl("LIGHT", "light"),
     createObjectDetailOptionControl("CLOUDS", "clouds"),
+    createObjectDetailOptionControl("BORDERS", "borders"),
   );
   return controls;
 }
@@ -7574,6 +7750,10 @@ function setObjectDetailOption(optionKey, isEnabled) {
   if (objectDetail3D) {
     objectDetail3D.targetLightMix = objectDetailOptions.light ? 1 : 0;
     objectDetail3D.targetCloudMix = objectDetailOptions.clouds ? 1 : 0;
+    if (optionKey === "borders" && objectDetail3D.hexGrid) {
+      redrawObjectDetailHexGrid(objectDetail3D.hexGrid);
+      renderObjectDetail3D();
+    }
   }
 }
 
@@ -8493,6 +8673,7 @@ function handleObjectDetailBuildMenuOptionClick(hexGrid, hex, option) {
   setObjectDetailBuilding(hexGrid, hex.address, createObjectDetailTownBuilding(hex.address));
   markObjectDetailCityLayerDirty(hexGrid);
   syncObjectDetailBuildingsToGameState(hexGrid.detail);
+  refreshOwnershipVisualsAfterGameStateChange();
   persistRuntimeSession("detail");
   closeObjectDetailBuildMenu(hexGrid);
   redrawObjectDetailHexGrid(hexGrid);
@@ -8500,13 +8681,15 @@ function handleObjectDetailBuildMenuOptionClick(hexGrid, hex, option) {
 }
 
 function removeObjectDetailBuilding(hexGrid, hex) {
-  if (!getObjectDetailBuilding(hexGrid.state, hex.address)) {
+  const building = getObjectDetailBuilding(hexGrid.state, hex.address);
+  if (!building || !isObjectDetailBuildingControlledByActiveSide(building)) {
     return;
   }
 
   deleteObjectDetailBuilding(hexGrid, hex.address);
   markObjectDetailCityLayerDirty(hexGrid);
   syncObjectDetailBuildingsToGameState(hexGrid.detail);
+  refreshOwnershipVisualsAfterGameStateChange();
   persistRuntimeSession("detail");
   closeObjectDetailBuildMenu(hexGrid);
   redrawObjectDetailHexGrid(hexGrid);
@@ -9173,10 +9356,14 @@ function normalizeObjectDetailBuilding(address, building, fallbackStage = null) 
   }
 
   const type = String(building?.type ?? "town").trim().toLowerCase();
+  const ownerSideId = normalizeObjectDetailOwnerSideId(
+    building?.ownerSideId ?? building?.owner ?? building?.sideId ?? building?.state?.ownerSideId,
+  );
   if (type === "town") {
     return {
       address: normalizedAddress,
       type: "town",
+      ownerSideId,
       name: String(building?.name ?? "New Town"),
       population: Math.max(0, Math.floor(Number(building?.population ?? 0))),
       state: normalizeObjectDetailBuildingState(building, fallbackStage),
@@ -9186,8 +9373,14 @@ function normalizeObjectDetailBuilding(address, building, fallbackStage = null) 
   return {
     address: normalizedAddress,
     type,
+    ownerSideId,
     state: normalizeObjectDetailBuildingState(building, fallbackStage),
   };
+}
+
+function normalizeObjectDetailOwnerSideId(value) {
+  const ownerSideId = String(value ?? "").trim();
+  return ownerSideId || null;
 }
 
 function normalizeObjectDetailBuildingState(building, fallbackStage = null) {
@@ -9218,10 +9411,16 @@ function getObjectDetailBuilding(state, address) {
   return state.buildings instanceof Map ? state.buildings.get(address) ?? null : null;
 }
 
-function createObjectDetailTownBuilding(address, stage = OBJECT_DETAIL_CITY_STAGE_MIN) {
+function isObjectDetailBuildingControlledByActiveSide(building) {
+  const ownerSideId = normalizeObjectDetailOwnerSideId(building?.ownerSideId);
+  return Boolean(ownerSideId && ownerSideId === getActiveGameSideId());
+}
+
+function createObjectDetailTownBuilding(address, stage = OBJECT_DETAIL_CITY_STAGE_MIN, ownerSideId = getActiveGameSideId()) {
   return {
     address,
     type: "town",
+    ownerSideId: normalizeObjectDetailOwnerSideId(ownerSideId),
     name: "New Town",
     population: 0,
     state: {
@@ -9236,6 +9435,9 @@ function setObjectDetailBuilding(hexGrid, address, building) {
     return;
   }
 
+  if (!normalized.ownerSideId) {
+    normalized.ownerSideId = getActiveGameSideId();
+  }
   hexGrid.state.buildings.set(normalized.address, normalized);
   hexGrid.state.towns = getObjectDetailTownAddressSet(hexGrid.state.buildings);
 }
@@ -9274,6 +9476,7 @@ function redrawObjectDetailHexGrid(hexGrid) {
   context.imageSmoothingEnabled = false;
   redrawObjectDetailCityLayer(hexGrid);
 
+  drawObjectDetailOwnedHexes(context, hexGrid);
   setObjectDetailHexStrokeStyle(context);
   for (const hex of hexes) {
     drawObjectDetailHex(context, hex.px, hex.py, hex.radius);
@@ -9282,6 +9485,32 @@ function redrawObjectDetailHexGrid(hexGrid) {
   drawObjectDetailBuildMenu(context, hexGrid);
   if (hexGrid.texture) {
     hexGrid.texture.needsUpdate = true;
+  }
+}
+
+function drawObjectDetailOwnedHexes(context, hexGrid) {
+  if (!objectDetailOptions.borders) {
+    return;
+  }
+
+  for (const hex of hexGrid.hexes) {
+    const building = getObjectDetailBuilding(hexGrid.state, hex.address);
+    const ownerSideId = normalizeObjectDetailOwnerSideId(building?.ownerSideId);
+    if (!ownerSideId) {
+      continue;
+    }
+
+    const ownerColor = getSideColorById(ownerSideId);
+    context.save();
+    traceObjectDetailHexPath(context, hex.px, hex.py, hex.radius);
+    context.fillStyle = hexToRgba(ownerColor, 0.08);
+    context.strokeStyle = hexToRgba(ownerColor, 0.82);
+    context.lineWidth = Math.max(1.6, hex.radius * 0.045);
+    context.shadowColor = hexToRgba(ownerColor, 0.36);
+    context.shadowBlur = Math.max(4, hex.radius * 0.1);
+    context.fill();
+    context.stroke();
+    context.restore();
   }
 }
 
@@ -9392,9 +9621,10 @@ function getObjectDetailRadialMenuOptions(hexGrid, hex) {
 }
 
 function isObjectDetailMenuOptionClickable(hexGrid, hex, option, isBlocked) {
-  const hasBuilding = Boolean(getObjectDetailBuilding(hexGrid.state, hex.address));
+  const building = getObjectDetailBuilding(hexGrid.state, hex.address);
+  const hasBuilding = Boolean(building);
   if (option.id === "demolish") {
-    return hasBuilding;
+    return hasBuilding && isObjectDetailBuildingControlledByActiveSide(building);
   }
   if (isBlocked || hasBuilding) {
     return false;
@@ -10816,6 +11046,7 @@ function renderStarSystem(node) {
     };
     hitTarget.userData = { label, planet: planetInfo };
     const planetKey = getPlanetExplorationKey(planetInfo);
+    applySystemPlanetOwnershipVisuals(hitTarget, label, planetKey);
     hitTarget.classList.toggle("system-planet-hit--locked", !isPlanetAccessibleForActiveSide(planetInfo));
     activeSystemFleetAnchors.push({
       anchorKey: `planet:${planetKey}`,
@@ -10879,6 +11110,40 @@ function renderStarSystem(node) {
     fleetAnchors: activeSystemFleetAnchors,
   });
   renderSystemFleetMarkers(node, activeSystemFleetAnchors);
+}
+
+function refreshSystemOwnershipVisuals() {
+  if (!systemScreenController?.isOpen?.()) {
+    return;
+  }
+
+  starSystem.querySelectorAll(".system-planet-hit").forEach((hitTarget) => {
+    const planet = hitTarget.userData?.planet;
+    const label = hitTarget.userData?.label;
+    const planetKey = getPlanetExplorationKey(planet);
+    applySystemPlanetOwnershipVisuals(hitTarget, label, planetKey);
+  });
+  applySystemHoverOwnershipColor();
+}
+
+function applySystemPlanetOwnershipVisuals(hitTarget, label, planetKey) {
+  const ownership = getVisiblePlanetOwnership(planetKey);
+  if (ownership?.color) {
+    hitTarget.dataset.ownershipColor = ownership.color;
+    hitTarget.dataset.ownerSideId = ownership.sideId;
+    if (label) {
+      label.style.color = ownership.color;
+      label.style.textShadow = `0 0 10px ${hexToRgba(ownership.color, 0.32)}`;
+    }
+    return;
+  }
+
+  delete hitTarget.dataset.ownershipColor;
+  delete hitTarget.dataset.ownerSideId;
+  if (label) {
+    label.style.removeProperty("color");
+    label.style.removeProperty("text-shadow");
+  }
 }
 
 function renderSystemZones(node, starX, centerY, minOrbit, maxOrbit) {
