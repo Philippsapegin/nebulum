@@ -7850,6 +7850,8 @@ function updateObjectDetailObservedBounds() {
   objectDetailTexture.style.setProperty("--object-detail-observed-top", `${bounds.top}px`);
   objectDetailTexture.style.setProperty("--object-detail-observed-right", `${rect.width - bounds.right}px`);
   objectDetailTexture.style.setProperty("--object-detail-observed-bottom", `${rect.height - bounds.bottom}px`);
+  objectDetailScreen.style.setProperty("--object-detail-observed-left", `${bounds.left}px`);
+  objectDetailScreen.style.setProperty("--object-detail-observed-right", `${rect.width - bounds.right}px`);
   return bounds;
 }
 
@@ -9476,11 +9478,11 @@ function redrawObjectDetailHexGrid(hexGrid) {
   context.imageSmoothingEnabled = false;
   redrawObjectDetailCityLayer(hexGrid);
 
-  drawObjectDetailOwnedHexes(context, hexGrid);
+  const ownedHexOwners = getObjectDetailOwnedHexOwnerMap(hexGrid);
+  drawObjectDetailOwnedHexFills(context, hexGrid, ownedHexOwners);
   setObjectDetailHexStrokeStyle(context);
-  for (const hex of hexes) {
-    drawObjectDetailHex(context, hex.px, hex.py, hex.radius);
-  }
+  drawObjectDetailHexGridLines(context, hexes, ownedHexOwners);
+  drawObjectDetailOwnedHexBoundaries(context, hexGrid, ownedHexOwners);
 
   drawObjectDetailBuildMenu(context, hexGrid);
   if (hexGrid.texture) {
@@ -9488,9 +9490,10 @@ function redrawObjectDetailHexGrid(hexGrid) {
   }
 }
 
-function drawObjectDetailOwnedHexes(context, hexGrid) {
+function getObjectDetailOwnedHexOwnerMap(hexGrid) {
+  const ownerByAddress = new Map();
   if (!objectDetailOptions.borders) {
-    return;
+    return ownerByAddress;
   }
 
   for (const hex of hexGrid.hexes) {
@@ -9499,19 +9502,133 @@ function drawObjectDetailOwnedHexes(context, hexGrid) {
     if (!ownerSideId) {
       continue;
     }
+    ownerByAddress.set(hex.address, ownerSideId);
+  }
+  return ownerByAddress;
+}
 
+function drawObjectDetailOwnedHexFills(context, hexGrid, ownerByAddress) {
+  if (!ownerByAddress?.size) {
+    return;
+  }
+
+  for (const [ownerSideId, hexes] of getObjectDetailOwnedHexGroups(hexGrid, ownerByAddress)) {
     const ownerColor = getSideColorById(ownerSideId);
     context.save();
-    traceObjectDetailHexPath(context, hex.px, hex.py, hex.radius);
+    context.beginPath();
+    for (const hex of hexes) {
+      appendObjectDetailHexPath(context, hex.px, hex.py, hex.radius);
+    }
     context.fillStyle = hexToRgba(ownerColor, 0.08);
-    context.strokeStyle = hexToRgba(ownerColor, 0.82);
-    context.lineWidth = Math.max(1.6, hex.radius * 0.045);
-    context.shadowColor = hexToRgba(ownerColor, 0.36);
-    context.shadowBlur = Math.max(4, hex.radius * 0.1);
     context.fill();
+    context.restore();
+  }
+}
+
+function drawObjectDetailOwnedHexBoundaries(context, hexGrid, ownerByAddress) {
+  if (!ownerByAddress?.size) {
+    return;
+  }
+
+  for (const [ownerSideId, hexes] of getObjectDetailOwnedHexGroups(hexGrid, ownerByAddress)) {
+    const ownerColor = getSideColorById(ownerSideId);
+    let hasBoundary = false;
+    context.save();
+    context.beginPath();
+    for (const hex of hexes) {
+      for (let edgeIndex = 0; edgeIndex < 6; edgeIndex += 1) {
+        const neighborAddress = getObjectDetailNeighborAddress(hex, edgeIndex);
+        if (ownerByAddress.get(neighborAddress) === ownerSideId) {
+          continue;
+        }
+        appendObjectDetailHexEdgePath(context, hex, edgeIndex);
+        hasBoundary = true;
+      }
+    }
+    if (!hasBoundary) {
+      context.restore();
+      continue;
+    }
+    context.strokeStyle = hexToRgba(ownerColor, 0.82);
+    context.lineWidth = Math.max(1.6, hexes[0].radius * 0.045);
+    context.lineJoin = "round";
+    context.lineCap = "round";
+    context.shadowColor = hexToRgba(ownerColor, 0.36);
+    context.shadowBlur = Math.max(4, hexes[0].radius * 0.1);
     context.stroke();
     context.restore();
   }
+}
+
+function getObjectDetailOwnedHexGroups(hexGrid, ownerByAddress) {
+  const groups = new Map();
+  for (const hex of hexGrid.hexes) {
+    const ownerSideId = ownerByAddress.get(hex.address);
+    if (!ownerSideId) {
+      continue;
+    }
+    if (!groups.has(ownerSideId)) {
+      groups.set(ownerSideId, []);
+    }
+    groups.get(ownerSideId).push(hex);
+  }
+  return groups;
+}
+
+function drawObjectDetailHexGridLines(context, hexes, ownerByAddress = new Map()) {
+  context.beginPath();
+  for (const hex of hexes) {
+    const ownerSideId = ownerByAddress.get(hex.address);
+    const skippedEdges = [];
+    for (let edgeIndex = 0; edgeIndex < 6; edgeIndex += 1) {
+      const neighborAddress = getObjectDetailNeighborAddress(hex, edgeIndex);
+      skippedEdges[edgeIndex] = Boolean(ownerSideId && ownerByAddress.get(neighborAddress) === ownerSideId);
+    }
+    if (!skippedEdges.some(Boolean)) {
+      appendObjectDetailHexPath(context, hex.px, hex.py, hex.radius);
+      continue;
+    }
+
+    for (let edgeIndex = 0; edgeIndex < 6; edgeIndex += 1) {
+      if (!skippedEdges[edgeIndex]) {
+        appendObjectDetailHexEdgePath(context, hex, edgeIndex);
+      }
+    }
+  }
+  context.stroke();
+}
+
+function getObjectDetailNeighborAddress(hex, edgeIndex) {
+  const isOddColumn = hex.column % 2 === 1;
+  switch (edgeIndex) {
+    case 0:
+      return `${hex.column + 1}:${hex.row + (isOddColumn ? 1 : 0)}`;
+    case 1:
+      return `${hex.column}:${hex.row + 1}`;
+    case 2:
+      return `${hex.column - 1}:${hex.row + (isOddColumn ? 1 : 0)}`;
+    case 3:
+      return `${hex.column - 1}:${hex.row - (isOddColumn ? 0 : 1)}`;
+    case 4:
+      return `${hex.column}:${hex.row - 1}`;
+    case 5:
+      return `${hex.column + 1}:${hex.row - (isOddColumn ? 0 : 1)}`;
+    default:
+      return "";
+  }
+}
+
+function appendObjectDetailHexEdgePath(context, hex, edgeIndex) {
+  const startAngle = THREE.MathUtils.degToRad(60 * edgeIndex);
+  const endAngle = THREE.MathUtils.degToRad(60 * ((edgeIndex + 1) % 6));
+  context.moveTo(
+    hex.px + Math.cos(startAngle) * hex.radius,
+    hex.py + Math.sin(startAngle) * hex.radius,
+  );
+  context.lineTo(
+    hex.px + Math.cos(endAngle) * hex.radius,
+    hex.py + Math.sin(endAngle) * hex.radius,
+  );
 }
 
 function redrawObjectDetailCityLayer(hexGrid) {
@@ -9562,6 +9679,10 @@ function markObjectDetailCityLayerDirty(hexGrid) {
 
 function traceObjectDetailHexPath(context, centerX, centerY, radius) {
   context.beginPath();
+  appendObjectDetailHexPath(context, centerX, centerY, radius);
+}
+
+function appendObjectDetailHexPath(context, centerX, centerY, radius) {
   for (let index = 0; index < 6; index += 1) {
     const angle = THREE.MathUtils.degToRad(60 * index);
     const x = centerX + Math.cos(angle) * radius;

@@ -3913,11 +3913,15 @@ body.editor-mode .music-player {
 }
 
 .object-detail-screen {
-  --object-detail-panel-width: clamp(118px, 9.5vw, 184px);
-  --object-detail-layout-gap: 14px;
+  --object-detail-panel-width: 192px;
+  --object-detail-panel-height: 91%;
+  --object-detail-panel-y-offset: 0px;
+  --object-detail-layout-gap: 0px;
+  --object-detail-side-gap-target: 0px;
+  --object-detail-layout-top-offset: -80px;
   --object-detail-surface-height: min(
     78vh,
-    calc((96vw - var(--object-detail-panel-width) - var(--object-detail-panel-width) - var(--object-detail-layout-gap) - var(--object-detail-layout-gap)) / 2)
+    48vw
   );
   --object-detail-exit-scale: 1;
   position: absolute;
@@ -3945,20 +3949,30 @@ body.editor-mode .music-player {
 }
 
 .object-detail-screen__layout {
-  display: grid;
-  grid-template-columns: var(--object-detail-panel-width) auto var(--object-detail-panel-width);
-  align-items: stretch;
-  justify-content: center;
-  gap: var(--object-detail-layout-gap);
-  max-width: 96vw;
+  position: relative;
+  width: calc(var(--object-detail-surface-height) * 2);
+  height: var(--object-detail-surface-height);
+  max-width: none;
+  transform: translateY(var(--object-detail-layout-top-offset));
 }
 
 .object-detail-screen__side-panel {
+  position: absolute;
+  top: calc((100% - var(--object-detail-panel-height)) / 2 + var(--object-detail-panel-y-offset));
+  z-index: 2;
   width: var(--object-detail-panel-width);
-  height: var(--object-detail-surface-height);
+  height: var(--object-detail-panel-height);
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.045);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.026);
+}
+
+.object-detail-screen__side-panel--left {
+  left: calc(var(--object-detail-observed-left, 0px) - var(--object-detail-side-gap-target) - var(--object-detail-panel-width));
+}
+
+.object-detail-screen__side-panel--right {
+  left: calc(100% - var(--object-detail-observed-right, 0px) + var(--object-detail-side-gap-target));
 }
 
 .object-detail-screen__top-bar {
@@ -3972,8 +3986,9 @@ body.editor-mode .music-player {
 
 .object-detail-screen__texture {
   position: relative;
-  width: calc(var(--object-detail-surface-height) * 2);
-  height: var(--object-detail-surface-height);
+  z-index: 1;
+  width: 100%;
+  height: 100%;
   max-width: none;
   max-height: none;
   aspect-ratio: 2 / 1;
