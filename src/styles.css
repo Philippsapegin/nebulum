@@ -97,6 +97,62 @@ body.editor-mode .game-bottom-ui {
   display: none;
 }
 
+.fleet-action-panel {
+  position: fixed;
+  left: calc(18px + 131px + 7px);
+  bottom: 16px;
+  z-index: 67;
+  display: none;
+  grid-template-columns: repeat(6, 42px);
+  grid-auto-rows: 42px;
+  gap: 3px;
+  padding: 4px;
+  border-radius: 3px;
+  background: rgba(10, 10, 11, 0.48);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+body.game-running .fleet-action-panel:not([hidden]) {
+  display: grid;
+}
+
+body.editor-mode .fleet-action-panel {
+  display: none;
+}
+
+.fleet-action-button {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(255, 255, 255, 0.82);
+  cursor: pointer;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.fleet-action-button[disabled] {
+  cursor: default;
+  color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.026);
+}
+
+.fleet-action-button:not([disabled]):hover,
+.fleet-action-button:not([disabled]):focus-visible {
+  outline: 0;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
 .game-breadcrumbs {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -205,6 +261,10 @@ body.editor-mode .game-bottom-ui {
   font-weight: 500;
   line-height: 1;
   text-align: left;
+}
+
+.game-ui-panel__button[hidden] {
+  display: none;
 }
 
 .game-ui-panel__icon-slot {
@@ -1522,19 +1582,24 @@ body.graph-entry-moving .hover-panel {
   position: fixed;
   width: 20px;
   height: 11px;
+  padding: 0;
+  border: 0;
   border-radius: 2px;
   background: rgba(10, 10, 11, 0.74);
   box-shadow:
     0 0 9px color-mix(in srgb, var(--fleet-color, #fff) 42%, transparent),
     0 8px 22px rgba(0, 0, 0, 0.36);
+  color: inherit;
+  cursor: pointer;
   opacity: 1;
   transform: translate(-100%, -50%);
   transition: opacity 160ms ease;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .starmap-fleet-marker.hidden {
   opacity: 0;
+  pointer-events: none;
 }
 
 .starmap-fleet-marker__stripe {
@@ -1560,12 +1625,21 @@ body.graph-entry-moving .hover-panel {
 
 .starmap-fleet-marker--foreign {
   background: rgba(10, 10, 11, 0.58);
+  cursor: default;
+}
+
+.starmap-fleet-marker--moving {
+  will-change: left, top;
 }
 
 .starmap-fleet-marker--selected {
   box-shadow:
     0 0 14px color-mix(in srgb, var(--fleet-color, #fff) 82%, transparent),
     0 8px 22px rgba(0, 0, 0, 0.36);
+}
+
+.starmap-fleet-marker:focus-visible {
+  outline: 0;
 }
 
 .hover-name-wrap,

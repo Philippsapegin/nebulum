@@ -61,6 +61,11 @@ const SAVE_FOLDER_NAME = "saves";
 const RUNTIME_SESSION_STORAGE_KEY = "nebulum:runtime-session";
 const DEFAULT_TURN_NUMBER = 1;
 const DEFAULT_PLAYER_ID = "player-1";
+const FLEET_SYSTEM_MOVES_PER_TURN = 4;
+const FLEET_LINK_MOVES_PER_TURN = 2;
+const FLEET_ACTION_GRID_COLUMNS = 6;
+const FLEET_ACTION_GRID_ROWS = 3;
+const FLEET_SYSTEM_SLOT_COUNT = 8;
 const UI_HOVER_SOUND = "ui.hover.quiet";
 const UI_MENU_CLICK_SOUND = "ui.menu.click";
 const UI_BASE_CLICK_SOUND = "ui.base.click";
@@ -133,6 +138,9 @@ const MENU_ENVIRONMENT_AUDIO_CHANNEL = "menuEnvironment";
 const LEGACY_ENVIRONMENT_AUDIO_CHANNEL = "environment";
 const NEBULUM_LOCAL_PORTS = Array.from({ length: 11 }, (_, index) => 4173 + index);
 const DEFAULT_SKY_GRADIENT_COLORS = ["#27648f", "#000000", "#884d26", "#000000"];
+const FOG_SELECTION_GROUP_KEY = "__nebulum_fog__";
+const FOG_SELECTION_COLOR = "#000000";
+const FOG_SELECTION_OPACITY = 0.18;
 const PLANET_WATER_TAG_CHANCE = 0.5;
 const ATMOSPHERE_TAGS = ["THIN ATMOSPHERE", "ATMOSPHERE", "DENSE ATMOSPHERE"];
 const ATMOSPHERE_TEMPERATURE_MULTIPLIERS = {
@@ -211,6 +219,7 @@ const gameBorderlessWindow = document.querySelector("#game-borderless-window");
 const gameSettingsClose = document.querySelector("#game-settings-close");
 const signTurnButton = document.querySelector("#sign-turn-button");
 const turnOrderTrack = document.querySelector("#turn-order-track");
+const fleetActionPanel = document.querySelector("#fleet-action-panel");
 const gameBreadcrumbStarmap = document.querySelector("#game-breadcrumb-starmap");
 const gameBreadcrumbSystem = document.querySelector("#game-breadcrumb-system");
 const gameBreadcrumbOrbit = document.querySelector("#game-breadcrumb-orbit");
@@ -372,6 +381,8 @@ let fleetMarkerAnimations = new Map();
 let fleetMovementSerial = 0;
 let suppressFleetMarkerAnimation = false;
 let starmapFleetMarkerElements = [];
+let starmapFleetMarkerPositions = new Map();
+let starmapFleetMarkerAnimations = new Map();
 let shouldStartGameAfterInit = false;
 let isRuntimeSessionRedirecting = false;
 let runtimeLoadingHideTimer = null;
@@ -2308,6 +2319,7 @@ function signCurrentTurn() {
 
   currentGameState = advanceGameTurnState(currentGameState);
   clearSelectedFleetIfInactive();
+  renderFleetActionPanel();
   autosaveCurrentTurnState();
   renderTurnOrderUi();
   refreshSystemGateAccess();
@@ -4025,9 +4037,12 @@ function startGameFromMenu({ editorMode = false, gameState = null } = {}) {
   isEditorMode = runtimeSessionToRestore?.editorMode ?? editorMode;
   currentGameState = normalizeGameState(gameState ?? pendingStartGameState ?? runtimeSessionToRestore?.gameState);
   selectedFleetId = null;
+  renderFleetActionPanel();
   activeSystemFleetAnchors = [];
   fleetMarkerPositions.clear();
+  starmapFleetMarkerPositions.clear();
   cancelFleetMarkerAnimations();
+  cancelStarmapFleetMarkerAnimations();
   pendingStartGameState = null;
   closeMenuDialogs();
   setMenuStatus("STARTING");
@@ -4685,7 +4700,12 @@ function normalizeGameState(gameState) {
     gameState.completedSideIndices ?? gameState.completedSides ?? gameState.signedSideIndices,
     sideCount,
   ).filter((index) => index !== normalized.activeSideIndex);
-  normalized.fleets = normalizeGameFleets(gameState.fleets ?? gameState.ships, normalized.setup);
+  normalized.fleets = normalizeGameFleets(
+    gameState.fleets ?? gameState.ships,
+    normalized.setup,
+    normalized.turn,
+    normalized.activeSideIndex,
+  );
   normalized.exploration = normalizeGameExploration(
     gameState.exploration ?? gameState.explored,
     normalized.setup,
@@ -4710,6 +4730,7 @@ function createEmptyExplorationState() {
   return {
     systems: {},
     planets: {},
+    links: {},
   };
 }
 
@@ -4781,7 +4802,7 @@ function shuffleSeeded(items, random) {
   return result;
 }
 
-function normalizeGameFleets(fleets, setup) {
+function normalizeGameFleets(fleets, setup, turn = DEFAULT_TURN_NUMBER, activeSideIndex = 0) {
   if (!Array.isArray(fleets)) {
     return [];
   }
@@ -4816,9 +4837,54 @@ function normalizeGameFleets(fleets, setup) {
         ownerSideIndex: sideIndex >= 0 ? sideIndex : 0,
         name: String(fleet.name ?? `${sides[sideIndex]?.name ?? "SIDE"} FLEET`).trim() || "FLEET",
         location,
+        movement: normalizeFleetMovement(fleet.movement, turn, activeSideIndex),
       };
     })
     .filter(Boolean);
+}
+
+function createDefaultFleetMovement(turn = DEFAULT_TURN_NUMBER, activeSideIndex = 0) {
+  return {
+    turn: getGameTurnNumber({ turn }),
+    activeSideIndex: normalizeTurnSideIndex(activeSideIndex, Math.max(1, getGameStateSideCount(currentGameState))),
+    system: FLEET_SYSTEM_MOVES_PER_TURN,
+    link: FLEET_LINK_MOVES_PER_TURN,
+  };
+}
+
+function normalizeFleetMovement(movement, turn = DEFAULT_TURN_NUMBER, activeSideIndex = 0) {
+  const normalizedTurn = getGameTurnNumber({ turn });
+  const normalizedActiveSideIndex = Number.isFinite(Number(activeSideIndex))
+    ? Number.parseInt(activeSideIndex, 10)
+    : 0;
+  const sourceTurn = Number.parseInt(movement?.turn ?? movement?.turnNumber, 10);
+  const sourceActiveSideIndex = Number.parseInt(
+    movement?.activeSideIndex ?? movement?.sideIndex ?? movement?.currentSideIndex,
+    10,
+  );
+
+  if (sourceTurn !== normalizedTurn || sourceActiveSideIndex !== normalizedActiveSideIndex) {
+    return {
+      turn: normalizedTurn,
+      activeSideIndex: normalizedActiveSideIndex,
+      system: FLEET_SYSTEM_MOVES_PER_TURN,
+      link: FLEET_LINK_MOVES_PER_TURN,
+    };
+  }
+
+  return {
+    turn: normalizedTurn,
+    activeSideIndex: normalizedActiveSideIndex,
+    system: clampFleetMovementValue(movement?.system ?? movement?.systemMoves, FLEET_SYSTEM_MOVES_PER_TURN),
+    link: clampFleetMovementValue(movement?.link ?? movement?.linkMoves, FLEET_LINK_MOVES_PER_TURN),
+  };
+}
+
+function clampFleetMovementValue(value, maxValue) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed)
+    ? THREE.MathUtils.clamp(parsed, 0, maxValue)
+    : maxValue;
 }
 
 function normalizeFleetLocation(location) {
@@ -4836,8 +4902,9 @@ function normalizeFleetLocation(location) {
   const type = String(location.type ?? "system").trim().toLowerCase();
   if (type === "planet") {
     const planetKey = normalizeRuntimeNullableString(location.planetKey ?? location.objectKey ?? location.key);
+    const slotIndex = normalizeFleetSlotIndex(location.slotIndex ?? location.slot);
     return planetKey
-      ? { type: "planet", systemId, planetKey }
+      ? { type: "planet", systemId, planetKey, slotIndex }
       : { type: "system", systemId };
   }
 
@@ -4858,12 +4925,20 @@ function normalizeFleetLocation(location) {
   return { type: "system", systemId };
 }
 
+function normalizeFleetSlotIndex(value) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed)
+    ? THREE.MathUtils.clamp(parsed, 0, FLEET_SYSTEM_SLOT_COUNT - 1)
+    : null;
+}
+
 function normalizeGameExploration(exploration, setup, fleets) {
   const normalized = createEmptyExplorationState();
   const sides = getGameStateSides({ setup });
   const sideIds = new Set(sides.map((side) => side.id));
   normalizeExplorationBucket(exploration?.systems, sideIds, normalized.systems);
   normalizeExplorationBucket(exploration?.planets, sideIds, normalized.planets);
+  normalizeExplorationBucket(exploration?.links, sideIds, normalized.links);
 
   for (const fleet of fleets) {
     appendExplorationValue(normalized.systems, fleet.ownerSideId, fleet.location.systemId);
@@ -5027,7 +5102,7 @@ function isPlanetAccessibleForActiveSide(planetOrKey) {
   return isPlanetExploredForSide(planetOrKey, getActiveGameSideId(), currentGameState);
 }
 
-function markExploredForSide(sideId, { systemId = null, planetKey = null } = {}) {
+function markExploredForSide(sideId, { systemId = null, planetKey = null, linkKey = null } = {}) {
   const normalizedSideId = String(sideId ?? "").trim();
   if (!normalizedSideId) {
     return;
@@ -5042,9 +5117,13 @@ function markExploredForSide(sideId, { systemId = null, planetKey = null } = {})
   if (!currentGameState.exploration.planets) {
     currentGameState.exploration.planets = {};
   }
+  if (!currentGameState.exploration.links) {
+    currentGameState.exploration.links = {};
+  }
 
   appendExplorationValue(currentGameState.exploration.systems, normalizedSideId, systemId);
   appendExplorationValue(currentGameState.exploration.planets, normalizedSideId, planetKey);
+  appendExplorationValue(currentGameState.exploration.links, normalizedSideId, linkKey);
 }
 
 function getObjectDetailStateByKey(detailKey, gameState = currentGameState) {
@@ -5246,6 +5325,7 @@ function selectFleet(fleetId) {
   selectedFleetId = selectedFleetId === fleet.id ? null : fleet.id;
   rerenderActiveSystemFleetMarkers();
   updateStarmapFleetMarkers();
+  renderFleetActionPanel();
   return true;
 }
 
@@ -5254,13 +5334,92 @@ function clearSelectedFleetIfInactive() {
     return;
   }
   selectedFleetId = null;
+  renderFleetActionPanel();
+}
+
+function clearSelectedFleet() {
+  if (!selectedFleetId) {
+    return;
+  }
+  selectedFleetId = null;
+  rerenderActiveSystemFleetMarkers();
+  updateStarmapFleetMarkers();
+  renderFleetActionPanel();
+}
+
+function ensureFleetMovementForCurrentTurn(fleet) {
+  if (!fleet) {
+    return createDefaultFleetMovement(currentGameState.turn, currentGameState.activeSideIndex);
+  }
+
+  fleet.movement = normalizeFleetMovement(
+    fleet.movement,
+    currentGameState.turn,
+    currentGameState.activeSideIndex,
+  );
+  return fleet.movement;
+}
+
+function consumeFleetMovement(fleet, kind, amount = 1) {
+  const movement = ensureFleetMovementForCurrentTurn(fleet);
+  const key = kind === "link" ? "link" : "system";
+  const cost = Math.max(1, Number.parseInt(amount, 10) || 1);
+  if ((movement[key] ?? 0) < cost) {
+    renderFleetActionPanel();
+    return false;
+  }
+
+  movement[key] -= cost;
+  renderFleetActionPanel();
+  return true;
+}
+
+function renderFleetActionPanel() {
+  if (!fleetActionPanel) {
+    return;
+  }
+
+  const fleet = getSelectedFleet();
+  fleetActionPanel.replaceChildren();
+  if (!fleet || isStartMenuOpen || isEditorMode) {
+    fleetActionPanel.hidden = true;
+    return;
+  }
+
+  const movement = ensureFleetMovementForCurrentTurn(fleet);
+  const slotCount = FLEET_ACTION_GRID_COLUMNS * FLEET_ACTION_GRID_ROWS;
+  for (let index = 0; index < slotCount; index += 1) {
+    const button = document.createElement("button");
+    button.className = "fleet-action-button";
+    button.type = "button";
+    if (index < FLEET_SYSTEM_MOVES_PER_TURN) {
+      const isAvailable = index < movement.system;
+      button.textContent = "S";
+      button.disabled = !isAvailable;
+      button.setAttribute("aria-label", `System move ${index + 1}`);
+    } else if (index < FLEET_SYSTEM_MOVES_PER_TURN + FLEET_LINK_MOVES_PER_TURN) {
+      const linkIndex = index - FLEET_SYSTEM_MOVES_PER_TURN;
+      const isAvailable = linkIndex < movement.link;
+      button.textContent = "L";
+      button.disabled = !isAvailable;
+      button.setAttribute("aria-label", `Link move ${linkIndex + 1}`);
+    } else {
+      button.disabled = true;
+      button.setAttribute("aria-label", "Fleet action slot");
+    }
+    fleetActionPanel.append(button);
+  }
+  fleetActionPanel.hidden = false;
 }
 
 function moveSelectedFleetToPlanet(planet) {
   const fleet = getSelectedFleet();
   const planetKey = getPlanetExplorationKey(planet);
-  if (!fleet || !planet?.systemId || !planetKey) {
+  if (!fleet) {
     return false;
+  }
+  if (!planet?.systemId || !planetKey || !consumeFleetMovement(fleet, "system")) {
+    return true;
   }
 
   updateFleetLocation(fleet.id, {
@@ -5272,6 +5431,7 @@ function moveSelectedFleetToPlanet(planet) {
     systemId: planet.systemId,
     planetKey,
   });
+  selectedFleetId = null;
   finalizeFleetStateChange();
   return true;
 }
@@ -5279,8 +5439,11 @@ function moveSelectedFleetToPlanet(planet) {
 function moveSelectedFleetToSystem(systemId) {
   const fleet = getSelectedFleet();
   const normalizedSystemId = normalizeRuntimeNullableString(systemId);
-  if (!fleet || !normalizedSystemId) {
+  if (!fleet) {
     return false;
+  }
+  if (!normalizedSystemId || !consumeFleetMovement(fleet, "link")) {
+    return true;
   }
 
   const activeSystemId = normalizeRuntimeNullableString(systemScreenController?.state?.activeNode?.id);
@@ -5308,6 +5471,9 @@ function commandSelectedFleetToLink(systemId, targetSystemId) {
     fleet.location.systemId === normalizedSystemId &&
     fleet.location.targetSystemId === normalizedTargetSystemId;
   if (isAlreadyAtLink) {
+    if (!consumeFleetMovement(fleet, "link")) {
+      return true;
+    }
     updateFleetLocation(fleet.id, {
       type: "link",
       systemId: normalizedTargetSystemId,
@@ -5319,6 +5485,9 @@ function commandSelectedFleetToLink(systemId, targetSystemId) {
     return true;
   }
 
+  if (!consumeFleetMovement(fleet, "system")) {
+    return true;
+  }
   updateFleetLocation(fleet.id, {
     type: "link",
     systemId: normalizedSystemId,
@@ -5329,12 +5498,105 @@ function commandSelectedFleetToLink(systemId, targetSystemId) {
   return true;
 }
 
+function commandSelectedFleetToStarmapSystem(targetSystemId) {
+  const fleet = getSelectedFleet();
+  if (!fleet) {
+    return false;
+  }
+
+  const startSystemId = normalizeRuntimeNullableString(fleet.location?.systemId);
+  const normalizedTargetSystemId = normalizeRuntimeNullableString(targetSystemId);
+  if (!startSystemId || !normalizedTargetSystemId) {
+    return true;
+  }
+  if (startSystemId === normalizedTargetSystemId) {
+    return true;
+  }
+
+  const path = findSystemPath(startSystemId, normalizedTargetSystemId);
+  if (!path || path.length < 2) {
+    return true;
+  }
+
+  const linkCost = path.length - 1;
+  if (!consumeFleetMovement(fleet, "link", linkCost)) {
+    return true;
+  }
+
+  const previousSystemId = path[path.length - 2] ?? startSystemId;
+  updateFleetLocation(fleet.id, {
+    type: "link",
+    systemId: normalizedTargetSystemId,
+    targetSystemId: previousSystemId,
+  });
+  for (let index = 0; index < path.length; index += 1) {
+    markExploredForSide(fleet.ownerSideId, { systemId: path[index] });
+    if (index > 0) {
+      markExploredForSide(fleet.ownerSideId, {
+        linkKey: getSystemLinkExplorationKey(path[index - 1], path[index]),
+      });
+    }
+  }
+  finalizeFleetStateChange();
+  return true;
+}
+
+function findSystemPath(startSystemId, targetSystemId) {
+  const start = Number.parseInt(startSystemId, 10);
+  const target = Number.parseInt(targetSystemId, 10);
+  if (!Number.isFinite(start) || !Number.isFinite(target)) {
+    return null;
+  }
+  if (start === target) {
+    return [String(start)];
+  }
+
+  const queue = [start];
+  const previous = new Map([[start, null]]);
+  for (let queueIndex = 0; queueIndex < queue.length; queueIndex += 1) {
+    const current = queue[queueIndex];
+    for (const neighbor of adjacency.get(current) ?? []) {
+      if (previous.has(neighbor)) {
+        continue;
+      }
+      previous.set(neighbor, current);
+      if (neighbor === target) {
+        return reconstructSystemPath(previous, start, target);
+      }
+      queue.push(neighbor);
+    }
+  }
+  return null;
+}
+
+function reconstructSystemPath(previous, start, target) {
+  const path = [];
+  let current = target;
+  while (current !== null && current !== undefined) {
+    path.push(String(current));
+    if (current === start) {
+      return path.reverse();
+    }
+    current = previous.get(current);
+  }
+  return null;
+}
+
+function getSystemLinkExplorationKey(systemA, systemB) {
+  const a = String(systemA);
+  const b = String(systemB);
+  return Number(a) <= Number(b) ? `${a}:${b}` : `${b}:${a}`;
+}
+
 function moveSelectedFleetToWormhole(systemId, wormholeKey) {
   const fleet = getSelectedFleet();
   const normalizedSystemId = normalizeRuntimeNullableString(systemId);
   const normalizedWormholeKey = normalizeRuntimeNullableString(wormholeKey);
-  if (!fleet || !normalizedSystemId || !normalizedWormholeKey) {
+  if (!fleet) {
     return false;
+  }
+  if (!normalizedSystemId || !normalizedWormholeKey || !consumeFleetMovement(fleet, "system")) {
+    return true;
   }
 
   updateFleetLocation(fleet.id, {
@@ -5352,7 +5614,30 @@ function updateFleetLocation(fleetId, location) {
   if (!fleet) {
     return;
   }
-  fleet.location = normalizeFleetLocation(location) ?? fleet.location;
+  const previousAnchorKey = getFleetLocationAnchorKey(fleet.location);
+  const nextLocation = normalizeFleetLocation(location) ?? fleet.location;
+  const nextAnchorKey = getFleetLocationAnchorKey(nextLocation);
+  if (
+    nextLocation?.type === "planet" &&
+    (nextLocation.slotIndex === null || previousAnchorKey !== nextAnchorKey)
+  ) {
+    nextLocation.slotIndex = createFleetPlanetSlotIndex(fleet.id, nextLocation);
+  }
+  fleet.location = nextLocation;
+}
+
+function createFleetPlanetSlotIndex(fleetId, location) {
+  const random = createRandom([
+    SEED,
+    "fleet-slot",
+    fleetId,
+    location?.systemId,
+    location?.planetKey,
+    getGameTurnNumber(currentGameState),
+    currentGameState.activeSideIndex,
+    ++fleetMovementSerial,
+  ].join(":"));
+  return Math.floor(random() * FLEET_SYSTEM_SLOT_COUNT);
 }
 
 function finalizeFleetStateChange() {
@@ -5362,6 +5647,7 @@ function finalizeFleetStateChange() {
   refreshSystemPlanetAccess();
   rerenderActiveSystemFleetMarkers();
   refreshOwnershipVisualsAfterGameStateChange();
+  renderFleetActionPanel();
   persistRuntimeSession();
 }
 
@@ -6348,6 +6634,8 @@ function createSelectionOverlay() {
       opacity: { value: 0.36 },
       color: { value: new THREE.Color(0x00e1ff) },
       strokeColor: { value: new THREE.Color(0x80f0ff) },
+      strokeStrength: { value: 1 },
+      glowStrength: { value: 1 },
     },
     vertexShader: `
       varying vec2 vUv;
@@ -6380,6 +6668,8 @@ function createSelectionOverlay() {
       uniform float opacity;
       uniform vec3 color;
       uniform vec3 strokeColor;
+      uniform float strokeStrength;
+      uniform float glowStrength;
 
       float circleSdf(vec2 pixel, vec2 center, float radius) {
         return length(pixel - center) - radius;
@@ -6479,11 +6769,11 @@ function createSelectionOverlay() {
         float combinedStroke = max(
           strokeMask * baseBoundaryVisible,
           fadingStroke * fadingBoundaryVisible
-        );
+        ) * strokeStrength;
         float combinedGlow = max(
           glowMask * baseBoundaryVisible,
           fadingGlow * fadingBoundaryVisible
-        );
+        ) * glowStrength;
         float glowAlpha = combinedGlow * 0.42;
         float alpha = max(max(combinedFill * opacity, glowAlpha), combinedStroke);
 
@@ -7083,6 +7373,10 @@ function selectNodeAt(clientX, clientY) {
     return;
   }
 
+  if (!isMaskToolEnabled && commandSelectedFleetToStarmapSystem(hit.userData.node.id)) {
+    return;
+  }
+
   if (!isMaskToolEnabled) {
     if (!isSystemAccessibleForActiveSide(hit.userData.node)) {
       return;
@@ -7226,6 +7520,7 @@ function openStarWindow(node) {
   renderSystemParticles(node);
   updateSystemGlow(window.innerWidth / 2, window.innerHeight / 2, 0, 0);
   preloadPlanetScreenRenderer();
+  updateGameNavigationUi(true);
   persistRuntimeSession("system");
 }
 
@@ -7252,6 +7547,7 @@ function closeStarWindow() {
   systemParticles.replaceChildren();
   activeSystemFleetAnchors = [];
   pointer.set(10, 10);
+  updateGameNavigationUi(true);
   persistRuntimeSession(isEditorMode ? "editor" : "starmap");
 }
 
@@ -7428,6 +7724,7 @@ async function returnToStarSystemFromPlanet() {
   updateSystemGlow(window.innerWidth / 2, window.innerHeight / 2, 0, 0);
   updateSystemParallax(lastClientPointer.x, lastClientPointer.y, true);
   preloadPlanetScreenRenderer();
+  updateGameNavigationUi(true);
   snapPlanetScreenHidden();
   await revealObjectDetailEntryOverlay(300);
   persistRuntimeSession("system");
@@ -10660,6 +10957,7 @@ async function returnToStarSystemFromObjectDetail() {
   updateSystemGlow(window.innerWidth / 2, window.innerHeight / 2, 0, 0);
   updateSystemParallax(lastClientPointer.x, lastClientPointer.y, true);
   preloadPlanetScreenRenderer();
+  updateGameNavigationUi(true);
   resetTransitionSurfaces();
   snapObjectDetailHidden();
   snapPlanetScreenHidden();
@@ -11174,8 +11472,9 @@ function renderStarSystem(node) {
       type: "planet",
       systemId: String(node.id),
       planetKey,
-      x: planetX + hitTargetRadius + 14,
+      x: planetX,
       y: planetY,
+      slotRadius: hitTargetRadius + planetRadius * 0.5,
       radius: 12,
     });
     hitTarget.addEventListener("pointerenter", (event) => {
@@ -12025,25 +12324,17 @@ function renderSystemFleetMarkers(node, anchors = []) {
   }
 
   const fleets = getVisibleFleetsForSystem(node.id);
-  const anchorUseCount = new Map();
+  const anchorSlotStates = new Map();
   fleets.forEach((fleet) => {
     const anchor = getFleetSystemAnchor(fleet, anchors);
     if (!anchor) {
       return;
     }
 
-    const useIndex = anchorUseCount.get(anchor.anchorKey) ?? 0;
-    anchorUseCount.set(anchor.anchorKey, useIndex + 1);
     const marker = createSystemFleetMarker(fleet);
-    const offsetY = (useIndex - Math.max(0, anchorUseCount.get(anchor.anchorKey) - 1) / 2) * 18;
     marker.dataset.systemId = String(node.id);
     marker.dataset.anchorKey = anchor.anchorKey;
-    const targetPosition = {
-      systemId: String(node.id),
-      anchorKey: anchor.anchorKey,
-      left: anchor.x - 14,
-      top: anchor.y - 8 + offsetY,
-    };
+    const targetPosition = getSystemFleetMarkerTargetPosition(fleet, anchor, node, anchorSlotStates);
     const previousPosition = fleetMarkerPositions.get(fleet.id);
     const shouldAnimate = shouldAnimateFleetMarker(previousPosition, targetPosition);
     marker.style.left = `${Math.round(shouldAnimate ? previousPosition.left : targetPosition.left)}px`;
@@ -12055,6 +12346,92 @@ function renderSystemFleetMarkers(node, anchors = []) {
       setFleetMarkerStoredPosition(fleet.id, targetPosition);
     }
   });
+}
+
+function getSystemFleetMarkerTargetPosition(fleet, anchor, node, anchorSlotStates) {
+  if (anchor.type !== "planet") {
+    const state = getSystemFleetAnchorSlotState(anchorSlotStates, anchor.anchorKey);
+    const useIndex = state.stackIndex++;
+    const offsetY = (useIndex - Math.max(0, state.stackIndex - 1) / 2) * 18;
+    return {
+      systemId: String(node.id),
+      anchorKey: anchor.anchorKey,
+      left: anchor.x - 14,
+      top: anchor.y - 8 + offsetY,
+    };
+  }
+
+  const state = getSystemFleetAnchorSlotState(anchorSlotStates, anchor.anchorKey);
+  const slotIndex = resolveFleetPlanetSlotIndex(fleet, anchor, state);
+  const position = slotIndex === null
+    ? getOverflowFleetPlanetSlotPosition(anchor, state.overflowIndex++)
+    : getFleetPlanetSlotPosition(anchor, slotIndex);
+
+  return {
+    systemId: String(node.id),
+    anchorKey: anchor.anchorKey,
+    left: position.x - 14,
+    top: position.y - 8,
+  };
+}
+
+function getSystemFleetAnchorSlotState(anchorSlotStates, anchorKey) {
+  if (!anchorSlotStates.has(anchorKey)) {
+    anchorSlotStates.set(anchorKey, {
+      usedSlots: new Set(),
+      overflowIndex: 0,
+      stackIndex: 0,
+    });
+  }
+  return anchorSlotStates.get(anchorKey);
+}
+
+function resolveFleetPlanetSlotIndex(fleet, anchor, state) {
+  if (state.usedSlots.size >= FLEET_SYSTEM_SLOT_COUNT) {
+    return null;
+  }
+
+  const preferredSlot = normalizeFleetSlotIndex(fleet.location?.slotIndex)
+    ?? createFallbackFleetPlanetSlotIndex(fleet, anchor);
+  for (let offset = 0; offset < FLEET_SYSTEM_SLOT_COUNT; offset += 1) {
+    const candidate = (preferredSlot + offset) % FLEET_SYSTEM_SLOT_COUNT;
+    if (!state.usedSlots.has(candidate)) {
+      state.usedSlots.add(candidate);
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function createFallbackFleetPlanetSlotIndex(fleet, anchor) {
+  const random = createRandom([
+    SEED,
+    "fleet-slot-fallback",
+    fleet?.id,
+    anchor?.systemId,
+    anchor?.planetKey,
+  ].join(":"));
+  return Math.floor(random() * FLEET_SYSTEM_SLOT_COUNT);
+}
+
+function getFleetPlanetSlotPosition(anchor, slotIndex) {
+  const angle = (-Math.PI / 2) + slotIndex * (Math.PI * 2 / FLEET_SYSTEM_SLOT_COUNT);
+  const radius = Number(anchor.slotRadius) || Number(anchor.radius) || 18;
+  return {
+    x: anchor.x + Math.cos(angle) * radius,
+    y: anchor.y + Math.sin(angle) * radius,
+  };
+}
+
+function getOverflowFleetPlanetSlotPosition(anchor, overflowIndex) {
+  const isUpperHalf = anchor.y < window.innerHeight / 2;
+  const baseSlotIndex = isUpperHalf ? 4 : 0;
+  const base = getFleetPlanetSlotPosition(anchor, baseSlotIndex);
+  const direction = isUpperHalf ? 1 : -1;
+  return {
+    x: base.x,
+    y: base.y + direction * (overflowIndex + 1) * 18,
+  };
 }
 
 function shouldAnimateFleetMarker(previousPosition, targetPosition) {
@@ -12291,7 +12668,6 @@ function createSystemFleetMarker(fleet) {
   marker.tabIndex = isControlled ? 0 : -1;
   marker.style.setProperty("--fleet-color", getSideColorById(fleet.ownerSideId));
   marker.setAttribute("aria-label", fleet.name);
-  marker.title = fleet.name;
 
   const stripe = document.createElement("span");
   stripe.className = "system-fleet-marker__stripe";
@@ -13725,13 +14101,15 @@ function getScreenNodeHit(clientX, clientY) {
   };
 }
 
-function updateSelectionOverlay(color, selectedNodeItems, visibleEdges, fadingEdges) {
+function updateSelectionOverlay(color, selectedNodeItems, visibleEdges, fadingEdges, options = {}) {
   const material = selectionOverlay.material;
   const pointCount = Math.min(selectedNodeItems.length, MAX_SELECTION_POINTS);
   const segmentCount = Math.min(visibleEdges.length, MAX_SELECTION_SEGMENTS);
   const fadingSegmentCount = Math.min(fadingEdges.length, MAX_SELECTION_FADING_SEGMENTS);
   const pixelRatio = Math.min(window.devicePixelRatio, 2);
   const zoomScale = INITIAL_CAMERA_DISTANCE / camera.position.z;
+  const hasStroke = options.stroke !== false;
+  const hasGlow = options.glow !== false;
 
   renderer.getDrawingBufferSize(selectionScreenSize);
   material.uniforms.resolution.value.copy(selectionScreenSize);
@@ -13739,11 +14117,16 @@ function updateSelectionOverlay(color, selectedNodeItems, visibleEdges, fadingEd
   material.uniforms.tubeRadius.value = 16 * pixelRatio * zoomScale;
   material.uniforms.strokeWidth.value = Math.max(1, 1 * pixelRatio * zoomScale);
   material.uniforms.glowWidth.value = 5 * pixelRatio * zoomScale;
+  material.uniforms.opacity.value = Number.isFinite(options.opacity)
+    ? options.opacity
+    : 0.36;
   material.uniforms.pointCount.value = pointCount;
   material.uniforms.segmentCount.value = segmentCount;
   material.uniforms.fadingSegmentCount.value = fadingSegmentCount;
   material.uniforms.color.value.set(color);
   material.uniforms.strokeColor.value.copy(lightenHexColor(color, 0.5));
+  material.uniforms.strokeStrength.value = hasStroke ? 1 : 0;
+  material.uniforms.glowStrength.value = hasGlow ? 1 : 0;
 
   graphRoot.updateMatrixWorld(true);
   camera.updateMatrixWorld(true);
@@ -13810,6 +14193,10 @@ function updateSelectionOverlay(color, selectedNodeItems, visibleEdges, fadingEd
 
 function getSelectionGroups() {
   const groups = new Map();
+  const fogGroup = getFogSelectionGroup();
+  if (fogGroup) {
+    groups.set(FOG_SELECTION_GROUP_KEY, fogGroup);
+  }
 
   for (const [nodeId, color] of nodeColors) {
     if (!groups.has(color)) {
@@ -13882,8 +14269,48 @@ function getSelectionGroups() {
   return groups;
 }
 
+function getFogSelectionGroup() {
+  if (!shouldEnforceExploration() || !isGameRuntimeReady || isEditorMode) {
+    return null;
+  }
+
+  const activeSideId = getActiveGameSideId();
+  if (!activeSideId) {
+    return null;
+  }
+
+  const exploredSystems = getExplorationValues("systems", activeSideId);
+  const fogNodeIds = new Set();
+  const fogNodes = [];
+  for (const node of nodes) {
+    const nodeId = String(node.id);
+    if (exploredSystems.has(nodeId)) {
+      continue;
+    }
+    fogNodeIds.add(node.id);
+    fogNodes.push({ id: node.id, progress: 1 });
+  }
+
+  if (fogNodes.length === 0) {
+    return null;
+  }
+
+  return {
+    color: FOG_SELECTION_COLOR,
+    nodes: fogNodes,
+    edges: links
+      .filter((link) => fogNodeIds.has(link.a) && fogNodeIds.has(link.b))
+      .map((link) => ({ ...link, progress: 1, origin: null })),
+    fadingEdges: [],
+    opacity: FOG_SELECTION_OPACITY,
+    stroke: false,
+    glow: false,
+  };
+}
+
 function hasSelectionOverlayActivity() {
   return (
+    Boolean(getFogSelectionGroup()) ||
     nodeColors.size > 0 ||
     nodeAnimationProgress.size > 0 ||
     edgeAnimationProgress.size > 0 ||
@@ -13998,10 +14425,18 @@ function updateStarmapFleetMarkers() {
     .filter((fleet) => fleet.ownerSideId === activeSideId || activeFleetSystemIds.has(String(fleet.location?.systemId)))
     .sort(compareVisibleFleets(activeSideId));
   while (starmapFleetMarkerElements.length < fleets.length) {
-    const marker = document.createElement("div");
+    const marker = document.createElement("button");
     marker.className = "starmap-fleet-marker hidden";
-    marker.setAttribute("aria-hidden", "true");
+    marker.type = "button";
     marker.innerHTML = '<span class="starmap-fleet-marker__stripe"></span><img class="starmap-fleet-marker__icon" src="/MainUI/Fleet_marker.svg" alt="">';
+    marker.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const fleet = getFleetById(marker.dataset.fleetId);
+      if (isFleetControlledByActiveSide(fleet)) {
+        selectFleet(fleet.id);
+      }
+    });
     starLabels.append(marker);
     starmapFleetMarkerElements.push(marker);
   }
@@ -14012,12 +14447,18 @@ function updateStarmapFleetMarkers() {
     const fleet = fleets[index];
     if (!fleet) {
       marker.classList.add("hidden");
+      marker.tabIndex = -1;
+      marker.removeAttribute("aria-label");
+      delete marker.dataset.fleetId;
       continue;
     }
 
     const node = getRuntimeNodeById(fleet.location.systemId);
     if (!node) {
       marker.classList.add("hidden");
+      marker.tabIndex = -1;
+      marker.removeAttribute("aria-label");
+      delete marker.dataset.fleetId;
       continue;
     }
 
@@ -14034,12 +14475,120 @@ function updateStarmapFleetMarkers() {
     const systemKey = String(fleet.location.systemId);
     const useIndex = systemMarkerUseCount.get(systemKey) ?? 0;
     systemMarkerUseCount.set(systemKey, useIndex + 1);
-    marker.style.left = `${Math.round(x - 8)}px`;
-    marker.style.top = `${Math.round(y + (useIndex - 0.5) * 11)}px`;
+    const targetPosition = {
+      systemId: systemKey,
+      anchorKey: `starmap:${systemKey}`,
+      left: x - 8,
+      top: y + (useIndex - 0.5) * 11,
+    };
+    const previousPosition = starmapFleetMarkerPositions.get(fleet.id);
+    const isAnimating = starmapFleetMarkerAnimations.has(fleet.id);
+    const shouldAnimate = visible && shouldAnimateStarmapFleetMarker(previousPosition, targetPosition);
+    marker.dataset.fleetId = fleet.id;
+    if (!isAnimating) {
+      marker.style.left = `${Math.round(shouldAnimate ? previousPosition.left : targetPosition.left)}px`;
+      marker.style.top = `${Math.round(shouldAnimate ? previousPosition.top : targetPosition.top)}px`;
+    }
     marker.style.setProperty("--fleet-color", getSideColorById(fleet.ownerSideId));
     marker.classList.toggle("starmap-fleet-marker--foreign", fleet.ownerSideId !== activeSideId);
     marker.classList.toggle("starmap-fleet-marker--selected", selectedFleetId === fleet.id);
     marker.classList.toggle("hidden", !visible);
+    marker.tabIndex = fleet.ownerSideId === activeSideId && visible ? 0 : -1;
+    marker.setAttribute("aria-label", fleet.name);
+    if (shouldAnimate && !isAnimating) {
+      animateStarmapFleetMarker(marker, fleet, previousPosition, targetPosition);
+    } else if (!isAnimating) {
+      setStarmapFleetMarkerStoredPosition(fleet.id, targetPosition);
+    }
+  }
+}
+
+function shouldAnimateStarmapFleetMarker(previousPosition, targetPosition) {
+  if (suppressFleetMarkerAnimation || !previousPosition || !targetPosition) {
+    return false;
+  }
+  if (previousPosition.anchorKey === targetPosition.anchorKey) {
+    return false;
+  }
+  return Math.hypot(
+    previousPosition.left - targetPosition.left,
+    previousPosition.top - targetPosition.top,
+  ) > 6;
+}
+
+function setStarmapFleetMarkerStoredPosition(fleetId, position) {
+  const normalizedFleetId = String(fleetId ?? "").trim();
+  if (!normalizedFleetId || !position) {
+    return;
+  }
+  starmapFleetMarkerPositions.set(normalizedFleetId, {
+    systemId: String(position.systemId ?? ""),
+    anchorKey: String(position.anchorKey ?? ""),
+    left: Number(position.left) || 0,
+    top: Number(position.top) || 0,
+  });
+}
+
+function animateStarmapFleetMarker(marker, fleet, from, to) {
+  cancelStarmapFleetMarkerAnimation(fleet.id);
+  const movement = createFleetMovement(from, to, fleet.id);
+  const startedAt = performance.now();
+  marker.classList.add("starmap-fleet-marker--moving");
+
+  const tick = (now) => {
+    if (!marker.isConnected) {
+      cancelStarmapFleetMarkerAnimation(fleet.id);
+      return;
+    }
+
+    const progress = THREE.MathUtils.clamp((now - startedAt) / movement.duration, 0, 1);
+    const easedProgress = easeFleetMovement(progress);
+    const point = getCubicBezierPoint(
+      movement.start,
+      movement.controlA,
+      movement.controlB,
+      movement.end,
+      easedProgress,
+    );
+    marker.style.left = `${point.x.toFixed(2)}px`;
+    marker.style.top = `${point.y.toFixed(2)}px`;
+    setStarmapFleetMarkerStoredPosition(fleet.id, {
+      ...to,
+      left: point.x,
+      top: point.y,
+    });
+
+    if (progress < 1) {
+      const frameId = requestAnimationFrame(tick);
+      starmapFleetMarkerAnimations.set(fleet.id, { frameId, marker });
+      return;
+    }
+
+    marker.style.left = `${Math.round(to.left)}px`;
+    marker.style.top = `${Math.round(to.top)}px`;
+    marker.classList.remove("starmap-fleet-marker--moving");
+    setStarmapFleetMarkerStoredPosition(fleet.id, to);
+    starmapFleetMarkerAnimations.delete(fleet.id);
+  };
+
+  const frameId = requestAnimationFrame(tick);
+  starmapFleetMarkerAnimations.set(fleet.id, { frameId, marker });
+}
+
+function cancelStarmapFleetMarkerAnimation(fleetId) {
+  const normalizedFleetId = String(fleetId ?? "").trim();
+  const animation = starmapFleetMarkerAnimations.get(normalizedFleetId);
+  if (!animation) {
+    return;
+  }
+  cancelAnimationFrame(animation.frameId);
+  animation.marker?.classList?.remove("starmap-fleet-marker--moving");
+  starmapFleetMarkerAnimations.delete(normalizedFleetId);
+}
+
+function cancelStarmapFleetMarkerAnimations() {
+  for (const fleetId of Array.from(starmapFleetMarkerAnimations.keys())) {
+    cancelStarmapFleetMarkerAnimation(fleetId);
   }
 }
 
@@ -14146,7 +14695,7 @@ function renderStarmapFrame() {
 
   if (hasSelectionOverlayActivity()) {
     for (const [color, group] of getSelectionGroups()) {
-      updateSelectionOverlay(color, group.nodes, group.edges, group.fadingEdges);
+      updateSelectionOverlay(group.color ?? color, group.nodes, group.edges, group.fadingEdges, group);
       renderer.render(selectionOverlay.scene, selectionOverlay.camera);
     }
   }
