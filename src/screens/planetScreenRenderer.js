@@ -241,6 +241,14 @@ function renderPlanetScreenPlanet(layer, planet, geometry, starDir) {
       })
       : planet.gasGiantTexture;
   const glowColor = texture?.edgeColor ?? planet.background ?? "#ffffff";
+  const fallbackTextureUrl = getPlanetScreenTextureUrl(texture);
+  if (fallbackTextureUrl) {
+    body.style.backgroundImage = fallbackTextureUrl;
+    body.style.backgroundSize = "cover";
+    body.style.backgroundPosition = "center";
+  } else if (planet.background) {
+    body.style.background = planet.background;
+  }
   layer.append(body);
 
   const sphere3D = createPlanetScreen3D(planet, texture, geometry, starDir, glowColor);
