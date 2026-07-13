@@ -41,6 +41,9 @@ import {
   releaseCanvasTexture,
   retainCanvasTexture,
 } from "./utils/textureCache.js";
+import femaleFleetCommanderNamesRaw from "../1000_female_names_latin.txt?raw";
+import maleFleetCommanderNamesRaw from "../1000_male_names_latin.txt?raw";
+import fleetCommanderSurnamesRaw from "../1000_surnames_latin.txt?raw";
 
 const params = new URLSearchParams(window.location.search);
 const SEED = params.get("seed") || "nebulum";
@@ -71,6 +74,9 @@ const FLEET_SYSTEM_MARKER_HEIGHT = 16;
 const FLEET_SYSTEM_MARKER_STACK_GAP = 18;
 const FLEET_LINK_JUMP_DELAY_MS = 1000;
 const FLEET_LINK_JUMP_EFFECT_MS = 620;
+const FLEET_COMMANDER_MALE_NAMES = parseNameDictionary(maleFleetCommanderNamesRaw, ["Alex"]);
+const FLEET_COMMANDER_FEMALE_NAMES = parseNameDictionary(femaleFleetCommanderNamesRaw, ["Alex"]);
+const FLEET_COMMANDER_SURNAMES = parseNameDictionary(fleetCommanderSurnamesRaw, ["Vega"]);
 const UI_HOVER_SOUND = "ui.hover.quiet";
 const UI_MENU_CLICK_SOUND = "ui.menu.click";
 const UI_BASE_CLICK_SOUND = "ui.base.click";
@@ -4789,6 +4795,100 @@ function createSaveId() {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function parseNameDictionary(raw, fallback = []) {
+  const names = String(raw ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^\uFEFF/, "").trim())
+    .filter(Boolean);
+  return names.length > 0 ? names : fallback.slice();
+}
+
+function createRuntimeRandomValue() {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi?.getRandomValues) {
+    const values = new Uint32Array(1);
+    cryptoApi.getRandomValues(values);
+    return values[0] / 0x100000000;
+  }
+  return Math.random();
+}
+
+function getRuntimeRandomInt(minValue, maxValue) {
+  const min = Math.ceil(minValue);
+  const max = Math.floor(maxValue);
+  if (max < min) {
+    return min;
+  }
+  return min + Math.floor(createRuntimeRandomValue() * (max - min + 1));
+}
+
+function getRuntimeRandomChoice(items, fallback = "") {
+  if (!Array.isArray(items) || items.length === 0) {
+    return fallback;
+  }
+  return items[getRuntimeRandomInt(0, items.length - 1)] ?? fallback;
+}
+
+function createFleetCommander() {
+  const gender = createRuntimeRandomValue() < 0.5 ? "female" : "male";
+  const givenNames = gender === "female"
+    ? FLEET_COMMANDER_FEMALE_NAMES
+    : FLEET_COMMANDER_MALE_NAMES;
+  const givenName = () => getRuntimeRandomChoice(givenNames, "Alex");
+  const surname = () => getRuntimeRandomChoice(FLEET_COMMANDER_SURNAMES, "Vega");
+  const roll = createRuntimeRandomValue();
+  let name;
+
+  if (roll < 0.7) {
+    name = `${givenName()} ${surname()}`;
+  } else if (roll < 0.85) {
+    name = `${givenName()} ${givenName()} ${givenName()}`;
+  } else if (roll < 0.9) {
+    name = `${givenName()}-${givenName()} ${surname()}`;
+  } else if (roll < 0.95) {
+    name = `${givenName()} ${formatRomanNumeral(getRuntimeRandomInt(1, 20))} ${surname()}`;
+  } else {
+    name = givenName();
+  }
+
+  return {
+    gender,
+    name: normalizeFleetCommanderName(name),
+  };
+}
+
+function normalizeFleetCommander(commander) {
+  const source = commander && typeof commander === "object" ? commander : {};
+  const name = normalizeFleetCommanderName(source.name ?? source.fullName ?? commander);
+  const gender = source.gender === "female" || source.gender === "male"
+    ? source.gender
+    : null;
+
+  if (!name) {
+    return createFleetCommander();
+  }
+
+  return {
+    gender: gender ?? "unknown",
+    name,
+  };
+}
+
+function normalizeFleetCommanderName(value) {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function getFleetCommanderSource(fleet) {
+  if (fleet?.commander && typeof fleet.commander === "object") {
+    return fleet.commander;
+  }
+
+  return {
+    name: fleet?.commanderName ?? fleet?.commanderFullName,
+    gender: fleet?.commanderGender,
+  };
+}
+
 function createEmptyGameState() {
   return {
     turn: DEFAULT_TURN_NUMBER,
@@ -4887,6 +4987,7 @@ function createInitialGameProgressState(setup) {
       ownerSideId: side.id,
       creationNumber: 1,
       name: `${side.name} FLEET`,
+      commander: createFleetCommander(),
       location: {
         type: "wormhole",
         systemId: start.systemId,
@@ -4964,6 +5065,7 @@ function normalizeGameFleets(fleets, setup, turn = DEFAULT_TURN_NUMBER, activeSi
         ownerSideId,
         ownerSideIndex: sideIndex >= 0 ? sideIndex : 0,
         name: String(fleet.name ?? `${sides[sideIndex]?.name ?? "SIDE"} FLEET`).trim() || "FLEET",
+        commander: normalizeFleetCommander(getFleetCommanderSource(fleet)),
         creationNumber: normalizeFleetCreationNumber(fleet.creationNumber ?? fleet.number ?? fleet.serial),
         location,
         movement: normalizeFleetMovement(fleet.movement, turn, activeSideIndex),
@@ -5724,7 +5826,7 @@ function createFleetActionInfoPanel(fleet, movement) {
   commanderText.className = "fleet-action-panel__commander-text";
   const commanderName = document.createElement("div");
   commanderName.className = "fleet-action-panel__commander-name";
-  commanderName.textContent = "UNASSIGNED";
+  commanderName.textContent = fleet.commander?.name ?? "UNASSIGNED";
   const commanderRole = document.createElement("div");
   commanderRole.className = "fleet-action-panel__commander-role";
   commanderRole.textContent = "FLEET COMMANDER";
