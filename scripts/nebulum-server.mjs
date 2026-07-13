@@ -237,6 +237,7 @@ function prepareNebulumBrowserProfile(bounds) {
   const profileDir = getNebulumBrowserProfileDir();
   const defaultProfileDir = path.join(profileDir, "Default");
   refreshNebulumIconCache(profileDir);
+  clearNebulumWebCache(profileDir);
   mkdirSync(defaultProfileDir, { recursive: true });
   writeProfileWindowPlacement(path.join(defaultProfileDir, "Preferences"), bounds);
   return profileDir;
@@ -302,6 +303,27 @@ function refreshNebulumIconCache(profileDir) {
 
   mkdirSync(profileDir, { recursive: true });
   writeFileSync(markerPath, ICON_CACHE_VERSION, "utf8");
+}
+
+function clearNebulumWebCache(profileDir) {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  stopNebulumBrowserProfileProcesses();
+  const defaultProfileDir = path.join(profileDir, "Default");
+  for (const cachePath of [
+    path.join(defaultProfileDir, "Service Worker"),
+    path.join(defaultProfileDir, "Cache"),
+    path.join(defaultProfileDir, "Code Cache"),
+    path.join(defaultProfileDir, "GPUCache"),
+    path.join(defaultProfileDir, "DawnCache"),
+    path.join(defaultProfileDir, "Network", "Cache"),
+  ]) {
+    try {
+      rmSync(cachePath, { recursive: true, force: true });
+    } catch {}
+  }
 }
 
 function stopNebulumBrowserProfileProcesses() {

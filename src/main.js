@@ -63,9 +63,12 @@ const DEFAULT_TURN_NUMBER = 1;
 const DEFAULT_PLAYER_ID = "player-1";
 const FLEET_SYSTEM_MOVES_PER_TURN = 4;
 const FLEET_LINK_MOVES_PER_TURN = 2;
-const FLEET_ACTION_GRID_COLUMNS = 6;
+const FLEET_ACTION_GRID_COLUMNS = 3;
 const FLEET_ACTION_GRID_ROWS = 3;
 const FLEET_SYSTEM_SLOT_COUNT = 8;
+const FLEET_SYSTEM_MARKER_WIDTH = 38;
+const FLEET_SYSTEM_MARKER_HEIGHT = 16;
+const FLEET_SYSTEM_MARKER_STACK_GAP = 18;
 const FLEET_LINK_JUMP_DELAY_MS = 1000;
 const FLEET_LINK_JUMP_EFFECT_MS = 620;
 const UI_HOVER_SOUND = "ui.hover.quiet";
@@ -400,6 +403,8 @@ let borderlessBoundsSyncTimer = null;
 let lastBorderlessBoundsSyncAt = 0;
 let ignoreBorderlessKeySyncUntil = 0;
 let activeUiHoverSoundElement = null;
+let fleetMoveSoundDeck = [];
+let lastFleetMoveSound = null;
 let selectedMenuSaveIndex = -1;
 let selectedGameSaveIndex = -1;
 let isAddingGameSave = false;
@@ -2712,7 +2717,12 @@ function playRandomFleetVoiceSound() {
 }
 
 function playRandomFleetMoveSound() {
-  playRandomIngameSound(FLEET_MOVE_SOUNDS, {
+  const sound = getNextFleetMoveSound();
+  if (!sound) {
+    return;
+  }
+  audioMixer?.play(sound, {
+    channel: "ui",
     volume: 0.82,
   });
 }
@@ -2734,6 +2744,35 @@ function playRandomIngameSound(sounds, options = {}) {
     channel: "ui",
     ...options,
   });
+}
+
+function getNextFleetMoveSound() {
+  if (FLEET_MOVE_SOUNDS.length === 0) {
+    return null;
+  }
+
+  if (fleetMoveSoundDeck.length === 0) {
+    fleetMoveSoundDeck = shuffleAudioDeck(FLEET_MOVE_SOUNDS);
+    if (
+      fleetMoveSoundDeck.length > 1 &&
+      lastFleetMoveSound &&
+      fleetMoveSoundDeck[0] === lastFleetMoveSound
+    ) {
+      [fleetMoveSoundDeck[0], fleetMoveSoundDeck[1]] = [fleetMoveSoundDeck[1], fleetMoveSoundDeck[0]];
+    }
+  }
+
+  lastFleetMoveSound = fleetMoveSoundDeck.shift() ?? null;
+  return lastFleetMoveSound;
+}
+
+function shuffleAudioDeck(sounds) {
+  const deck = sounds.slice();
+  for (let index = deck.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [deck[index], deck[swapIndex]] = [deck[swapIndex], deck[index]];
+  }
+  return deck;
 }
 
 function startMenuEnvironmentMachine() {
@@ -5641,6 +5680,9 @@ function renderFleetActionPanel() {
   }
 
   const movement = ensureFleetMovementForCurrentTurn(fleet);
+  const infoPanel = createFleetActionInfoPanel(fleet, movement);
+  const actionGrid = document.createElement("div");
+  actionGrid.className = "fleet-action-panel__actions";
   const slotCount = FLEET_ACTION_GRID_COLUMNS * FLEET_ACTION_GRID_ROWS;
   for (let index = 0; index < slotCount; index += 1) {
     const button = document.createElement("button");
@@ -5661,9 +5703,64 @@ function renderFleetActionPanel() {
       button.disabled = true;
       button.setAttribute("aria-label", "Fleet action slot");
     }
-    fleetActionPanel.append(button);
+    actionGrid.append(button);
   }
+  fleetActionPanel.append(infoPanel, actionGrid);
   fleetActionPanel.hidden = false;
+}
+
+function createFleetActionInfoPanel(fleet, movement) {
+  const panel = document.createElement("div");
+  panel.className = "fleet-action-panel__info";
+
+  const title = document.createElement("div");
+  title.className = "fleet-action-panel__fleet-title";
+  const fleetNumber = formatFleetCreationNumber(fleet);
+  title.textContent = `${fleetNumber ? `${fleetNumber} ` : ""}FLEET`;
+
+  const commander = document.createElement("div");
+  commander.className = "fleet-action-panel__commander";
+  const commanderText = document.createElement("div");
+  commanderText.className = "fleet-action-panel__commander-text";
+  const commanderName = document.createElement("div");
+  commanderName.className = "fleet-action-panel__commander-name";
+  commanderName.textContent = "UNASSIGNED";
+  const commanderRole = document.createElement("div");
+  commanderRole.className = "fleet-action-panel__commander-role";
+  commanderRole.textContent = "FLEET COMMANDER";
+  commanderText.append(commanderName, commanderRole);
+  const portrait = document.createElement("div");
+  portrait.className = "fleet-action-panel__portrait";
+  commander.append(portrait, commanderText);
+
+  const limits = document.createElement("div");
+  limits.className = "fleet-action-panel__limits";
+  limits.append(
+    createFleetActionLimitRow("FUEL", movement.system, FLEET_SYSTEM_MOVES_PER_TURN, "fuel"),
+    createFleetActionLimitRow("HYPER", movement.link, FLEET_LINK_MOVES_PER_TURN, "hyper"),
+  );
+
+  panel.append(title, commander, limits);
+  return panel;
+}
+
+function createFleetActionLimitRow(labelText, value, maxValue, kind) {
+  const row = document.createElement("div");
+  row.className = "fleet-action-panel__limit-row";
+  const label = document.createElement("div");
+  label.className = "fleet-action-panel__limit-label";
+  label.textContent = labelText;
+  const dots = document.createElement("div");
+  dots.className = `fleet-action-panel__limit-dots fleet-action-panel__limit-dots--${kind}`;
+  const remaining = THREE.MathUtils.clamp(Number.parseInt(value, 10) || 0, 0, maxValue);
+  for (let index = 0; index < maxValue; index += 1) {
+    const dot = document.createElement("span");
+    dot.className = "fleet-action-panel__limit-dot";
+    dot.classList.toggle("is-available", index < remaining);
+    dots.append(dot);
+  }
+  row.append(label, dots);
+  return row;
 }
 
 function moveSelectedFleetToPlanet(planet) {
@@ -11816,8 +11913,8 @@ function renderStarSystem(node) {
       planetKey,
       x: planetX,
       y: planetY,
-      slotRadius: hitTargetRadius + planetRadius * 0.5,
-      radius: 12,
+      slotRadius: getSystemFleetAnchorDistance(hitTargetRadius),
+      radius: hitTargetRadius,
     });
     hitTarget.addEventListener("pointerenter", (event) => {
       if (isGameDialogOpen()) {
@@ -12549,6 +12646,9 @@ function renderSystemJumps({
     const directionLength = Math.max(1, Math.hypot(position.x - starX, position.y - centerY));
     const stepX = ((position.x - starX) / directionLength) * 10;
     const stepY = ((position.y - centerY) / directionLength) * 10;
+    const anchorDirectionX = stepX / 10;
+    const anchorDirectionY = stepY / 10;
+    const anchorDistance = getSystemFleetAnchorDistance(gateRadius);
     const gate = createSystemGate({
       className: "system-jump",
       labelText: `TO ${neighbor.name}`,
@@ -12568,9 +12668,10 @@ function renderSystemJumps({
       type: "link",
       systemId: String(node.id),
       targetSystemId: String(neighbor.id),
-      x: position.x + gateRadius + 16,
-      y: position.y,
-      radius: 12,
+      x: position.x + anchorDirectionX * anchorDistance,
+      y: position.y + anchorDirectionY * anchorDistance,
+      radius: gateRadius,
+      alignX: getSystemFleetMarkerAlignX(anchorDirectionX),
     });
     gate.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -12606,6 +12707,9 @@ function renderSystemJumps({
     const directionLength = Math.max(1, Math.hypot(position.x - starX, position.y - centerY));
     const stepX = ((position.x - starX) / directionLength) * 14;
     const stepY = ((position.y - centerY) / directionLength) * 14;
+    const anchorDirectionX = stepX / 14;
+    const anchorDirectionY = stepY / 14;
+    const anchorDistance = getSystemFleetAnchorDistance(6);
     const gate = createSystemGate({
       className: "system-jump system-jump--wormhole",
       labelText: "WORMHOLE",
@@ -12623,9 +12727,10 @@ function renderSystemJumps({
       type: "wormhole",
       systemId: String(node.id),
       wormholeKey,
-      x: position.x + 24,
-      y: position.y,
-      radius: 12,
+      x: position.x + anchorDirectionX * anchorDistance,
+      y: position.y + anchorDirectionY * anchorDistance,
+      radius: 6,
+      alignX: getSystemFleetMarkerAlignX(anchorDirectionX),
     });
     gate.querySelectorAll(".system-jump__echo").forEach((ring, ringIndex) => {
       const index = ringIndex + 1;
@@ -12702,12 +12807,17 @@ function getSystemFleetMarkerTargetPosition(fleet, anchor, node, anchorSlotState
   if (anchor.type !== "planet") {
     const state = getSystemFleetAnchorSlotState(anchorSlotStates, anchor.anchorKey);
     const useIndex = state.stackIndex++;
-    const offsetY = (useIndex - Math.max(0, state.stackIndex - 1) / 2) * 18;
+    const offsetY = (useIndex - Math.max(0, state.stackIndex - 1) / 2) * FLEET_SYSTEM_MARKER_STACK_GAP;
+    const position = getSystemFleetMarkerTopLeft({
+      x: anchor.x,
+      y: anchor.y + offsetY,
+      alignX: anchor.alignX,
+    });
     return {
       systemId: String(node.id),
       anchorKey: anchor.anchorKey,
-      left: anchor.x - 21,
-      top: anchor.y - 8 + offsetY,
+      left: position.left,
+      top: position.top,
     };
   }
 
@@ -12720,8 +12830,7 @@ function getSystemFleetMarkerTargetPosition(fleet, anchor, node, anchorSlotState
   return {
     systemId: String(node.id),
     anchorKey: anchor.anchorKey,
-    left: position.x - 21,
-    top: position.y - 8,
+    ...getSystemFleetMarkerTopLeft(position),
   };
 }
 
@@ -12770,6 +12879,7 @@ function getFleetPlanetSlotPosition(anchor, slotIndex) {
   return {
     x: anchor.x + Math.cos(angle) * radius,
     y: anchor.y + Math.sin(angle) * radius,
+    alignX: getSystemFleetMarkerAlignX(Math.cos(angle)),
   };
 }
 
@@ -12780,8 +12890,42 @@ function getOverflowFleetPlanetSlotPosition(anchor, overflowIndex) {
   const direction = isUpperHalf ? 1 : -1;
   return {
     x: base.x,
-    y: base.y + direction * (overflowIndex + 1) * 18,
+    y: base.y + direction * (overflowIndex + 1) * FLEET_SYSTEM_MARKER_STACK_GAP,
+    alignX: base.alignX,
   };
+}
+
+function getSystemFleetMarkerTopLeft(point) {
+  const alignX = getSystemFleetMarkerAlignX(point?.alignX);
+  const x = Number(point?.x) || 0;
+  const y = Number(point?.y) || 0;
+  let left = x - FLEET_SYSTEM_MARKER_WIDTH / 2;
+  if (alignX < 0) {
+    left = x - FLEET_SYSTEM_MARKER_WIDTH;
+  } else if (alignX > 0) {
+    left = x;
+  }
+
+  return {
+    left,
+    top: y - FLEET_SYSTEM_MARKER_HEIGHT / 2,
+  };
+}
+
+function getSystemFleetMarkerAlignX(value) {
+  const normalized = Number(value) || 0;
+  if (normalized < -0.35) {
+    return -1;
+  }
+  if (normalized > 0.35) {
+    return 1;
+  }
+  return 0;
+}
+
+function getSystemFleetAnchorDistance(radius) {
+  const normalizedRadius = Math.max(1, Number(radius) || 1);
+  return Math.max(normalizedRadius * 3, FLEET_SYSTEM_MARKER_WIDTH * 0.75);
 }
 
 function shouldAnimateFleetMarker(previousPosition, targetPosition) {

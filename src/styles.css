@@ -103,15 +103,9 @@ body.editor-mode .game-bottom-ui {
   bottom: 16px;
   z-index: 67;
   display: none;
-  grid-template-columns: repeat(6, 42px);
-  grid-auto-rows: 42px;
-  gap: 3px;
-  padding: 4px;
-  border-radius: 3px;
-  background: rgba(10, 10, 11, 0.48);
-  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  grid-template-columns: 190px max-content;
+  align-items: stretch;
+  gap: 4px;
 }
 
 body.game-running .fleet-action-panel:not([hidden]) {
@@ -120,6 +114,137 @@ body.game-running .fleet-action-panel:not([hidden]) {
 
 body.editor-mode .fleet-action-panel {
   display: none;
+}
+
+.fleet-action-panel__info,
+.fleet-action-panel__actions {
+  border-radius: 3px;
+  background: rgba(10, 10, 11, 0.48);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.fleet-action-panel__info {
+  display: grid;
+  grid-template-rows: 28px 49px 1fr;
+  gap: 4px;
+  padding: 4px;
+}
+
+.fleet-action-panel__actions {
+  display: grid;
+  grid-template-columns: repeat(3, 42px);
+  grid-auto-rows: 42px;
+  gap: 3px;
+  padding: 4px;
+}
+
+.fleet-action-panel__fleet-title,
+.fleet-action-panel__commander,
+.fleet-action-panel__limits {
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.fleet-action-panel__fleet-title {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.fleet-action-panel__commander {
+  display: grid;
+  grid-template-columns: 41px 1fr;
+  gap: 5px;
+  align-items: center;
+  padding: 4px;
+}
+
+.fleet-action-panel__commander-text {
+  min-width: 0;
+}
+
+.fleet-action-panel__commander-name {
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.fleet-action-panel__commander-role {
+  margin-top: 4px;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 7px;
+  font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.fleet-action-panel__portrait {
+  width: 41px;
+  height: 41px;
+  border-radius: 2px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
+    rgba(0, 0, 0, 0.18);
+}
+
+.fleet-action-panel__limits {
+  display: grid;
+  gap: 4px;
+  align-content: center;
+  padding: 5px 6px;
+}
+
+.fleet-action-panel__limit-row {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  align-items: center;
+  gap: 5px;
+}
+
+.fleet-action-panel__limit-label {
+  color: rgba(255, 255, 255, 0.54);
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.fleet-action-panel__limit-dots {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.fleet-action-panel__limit-dot {
+  display: block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  opacity: 0.16;
+}
+
+.fleet-action-panel__limit-dots--fuel .fleet-action-panel__limit-dot {
+  background: #fff;
+}
+
+.fleet-action-panel__limit-dots--hyper .fleet-action-panel__limit-dot {
+  border: 1px solid rgba(255, 255, 255, 0.92);
+}
+
+.fleet-action-panel__limit-dot.is-available {
+  opacity: 0.92;
 }
 
 .fleet-action-button {
@@ -2528,7 +2653,7 @@ body.editor-mode .music-player {
 .system-fleet-marker {
   position: absolute;
   z-index: 16;
-  width: 42px;
+  width: 38px;
   height: 16px;
   padding: 0;
   border: 0;
@@ -2556,7 +2681,7 @@ body.editor-mode .music-player {
   position: absolute;
   left: 7px;
   top: 3px;
-  width: 17px;
+  width: 15px;
   height: 10px;
   object-fit: contain;
   opacity: 0.92;
@@ -2565,7 +2690,7 @@ body.editor-mode .music-player {
 
 .system-fleet-marker__number {
   position: absolute;
-  left: 28px;
+  left: 26px;
   top: 4px;
   color: rgba(255, 255, 255, 0.92);
   font-size: 7px;

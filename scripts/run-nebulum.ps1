@@ -180,11 +180,29 @@ function Clear-NebulumIconCache($profileDir) {
   Set-Content -LiteralPath $markerPath -Value $iconCacheVersion -Encoding UTF8
 }
 
+function Clear-NebulumWebCache($profileDir) {
+  Stop-NebulumBrowserProfileProcesses
+  $defaultProfileDir = Join-Path $profileDir "Default"
+  $cachePaths = @(
+    (Join-Path $defaultProfileDir "Service Worker"),
+    (Join-Path $defaultProfileDir "Cache"),
+    (Join-Path $defaultProfileDir "Code Cache"),
+    (Join-Path $defaultProfileDir "GPUCache"),
+    (Join-Path $defaultProfileDir "DawnCache"),
+    (Join-Path $defaultProfileDir "Network\Cache")
+  )
+
+  foreach ($cachePath in $cachePaths) {
+    Remove-Item -LiteralPath $cachePath -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
 function Update-NebulumBrowserProfile($bounds) {
   $profileDir = Join-Path $env:LOCALAPPDATA "Nebulum\BrowserProfile"
   $defaultProfileDir = Join-Path $profileDir "Default"
   $preferencesPath = Join-Path $defaultProfileDir "Preferences"
   Clear-NebulumIconCache $profileDir
+  Clear-NebulumWebCache $profileDir
   New-Item -ItemType Directory -Force -Path $defaultProfileDir | Out-Null
 
   try {
@@ -283,8 +301,54 @@ function Start-WindowBoundsWatcher {
     -WindowStyle Hidden | Out-Null
 }
 
+function Get-NewestWriteTimeUtc($path) {
+  if (-not (Test-Path $path)) {
+    return [DateTime]::MinValue
+  }
+
+  $item = Get-Item -LiteralPath $path
+  if (-not $item.PSIsContainer) {
+    return $item.LastWriteTimeUtc
+  }
+
+  $newest = Get-ChildItem -LiteralPath $path -Recurse -File -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTimeUtc -Descending |
+    Select-Object -First 1
+
+  if ($null -eq $newest) {
+    return $item.LastWriteTimeUtc
+  }
+
+  return $newest.LastWriteTimeUtc
+}
+
+function Test-BuildRequired {
+  $distIndex = Join-Path $repoRoot "dist\index.html"
+  if (-not (Test-Path $distIndex)) {
+    return $true
+  }
+
+  $distTime = (Get-Item -LiteralPath $distIndex).LastWriteTimeUtc
+  $sourcePaths = @(
+    (Join-Path $repoRoot "src"),
+    (Join-Path $repoRoot "public"),
+    (Join-Path $repoRoot "index.html"),
+    (Join-Path $repoRoot "vite.config.js"),
+    (Join-Path $repoRoot "package.json"),
+    (Join-Path $repoRoot "package-lock.json")
+  )
+
+  foreach ($sourcePath in $sourcePaths) {
+    if ((Get-NewestWriteTimeUtc $sourcePath) -gt $distTime) {
+      return $true
+    }
+  }
+
+  return $false
+}
+
 function Ensure-Built($npmCommand) {
-  if (Test-Path (Join-Path $repoRoot "dist\index.html")) {
+  if (-not (Test-BuildRequired)) {
     return
   }
 
