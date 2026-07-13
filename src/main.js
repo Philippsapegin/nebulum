@@ -66,12 +66,38 @@ const FLEET_LINK_MOVES_PER_TURN = 2;
 const FLEET_ACTION_GRID_COLUMNS = 6;
 const FLEET_ACTION_GRID_ROWS = 3;
 const FLEET_SYSTEM_SLOT_COUNT = 8;
+const FLEET_LINK_JUMP_DELAY_MS = 1000;
+const FLEET_LINK_JUMP_EFFECT_MS = 620;
 const UI_HOVER_SOUND = "ui.hover.quiet";
 const UI_MENU_CLICK_SOUND = "ui.menu.click";
 const UI_BASE_CLICK_SOUND = "ui.base.click";
 const UI_CANCEL_CLICK_SOUND = "ui.cancel.click";
 const UI_SCROLL_CLICK_SOUND = "ui.scroll.click";
 const UI_TURN_SOUND = "ui.turn";
+const FLEET_VOICE_SOUNDS = [
+  "/Sounds/IngameUI/FleetVoices/NebFemaleFleetSelect7.mp3",
+  "/Sounds/IngameUI/FleetVoices/NebFemFleetSelect1.mp3",
+  "/Sounds/IngameUI/FleetVoices/NebFemFleetSelect2.mp3",
+  "/Sounds/IngameUI/FleetVoices/NebFemFleetSelect3.mp3",
+  "/Sounds/IngameUI/FleetVoices/NebFemFleetSelect4.mp3",
+  "/Sounds/IngameUI/FleetVoices/NebFemFleetSelect5.mp3",
+  "/Sounds/IngameUI/FleetVoices/NebFemFleetSelect6.mp3",
+  "/Sounds/IngameUI/FleetVoices/NebFleetSelect.mp3",
+  "/Sounds/IngameUI/FleetVoices/NebMaleFleetSelect1.mp3",
+  "/Sounds/IngameUI/FleetVoices/NebMaleFleetSelect2.mp3",
+  "/Sounds/IngameUI/FleetVoices/NebMaleFleetSelect3.mp3",
+  "/Sounds/IngameUI/FleetVoices/NebMaleFleetSelect4.mp3",
+  "/Sounds/IngameUI/FleetVoices/NebMaleFleetSelect5.mp3",
+  "/Sounds/IngameUI/FleetVoices/NebMaleFleetSelect6.mp3",
+];
+const FLEET_MOVE_SOUNDS = [
+  "/Sounds/IngameUI/FleetMove/NebFleetMove1.mp3",
+  "/Sounds/IngameUI/FleetMove/NebFleetMove2.mp3",
+  "/Sounds/IngameUI/FleetMove/NebFleetMove3.mp3",
+  "/Sounds/IngameUI/FleetMove/NebFleetMove4.mp3",
+  "/Sounds/IngameUI/FleetMove/NebFleetMove5.mp3",
+];
+const FLEET_LINK_JUMP_SOUND = "/Sounds/IngameUI/FleetMove/NebLinkJump.mp3";
 const UI_SOUNDS = {
   [UI_HOVER_SOUND]: "/Sounds/UI/NebHoverQuiet.mp3",
   [UI_MENU_CLICK_SOUND]: "/Sounds/UI/NebMenuClick.mp3",
@@ -386,6 +412,8 @@ let activeSystemFleetAnchors = [];
 let activeSystemPlanetMenuPlanet = null;
 let fleetMarkerPositions = new Map();
 let fleetMarkerAnimations = new Map();
+let pendingFleetLinkJumpIds = new Set();
+let fleetLinkJumpTimers = new Map();
 let fleetMovementSerial = 0;
 let suppressFleetMarkerAnimation = false;
 let starmapFleetMarkerElements = [];
@@ -2516,6 +2544,11 @@ function initAudioMixer() {
   audioMixer.preload(UI_CANCEL_CLICK_SOUND);
   audioMixer.preload(UI_SCROLL_CLICK_SOUND);
   audioMixer.preload(UI_TURN_SOUND);
+  audioMixer.preloadAll([
+    ...FLEET_VOICE_SOUNDS,
+    ...FLEET_MOVE_SOUNDS,
+    FLEET_LINK_JUMP_SOUND,
+  ]);
   if (isNebulumAppWindow()) {
     audioMixer.unlock();
   }
@@ -2669,6 +2702,37 @@ function playUiTurnSound() {
   audioMixer?.play(UI_TURN_SOUND, {
     channel: "ui",
     volume: 0.92,
+  });
+}
+
+function playRandomFleetVoiceSound() {
+  playRandomIngameSound(FLEET_VOICE_SOUNDS, {
+    volume: 0.9,
+  });
+}
+
+function playRandomFleetMoveSound() {
+  playRandomIngameSound(FLEET_MOVE_SOUNDS, {
+    volume: 0.82,
+  });
+}
+
+function playFleetLinkJumpSound() {
+  audioMixer?.play(FLEET_LINK_JUMP_SOUND, {
+    channel: "ui",
+    volume: 0.88,
+  });
+}
+
+function playRandomIngameSound(sounds, options = {}) {
+  if (!audioMixer || !Array.isArray(sounds) || sounds.length === 0) {
+    return;
+  }
+
+  const sound = sounds[Math.floor(Math.random() * sounds.length)];
+  audioMixer.play(sound, {
+    channel: "ui",
+    ...options,
   });
 }
 
@@ -5469,7 +5533,9 @@ function formatRomanNumeral(value) {
 
 function getSelectedFleet() {
   const fleet = getFleetById(selectedFleetId);
-  return isFleetControlledByActiveSide(fleet) ? fleet : null;
+  return isFleetControlledByActiveSide(fleet) && !pendingFleetLinkJumpIds.has(fleet.id)
+    ? fleet
+    : null;
 }
 
 function getVisibleFleetsForSystem(systemId) {
@@ -5502,11 +5568,15 @@ function compareVisibleFleets(activeSideId) {
 
 function selectFleet(fleetId) {
   const fleet = getFleetById(fleetId);
-  if (!isFleetControlledByActiveSide(fleet)) {
+  if (!isFleetControlledByActiveSide(fleet) || pendingFleetLinkJumpIds.has(fleet.id)) {
     return false;
   }
 
-  selectedFleetId = selectedFleetId === fleet.id ? null : fleet.id;
+  const willSelect = selectedFleetId !== fleet.id;
+  selectedFleetId = willSelect ? fleet.id : null;
+  if (willSelect) {
+    playRandomFleetVoiceSound();
+  }
   rerenderActiveSystemFleetMarkers();
   updateStarmapFleetMarkers();
   renderFleetActionPanel();
@@ -5606,6 +5676,7 @@ function moveSelectedFleetToPlanet(planet) {
     return true;
   }
 
+  playRandomFleetMoveSound();
   updateFleetLocation(fleet.id, {
     type: "planet",
     systemId: planet.systemId,
@@ -5630,6 +5701,7 @@ function moveSelectedFleetToSystem(systemId) {
     return true;
   }
 
+  playRandomFleetMoveSound();
   const activeSystemId = normalizeRuntimeNullableString(systemScreenController?.state?.activeNode?.id);
   updateFleetLocation(fleet.id, {
     type: "system",
@@ -5658,20 +5730,14 @@ function commandSelectedFleetToLink(systemId, targetSystemId) {
     if (!consumeFleetMovement(fleet, "link")) {
       return true;
     }
-    updateFleetLocation(fleet.id, {
-      type: "link",
-      systemId: normalizedTargetSystemId,
-      targetSystemId: normalizedSystemId,
-    });
-    markExploredForSide(fleet.ownerSideId, { systemId: normalizedTargetSystemId });
-    selectedFleetId = null;
-    finalizeFleetStateChange();
+    startFleetLinkJump(fleet.id, normalizedSystemId, normalizedTargetSystemId);
     return true;
   }
 
   if (!consumeFleetMovement(fleet, "system")) {
     return true;
   }
+  playRandomFleetMoveSound();
   updateFleetLocation(fleet.id, {
     type: "link",
     systemId: normalizedSystemId,
@@ -5707,6 +5773,7 @@ function commandSelectedFleetToStarmapSystem(targetSystemId) {
     return true;
   }
 
+  playRandomFleetMoveSound();
   const previousSystemId = path[path.length - 2] ?? startSystemId;
   updateFleetLocation(fleet.id, {
     type: "link",
@@ -5723,6 +5790,88 @@ function commandSelectedFleetToStarmapSystem(targetSystemId) {
   }
   finalizeFleetStateChange();
   return true;
+}
+
+function startFleetLinkJump(fleetId, systemId, targetSystemId) {
+  const fleet = getFleetById(fleetId);
+  if (!fleet || pendingFleetLinkJumpIds.has(fleet.id)) {
+    return;
+  }
+
+  pendingFleetLinkJumpIds.add(fleet.id);
+  playFleetLinkJumpSound();
+  renderFleetActionPanel();
+  rerenderActiveSystemFleetMarkers();
+
+  startSystemFleetLinkJumpEffect(fleet.id, () => {
+    pendingFleetLinkJumpIds.delete(fleet.id);
+    fleetLinkJumpTimers.delete(fleet.id);
+    const currentFleet = getFleetById(fleet.id);
+    if (!currentFleet) {
+      finalizeFleetStateChange();
+      return;
+    }
+
+    updateFleetLocation(currentFleet.id, {
+      type: "link",
+      systemId: targetSystemId,
+      targetSystemId: systemId,
+    });
+    markExploredForSide(currentFleet.ownerSideId, { systemId: targetSystemId });
+    selectedFleetId = null;
+    finalizeFleetStateChange();
+  });
+}
+
+function startSystemFleetLinkJumpEffect(fleetId, onFinish) {
+  const previousTimers = fleetLinkJumpTimers.get(fleetId);
+  if (previousTimers) {
+    window.clearTimeout(previousTimers.collapseTimer);
+    window.clearTimeout(previousTimers.finishTimer);
+  }
+
+  const marker = getSystemFleetMarkerElement(fleetId);
+  if (marker) {
+    marker.disabled = true;
+    marker.setAttribute("aria-disabled", "true");
+    marker.classList.add("system-fleet-marker--link-jump-pending");
+  }
+
+  const collapseTimer = window.setTimeout(() => {
+    const activeMarker = getSystemFleetMarkerElement(fleetId) ?? marker;
+    if (!activeMarker?.isConnected) {
+      return;
+    }
+
+    if (!activeMarker.querySelector(".system-fleet-marker__jump-ring")) {
+      const ring = document.createElement("span");
+      ring.className = "system-fleet-marker__jump-ring";
+      activeMarker.append(ring);
+    }
+    void activeMarker.offsetWidth;
+    activeMarker.classList.add("system-fleet-marker--link-jump");
+  }, FLEET_LINK_JUMP_DELAY_MS);
+
+  const finishTimer = window.setTimeout(() => {
+    onFinish();
+  }, FLEET_LINK_JUMP_DELAY_MS + FLEET_LINK_JUMP_EFFECT_MS);
+
+  fleetLinkJumpTimers.set(fleetId, { collapseTimer, finishTimer });
+}
+
+function getSystemFleetMarkerElement(fleetId) {
+  const normalizedFleetId = String(fleetId ?? "");
+  return Array.from(starSystem.querySelectorAll(".system-fleet-marker"))
+    .find((marker) => marker.dataset.fleetId === normalizedFleetId) ?? null;
+}
+
+function clearFleetLinkJumpTimers() {
+  for (const timers of fleetLinkJumpTimers.values()) {
+    window.clearTimeout(timers.collapseTimer);
+    window.clearTimeout(timers.finishTimer);
+  }
+  fleetLinkJumpTimers.clear();
+  pendingFleetLinkJumpIds.clear();
 }
 
 function findSystemPath(startSystemId, targetSystemId) {
@@ -5783,6 +5932,7 @@ function moveSelectedFleetToWormhole(systemId, wormholeKey) {
     return true;
   }
 
+  playRandomFleetMoveSound();
   updateFleetLocation(fleet.id, {
     type: "wormhole",
     systemId: normalizedSystemId,
@@ -7751,6 +7901,7 @@ function disposeNebulumRuntime() {
   cancelGraphDrag();
   cancelPlanetEntryTransition();
   cancelFleetMarkerAnimations();
+  clearFleetLinkJumpTimers();
   closeStarWindow();
   planetScreenController.close();
   closeObjectDetailScreen({ preserveTransitionOverlay: true });
@@ -7770,6 +7921,8 @@ function disposeNebulumRuntime() {
   starmapFleetMarkerElements.length = 0;
   activeSystemFleetAnchors = [];
   fleetMarkerPositions.clear();
+  fleetLinkJumpTimers.clear();
+  pendingFleetLinkJumpIds.clear();
   selectedFleetId = null;
   nodeMeshes.length = 0;
   hitTargets.length = 0;
@@ -12856,13 +13009,16 @@ function getFleetLocationAnchorKey(location) {
 function createSystemFleetMarker(fleet) {
   const marker = document.createElement("button");
   const isControlled = isFleetControlledByActiveSide(fleet);
+  const isLinkJumpPending = pendingFleetLinkJumpIds.has(fleet.id);
   marker.className = "system-fleet-marker";
   marker.type = "button";
   marker.dataset.fleetId = fleet.id;
   marker.dataset.ownerSideId = fleet.ownerSideId;
   marker.classList.toggle("system-fleet-marker--foreign", !isControlled);
   marker.classList.toggle("system-fleet-marker--selected", selectedFleetId === fleet.id);
-  marker.tabIndex = isControlled ? 0 : -1;
+  marker.classList.toggle("system-fleet-marker--link-jump-pending", isLinkJumpPending);
+  marker.disabled = isLinkJumpPending;
+  marker.tabIndex = isControlled && !isLinkJumpPending ? 0 : -1;
   marker.style.setProperty("--fleet-color", getSideColorById(fleet.ownerSideId));
   marker.setAttribute("aria-label", fleet.name);
 
