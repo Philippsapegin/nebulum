@@ -54,7 +54,7 @@ function Get-NebulumWindowBounds {
   }
 }
 
-function Lock-NebulumWindowStyle($handle) {
+function Restore-NebulumWindowStyle($handle) {
   $GWL_STYLE = -16
   $WS_THICKFRAME = 0x00040000
   $WS_MAXIMIZEBOX = 0x00010000
@@ -65,9 +65,9 @@ function Lock-NebulumWindowStyle($handle) {
   $SWP_FRAMECHANGED = 0x0020
 
   $style = [NebulumWindowBounds]::GetWindowLong($handle, $GWL_STYLE)
-  $lockedStyle = $style -band (-bnot ($WS_THICKFRAME -bor $WS_MAXIMIZEBOX))
-  if ($lockedStyle -ne $style) {
-    [NebulumWindowBounds]::SetWindowLong($handle, $GWL_STYLE, $lockedStyle) | Out-Null
+  $restoredStyle = $style -bor $WS_THICKFRAME -bor $WS_MAXIMIZEBOX
+  if ($restoredStyle -ne $style) {
+    [NebulumWindowBounds]::SetWindowLong($handle, $GWL_STYLE, $restoredStyle) | Out-Null
     [NebulumWindowBounds]::SetWindowPos(
       $handle,
       [IntPtr]::Zero,
@@ -78,6 +78,24 @@ function Lock-NebulumWindowStyle($handle) {
       $SWP_NOSIZE -bor $SWP_NOMOVE -bor $SWP_NOZORDER -bor $SWP_NOACTIVATE -bor $SWP_FRAMECHANGED
     ) | Out-Null
   }
+}
+
+function Test-NebulumNativeFullscreen($handle, $rect) {
+  $GWL_STYLE = -16
+  $WS_CAPTION = 0x00C00000
+  $screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+  $width = $rect.Right - $rect.Left
+  $height = $rect.Bottom - $rect.Top
+  $style = [NebulumWindowBounds]::GetWindowLong($handle, $GWL_STYLE)
+  $hasCaption = ($style -band $WS_CAPTION) -ne 0
+
+  return (
+    -not $hasCaption -and
+    [Math]::Abs($rect.Left - $screen.Left) -le 2 -and
+    [Math]::Abs($rect.Top - $screen.Top) -le 2 -and
+    [Math]::Abs($width - $screen.Width) -le 2 -and
+    [Math]::Abs($height - $screen.Height) -le 2
+  )
 }
 
 try {
@@ -116,9 +134,14 @@ try {
     $misses = 0
 
     $bounds = Get-NebulumWindowBounds
-    Lock-NebulumWindowStyle $target.MainWindowHandle
     $rect = New-Object RECT
     [NebulumWindowBounds]::GetWindowRect($target.MainWindowHandle, [ref]$rect) | Out-Null
+    if (Test-NebulumNativeFullscreen $target.MainWindowHandle $rect) {
+      Start-Sleep -Milliseconds 250
+      continue
+    }
+
+    Restore-NebulumWindowStyle $target.MainWindowHandle
 
     $width = $rect.Right - $rect.Left
     $height = $rect.Bottom - $rect.Top

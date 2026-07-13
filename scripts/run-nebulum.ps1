@@ -39,7 +39,7 @@ function Test-NebulumServer($port) {
       $settingsContent = [System.Text.Encoding]::UTF8.GetString($settingsContent)
     }
     $settings = $settingsContent | ConvertFrom-Json
-    return ($null -ne $settings.borderlessWindow) -and ([int]$settings.serverVersion -ge 10)
+    return ($null -ne $settings.borderlessWindow) -and ([int]$settings.serverVersion -ge 11)
   }
   catch {
     return $false
@@ -252,10 +252,6 @@ if (`$width -lt [Math]::Floor(`$height * 1.45)) { `$height = [Math]::Floor(`$wid
 `$left = `$screen.Left + [Math]::Floor((`$screen.Width - `$width) / 2)
 `$top = `$screen.Top + [Math]::Floor((`$screen.Height - `$height) / 2)
 if (`$target) {
-  if ('$EnterFullscreen' -eq 'True') {
-    [NebulumWindow]::MoveWindow(`$target.MainWindowHandle, `$left, `$top, `$width, `$height, `$true) | Out-Null
-    Start-Sleep -Milliseconds 80
-  }
   `$shell.AppActivate(`$target.Id) | Out-Null
 } else {
   `$shell.AppActivate('Nebulum') | Out-Null
@@ -347,21 +343,27 @@ $browser = Find-Browser
 if ($browser) {
   Write-LaunchDebug "launch browser $browser $url"
   $screenBounds = Get-NebulumWindowBounds
+  if ($windowSettings.borderlessWindow) {
+    Stop-NebulumBrowserProfileProcesses
+  }
   $browserProfile = Update-NebulumBrowserProfile $screenBounds
   $browserArgs = @(
     "--user-data-dir=$browserProfile",
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-session-crashed-bubble",
+    "--disable-features=PressAndHoldEscToExitBrowserFullscreen",
     "--app=$url",
     "--autoplay-policy=no-user-gesture-required",
     "--window-size=$($screenBounds.Width),$($screenBounds.Height)",
     "--window-position=$($screenBounds.Left),$($screenBounds.Top)"
   )
-  Start-Process -FilePath $browser -ArgumentList $browserArgs | Out-Null
-  Start-WindowBoundsWatcher
   if ($windowSettings.borderlessWindow) {
-    Send-FullscreenToggle -EnterFullscreen $true
+    $browserArgs += "--kiosk"
+  }
+  Start-Process -FilePath $browser -ArgumentList $browserArgs | Out-Null
+  if (-not $windowSettings.borderlessWindow) {
+    Start-WindowBoundsWatcher
   }
 }
 else {

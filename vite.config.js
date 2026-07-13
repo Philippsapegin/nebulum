@@ -82,7 +82,7 @@ function localPwaLauncher() {
   function withServerMeta(settings) {
     return {
       ...settings,
-      serverVersion: 10,
+      serverVersion: 11,
     };
   }
 
@@ -174,26 +174,51 @@ function localPwaLauncher() {
       return false;
     }
 
+    const settings = readWindowSettings();
+    if (settings.borderlessWindow) {
+      stopNebulumBrowserProfileProcesses();
+    }
     const bounds = getNebulumWindowBounds();
     const profileDir = prepareNebulumBrowserProfile(bounds);
-    startWindowBoundsWatcher();
+    if (!settings.borderlessWindow) {
+      startWindowBoundsWatcher();
+    }
+    const browserArgs = [
+      `--user-data-dir=${profileDir}`,
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-session-crashed-bubble",
+      "--disable-features=PressAndHoldEscToExitBrowserFullscreen",
+      `--app=${getLaunchShellUrl(request)}`,
+      "--autoplay-policy=no-user-gesture-required",
+      `--window-size=${bounds.width},${bounds.height}`,
+      `--window-position=${bounds.left},${bounds.top}`,
+    ];
+    if (settings.borderlessWindow) {
+      browserArgs.push("--kiosk");
+    }
     const child = spawn(
       browser,
-      [
-        `--user-data-dir=${profileDir}`,
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-session-crashed-bubble",
-        `--app=${getLaunchShellUrl(request)}`,
-        "--autoplay-policy=no-user-gesture-required",
-        `--window-size=${bounds.width},${bounds.height}`,
-        `--window-position=${bounds.left},${bounds.top}`,
-      ],
+      browserArgs,
       { detached: true, stdio: "ignore", windowsHide: false },
     );
     child.unref();
-    lockNebulumWindowBounds();
+    if (!settings.borderlessWindow) {
+      lockNebulumWindowBounds();
+    }
     return true;
+  }
+
+  function schedulePwaRelaunch(request) {
+    if (process.platform !== "win32") {
+      return;
+    }
+
+    const host = request.headers.host || "127.0.0.1:5173";
+    setTimeout(() => {
+      stopNebulumBrowserProfileProcesses();
+      openPwaWindow({ headers: { host } });
+    }, 250);
   }
 
   function handleLocalPwaRequest(request, response, next) {
@@ -221,7 +246,7 @@ function localPwaLauncher() {
             const settings = normalizeWindowSettings(body);
             writeWindowSettings(settings);
             if (body.applyNow === true) {
-              sendFullscreenToggle(settings.borderlessWindow);
+              schedulePwaRelaunch(request);
             }
             sendJson(response, 200, withServerMeta(settings));
           })
@@ -504,9 +529,11 @@ if ($target) {
   $SWP_NOACTIVATE = 0x0010
   $SWP_FRAMECHANGED = 0x0020
   $style = [NebulumWindowLock]::GetWindowLong($target.MainWindowHandle, $GWL_STYLE)
-  $lockedStyle = $style -band (-bnot ($WS_THICKFRAME -bor $WS_MAXIMIZEBOX))
-  [NebulumWindowLock]::SetWindowLong($target.MainWindowHandle, $GWL_STYLE, $lockedStyle) | Out-Null
-  [NebulumWindowLock]::SetWindowPos($target.MainWindowHandle, [IntPtr]::Zero, 0, 0, 0, 0, $SWP_NOSIZE -bor $SWP_NOMOVE -bor $SWP_NOZORDER -bor $SWP_NOACTIVATE -bor $SWP_FRAMECHANGED) | Out-Null
+  $restoredStyle = $style -bor $WS_THICKFRAME -bor $WS_MAXIMIZEBOX
+  if ($restoredStyle -ne $style) {
+    [NebulumWindowLock]::SetWindowLong($target.MainWindowHandle, $GWL_STYLE, $restoredStyle) | Out-Null
+    [NebulumWindowLock]::SetWindowPos($target.MainWindowHandle, [IntPtr]::Zero, 0, 0, 0, 0, $SWP_NOSIZE -bor $SWP_NOMOVE -bor $SWP_NOZORDER -bor $SWP_NOACTIVATE -bor $SWP_FRAMECHANGED) | Out-Null
+  }
   [NebulumWindowLock]::MoveWindow($target.MainWindowHandle, $left, $top, $width, $height, $true) | Out-Null
 }
 `;

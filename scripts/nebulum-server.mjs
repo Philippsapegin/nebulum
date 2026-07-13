@@ -17,7 +17,7 @@ const settingsPath = path.resolve(
     process.env.NEBULUM_SETTINGS_PATH ||
     path.join(process.env.LOCALAPPDATA || os.homedir(), "Nebulum", "settings.json"),
 );
-const SERVER_VERSION = 10;
+const SERVER_VERSION = 11;
 const APP_LAUNCH_PARAM = "nebulumApp";
 const NEBULUM_LAUNCH_PATH = "/nebulum-launch.html";
 const ICON_CACHE_VERSION = "pwa-icons-2026-07-04-1";
@@ -60,6 +60,14 @@ async function readSettings() {
   }
 }
 
+function readSettingsSync() {
+  try {
+    return normalizeWindowSettings(JSON.parse(readFileSync(settingsPath, "utf8")));
+  } catch {
+    return normalizeWindowSettings();
+  }
+}
+
 async function writeSettings(settings) {
   await fs.mkdir(path.dirname(settingsPath), { recursive: true });
   await fs.writeFile(settingsPath, `${JSON.stringify(normalizeWindowSettings(settings), null, 2)}\n`, "utf8");
@@ -78,15 +86,19 @@ function sendFullscreenToggle(enterFullscreen) {
     "$target = $null",
     "for ($attempt = 0; $attempt -lt 40 -and -not $target; $attempt += 1) { $target = Get-Process chrome -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like '*Nebulum*' } | Select-Object -First 1; if (-not $target) { Start-Sleep -Milliseconds 150 } }",
     "$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds",
-    enterFullscreen
-      ? "if ($target) { [NebulumWindow]::MoveWindow($target.MainWindowHandle, $screen.Left, $screen.Top, $screen.Width, $screen.Height, $true) | Out-Null; Start-Sleep -Milliseconds 80 }"
-      : "",
+    "$marginX = [Math]::Max(24, [Math]::Floor($screen.Width * 0.02))",
+    "$marginY = [Math]::Max(24, [Math]::Floor($screen.Height * 0.025))",
+    "$width = $screen.Width - ($marginX * 2)",
+    "$height = $screen.Height - ($marginY * 2)",
+    "if ($width -lt [Math]::Floor($height * 1.45)) { $height = [Math]::Floor($width / 1.45) }",
+    "$left = $screen.Left + [Math]::Floor(($screen.Width - $width) / 2)",
+    "$top = $screen.Top + [Math]::Floor(($screen.Height - $height) / 2)",
     "if ($target) { $shell.AppActivate($target.Id) | Out-Null } else { $shell.AppActivate('Nebulum') | Out-Null }",
     "Start-Sleep -Milliseconds 140",
     "$shell.SendKeys('{F11}')",
     enterFullscreen
       ? ""
-      : "if ($target) { Start-Sleep -Milliseconds 260; [NebulumWindow]::MoveWindow($target.MainWindowHandle, $screen.Left, $screen.Top, $screen.Width, $screen.Height, $true) | Out-Null }",
+      : "if ($target) { Start-Sleep -Milliseconds 260; [NebulumWindow]::MoveWindow($target.MainWindowHandle, $left, $top, $width, $height, $true) | Out-Null }",
   ].join("; ");
   const child = spawn(
     "powershell.exe",
@@ -107,7 +119,14 @@ function sendWindowFitToScreen() {
     "$target = $null",
     "for ($attempt = 0; $attempt -lt 40 -and -not $target; $attempt += 1) { $target = Get-Process chrome -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like '*Nebulum*' } | Select-Object -First 1; if (-not $target) { Start-Sleep -Milliseconds 150 } }",
     "$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds",
-    "if ($target) { [NebulumWindow]::MoveWindow($target.MainWindowHandle, $screen.Left, $screen.Top, $screen.Width, $screen.Height, $true) | Out-Null }",
+    "$marginX = [Math]::Max(24, [Math]::Floor($screen.Width * 0.02))",
+    "$marginY = [Math]::Max(24, [Math]::Floor($screen.Height * 0.025))",
+    "$width = $screen.Width - ($marginX * 2)",
+    "$height = $screen.Height - ($marginY * 2)",
+    "if ($width -lt [Math]::Floor($height * 1.45)) { $height = [Math]::Floor($width / 1.45) }",
+    "$left = $screen.Left + [Math]::Floor(($screen.Width - $width) / 2)",
+    "$top = $screen.Top + [Math]::Floor(($screen.Height - $height) / 2)",
+    "if ($target) { [NebulumWindow]::MoveWindow($target.MainWindowHandle, $left, $top, $width, $height, $true) | Out-Null }",
   ].join("; ");
   const child = spawn(
     "powershell.exe",
@@ -127,27 +146,52 @@ function openPwaWindow(request) {
     return false;
   }
 
+  const settings = readSettingsSync();
+  if (settings.borderlessWindow) {
+    stopNebulumBrowserProfileProcesses();
+  }
   const bounds = getNebulumWindowBounds();
   const profileDir = prepareNebulumBrowserProfile(bounds);
-  startWindowBoundsWatcher();
+  if (!settings.borderlessWindow) {
+    startWindowBoundsWatcher();
+  }
+  const browserArgs = [
+    `--user-data-dir=${profileDir}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-session-crashed-bubble",
+    "--disable-features=PressAndHoldEscToExitBrowserFullscreen",
+    `--app=${getLaunchShellUrl(request)}`,
+    "--autoplay-policy=no-user-gesture-required",
+    `--window-size=${bounds.width},${bounds.height}`,
+    `--window-position=${bounds.left},${bounds.top}`,
+  ];
+  if (settings.borderlessWindow) {
+    browserArgs.push("--kiosk");
+  }
   const child = spawn(
     browser,
-    [
-      `--user-data-dir=${profileDir}`,
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-session-crashed-bubble",
-      `--app=${getLaunchShellUrl(request)}`,
-      "--autoplay-policy=no-user-gesture-required",
-      `--window-size=${bounds.width},${bounds.height}`,
-      `--window-position=${bounds.left},${bounds.top}`,
-    ],
+    browserArgs,
     { detached: true, stdio: "ignore", windowsHide: false },
-    );
-    child.unref();
+  );
+  child.unref();
+  if (!settings.borderlessWindow) {
     lockNebulumWindowBounds();
-    return true;
   }
+  return true;
+}
+
+function schedulePwaRelaunch(request) {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  const host = request.headers.host || `127.0.0.1:${port}`;
+  setTimeout(() => {
+    stopNebulumBrowserProfileProcesses();
+    openPwaWindow({ headers: { host } });
+  }, 250);
+}
 
 function getOpenPwaUrl(request) {
   const host = request.headers.host || `127.0.0.1:${port}`;
@@ -393,9 +437,11 @@ if ($target) {
   $SWP_NOACTIVATE = 0x0010
   $SWP_FRAMECHANGED = 0x0020
   $style = [NebulumWindowLock]::GetWindowLong($target.MainWindowHandle, $GWL_STYLE)
-  $lockedStyle = $style -band (-bnot ($WS_THICKFRAME -bor $WS_MAXIMIZEBOX))
-  [NebulumWindowLock]::SetWindowLong($target.MainWindowHandle, $GWL_STYLE, $lockedStyle) | Out-Null
-  [NebulumWindowLock]::SetWindowPos($target.MainWindowHandle, [IntPtr]::Zero, 0, 0, 0, 0, $SWP_NOSIZE -bor $SWP_NOMOVE -bor $SWP_NOZORDER -bor $SWP_NOACTIVATE -bor $SWP_FRAMECHANGED) | Out-Null
+  $restoredStyle = $style -bor $WS_THICKFRAME -bor $WS_MAXIMIZEBOX
+  if ($restoredStyle -ne $style) {
+    [NebulumWindowLock]::SetWindowLong($target.MainWindowHandle, $GWL_STYLE, $restoredStyle) | Out-Null
+    [NebulumWindowLock]::SetWindowPos($target.MainWindowHandle, [IntPtr]::Zero, 0, 0, 0, 0, $SWP_NOSIZE -bor $SWP_NOMOVE -bor $SWP_NOZORDER -bor $SWP_NOACTIVATE -bor $SWP_FRAMECHANGED) | Out-Null
+  }
   [NebulumWindowLock]::MoveWindow($target.MainWindowHandle, $left, $top, $width, $height, $true) | Out-Null
 }
 `;
@@ -552,7 +598,7 @@ const server = createServer(async (request, response) => {
         const settings = await readRequestJson(request);
         await writeSettings(settings);
         if (settings.applyNow === true) {
-          sendFullscreenToggle(settings.borderlessWindow === true);
+          schedulePwaRelaunch(request);
         }
         sendJson(response, 200, withServerMeta(await readSettings()));
         return;
