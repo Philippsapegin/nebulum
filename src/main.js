@@ -437,9 +437,10 @@ let pendingFleetLinkJumpIds = new Set();
 let fleetLinkJumpTimers = new Map();
 let fleetMovementSerial = 0;
 let suppressFleetMarkerAnimation = false;
-let starmapFleetMarkerElements = [];
+let starmapFleetMarkerElements = new Map();
 let starmapFleetMarkerPositions = new Map();
 let starmapFleetMarkerAnimations = new Map();
+let pendingStarmapFleetMarkerPaths = new Map();
 let shouldStartGameAfterInit = false;
 let isRuntimeSessionRedirecting = false;
 let runtimeLoadingHideTimer = null;
@@ -774,6 +775,7 @@ document.addEventListener("keydown", (event) => {
 }, { capture: true });
 document.addEventListener("pointermove", onPointerMove, { capture: true });
 document.addEventListener("pointerdown", onSystemPlanetMenuOutsidePointerDown, { capture: true });
+starWindow.addEventListener("pointerdown", onSystemBlankFleetSelectionPointerDown);
 sceneCanvas.addEventListener("pointerdown", onPointerDown);
 sceneCanvas.addEventListener("wheel", onWheel, { passive: false });
 window.addEventListener("pointerup", onPointerUp);
@@ -2642,6 +2644,10 @@ function onUiClickSoundPointerDown(event) {
     return;
   }
 
+  if (target.matches(".fleet-action-button--ping")) {
+    return;
+  }
+
   if (target.matches(UI_SCROLL_CLICK_SOUND_SELECTOR)) {
     playUiScrollClickSound();
     return;
@@ -4190,6 +4196,7 @@ function startGameFromMenu({ editorMode = false, gameState = null } = {}) {
   activeSystemFleetAnchors = [];
   fleetMarkerPositions.clear();
   starmapFleetMarkerPositions.clear();
+  pendingStarmapFleetMarkerPaths.clear();
   cancelFleetMarkerAnimations();
   cancelStarmapFleetMarkerAnimations();
   pendingStartGameState = null;
@@ -4307,14 +4314,21 @@ function findRenderedSystemPlanetByKey(planetKey) {
   return null;
 }
 
-async function restorePlanetScreenFromSession(planet, { persist = true } = {}) {
+async function restorePlanetScreenFromSession(planet, { persist = true, preserveEntryOverlay = false } = {}) {
   try {
     await loadPlanetScreenRenderer();
   } catch (error) {
     console.error("Planet screen module failed to load", error);
   }
 
-  cancelPlanetEntryTransition();
+  if (preserveEntryOverlay) {
+    planetEntryTransitionToken += 1;
+    isPlanetEntryTransitioning = false;
+    starWindow.classList.remove("planet-entry-moving");
+    starWindow.style.setProperty("--planet-entry-scale", "1");
+  } else {
+    cancelPlanetEntryTransition();
+  }
   closePlanetWindow();
   planetScreen.style.removeProperty("opacity");
   planetScreen.style.setProperty("transition", "none");
@@ -5815,17 +5829,14 @@ function renderFleetActionPanel() {
     const button = document.createElement("button");
     button.className = "fleet-action-button";
     button.type = "button";
-    if (index < FLEET_SYSTEM_MOVES_PER_TURN) {
-      const isAvailable = index < movement.system;
-      button.textContent = "S";
-      button.disabled = !isAvailable;
-      button.setAttribute("aria-label", `System move ${index + 1}`);
-    } else if (index < FLEET_SYSTEM_MOVES_PER_TURN + FLEET_LINK_MOVES_PER_TURN) {
-      const linkIndex = index - FLEET_SYSTEM_MOVES_PER_TURN;
-      const isAvailable = linkIndex < movement.link;
-      button.textContent = "L";
-      button.disabled = !isAvailable;
-      button.setAttribute("aria-label", `Link move ${linkIndex + 1}`);
+    if (index === 0) {
+      button.classList.add("fleet-action-button--ping");
+      button.textContent = "PING";
+      button.setAttribute("aria-label", "Ping selected fleet");
+      button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        pingSelectedFleet();
+      });
     } else {
       button.disabled = true;
       button.setAttribute("aria-label", "Fleet action slot");
@@ -5888,6 +5899,41 @@ function createFleetActionLimitRow(labelText, value, maxValue, kind) {
   }
   row.append(label, dots);
   return row;
+}
+
+function pingSelectedFleet() {
+  const fleet = getSelectedFleet();
+  if (!fleet) {
+    return false;
+  }
+
+  playRandomFleetVoiceSound(fleet);
+  const marker = getVisibleFleetMarkerElement(fleet.id);
+  if (marker) {
+    startFleetMarkerPing(marker);
+  }
+  return true;
+}
+
+function getVisibleFleetMarkerElement(fleetId) {
+  const systemMarker = getSystemFleetMarkerElement(fleetId);
+  if (systemMarker?.isConnected && !systemMarker.classList.contains("hidden")) {
+    return systemMarker;
+  }
+
+  const starmapMarker = getStarmapFleetMarkerElement(fleetId);
+  if (starmapMarker?.isConnected && !starmapMarker.classList.contains("hidden")) {
+    return starmapMarker;
+  }
+
+  return null;
+}
+
+function startFleetMarkerPing(marker) {
+  const ring = document.createElement("span");
+  ring.className = "fleet-marker-ping-ring";
+  marker.append(ring);
+  ring.addEventListener("animationend", () => ring.remove(), { once: true });
 }
 
 function moveSelectedFleetToPlanet(planet) {
@@ -5998,6 +6044,7 @@ function commandSelectedFleetToStarmapSystem(targetSystemId) {
   }
 
   playRandomFleetMoveSound();
+  pendingStarmapFleetMarkerPaths.set(fleet.id, path);
   const previousSystemId = path[path.length - 2] ?? startSystemId;
   updateFleetLocation(fleet.id, {
     type: "link",
@@ -6012,6 +6059,7 @@ function commandSelectedFleetToStarmapSystem(targetSystemId) {
       });
     }
   }
+  selectedFleetId = null;
   finalizeFleetStateChange();
   return true;
 }
@@ -6087,6 +6135,11 @@ function getSystemFleetMarkerElement(fleetId) {
   const normalizedFleetId = String(fleetId ?? "");
   return Array.from(starSystem.querySelectorAll(".system-fleet-marker"))
     .find((marker) => marker.dataset.fleetId === normalizedFleetId) ?? null;
+}
+
+function getStarmapFleetMarkerElement(fleetId) {
+  const normalizedFleetId = String(fleetId ?? "");
+  return starmapFleetMarkerElements.get(normalizedFleetId) ?? null;
 }
 
 function clearFleetLinkJumpTimers() {
@@ -6408,6 +6461,10 @@ function initPanel() {
     }
     if (event.key === "Escape" && isPlanetWindowOpen) {
       closePlanetWindow();
+      return;
+    }
+    if (event.key === "Escape" && systemScreenController.isOpen()) {
+      closeStarWindow();
     }
   });
 
@@ -7499,8 +7556,50 @@ function onPointerUp(event) {
   );
   cancelGraphDrag(event);
   if (clickDistance < 5) {
-    selectNodeAt(event.clientX, event.clientY);
+    const wasHandled = selectNodeAt(event.clientX, event.clientY);
+    if (!wasHandled) {
+      clearSelectedFleet();
+    }
   }
+}
+
+function onSystemBlankFleetSelectionPointerDown(event) {
+  if (
+    event.button !== 0 ||
+    !selectedFleetId ||
+    isStartMenuOpen ||
+    !isGameRuntimeReady ||
+    isGameDialogOpen() ||
+    !systemScreenController.isOpen()
+  ) {
+    return;
+  }
+
+  const target = event.target instanceof Element ? event.target : null;
+  if (!target || isFleetSelectionPreservingTarget(target)) {
+    return;
+  }
+
+  clearSelectedFleet();
+}
+
+function isFleetSelectionPreservingTarget(target) {
+  return Boolean(target.closest([
+    ".system-fleet-marker",
+    ".starmap-fleet-marker",
+    ".fleet-action-panel",
+    ".system-planet-hit",
+    ".system-jump",
+    ".system-planet-menu",
+    ".game-bottom-ui",
+    ".music-player",
+    "button",
+    "input",
+    "select",
+    "textarea",
+    "a",
+    "[role=\"button\"]",
+  ].join(",")));
 }
 
 function releaseStaleGraphCapture(event) {
@@ -7933,7 +8032,7 @@ function clearSystemTooltipTyping() {
 
 function selectNodeAt(clientX, clientY) {
   if (systemScreenController.isGraphEntering()) {
-    return;
+    return true;
   }
 
   pointer.x = (clientX / window.innerWidth) * 2 - 1;
@@ -7941,19 +8040,19 @@ function selectNodeAt(clientX, clientY) {
 
   const hit = getNodeHit() ?? getScreenNodeHit(clientX, clientY);
   if (!hit) {
-    return;
+    return false;
   }
 
   if (!isMaskToolEnabled && commandSelectedFleetToStarmapSystem(hit.userData.node.id)) {
-    return;
+    return true;
   }
 
   if (!isMaskToolEnabled) {
     if (!isSystemAccessibleForActiveSide(hit.userData.node)) {
-      return;
+      return true;
     }
     startGraphToSystemTransition(hit.userData.node, clientX, clientY);
-    return;
+    return true;
   }
 
   const nodeId = hit.userData.node.id;
@@ -7976,6 +8075,7 @@ function selectNodeAt(clientX, clientY) {
   }
 
   updateUsedColorsUi();
+  return true;
 }
 
 function startGraphToSystemTransition(node, clientX, clientY) {
@@ -8155,7 +8255,7 @@ function disposeNebulumRuntime() {
   systemStarLayer.replaceChildren();
   systemParticles.replaceChildren();
   labelElements.length = 0;
-  starmapFleetMarkerElements.length = 0;
+  starmapFleetMarkerElements.clear();
   activeSystemFleetAnchors = [];
   fleetMarkerPositions.clear();
   fleetLinkJumpTimers.clear();
@@ -8308,7 +8408,12 @@ async function returnToStarSystemFromPlanet() {
   persistRuntimeSession("system");
 }
 
-async function openObjectDetailFromPlanetView(detail, clientX = window.innerWidth / 2, clientY = window.innerHeight / 2) {
+async function openObjectDetailFromPlanetView(
+  detail,
+  clientX = window.innerWidth / 2,
+  clientY = window.innerHeight / 2,
+  { keepPlanetEntryOverlayUntilZoom = false } = {},
+) {
   if (!detail || !openPlanetData) {
     return;
   }
@@ -8324,7 +8429,9 @@ async function openObjectDetailFromPlanetView(detail, clientX = window.innerWidt
   objectDetailOptions.borders = true;
   starWindow.classList.add("object-detail-open");
   const detailToken = ++objectDetailToken;
-  cancelPlanetEntryTransition();
+  if (!keepPlanetEntryOverlayUntilZoom) {
+    cancelPlanetEntryTransition();
+  }
   closePlanetWindow();
   disposeObjectDetail3D();
   objectDetailTexture.replaceChildren();
@@ -8346,6 +8453,9 @@ async function openObjectDetailFromPlanetView(detail, clientX = window.innerWidt
   planetScreen.classList.add("surface-entry-moving");
   planetScreen.style.setProperty("--surface-entry-scale", "7");
   objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "1");
+  if (keepPlanetEntryOverlayUntilZoom) {
+    cancelPlanetEntryTransition();
+  }
 
   await delay(420);
   if (!isObjectDetailOpen || detailToken !== objectDetailToken) {
@@ -12477,8 +12587,41 @@ async function startPlanetEntryTransition(planet, clientX, clientY) {
 }
 
 function setPlanetEntryOverlayContent(planet) {
-  planetEntryOverlay.querySelector(".planet-entry-name").textContent = planet.name;
-  planetEntryOverlay.querySelector(".planet-entry-type").textContent = getPlanetSizeLabel(planet);
+  planetEntryOverlay.querySelector(".planet-entry-name").textContent = planet?.name ?? "";
+  planetEntryOverlay.querySelector(".planet-entry-type").textContent = getPlanetEntryTypeLabel(planet);
+}
+
+function getPlanetEntryTypeLabel(body) {
+  if (!body) {
+    return "";
+  }
+  if (body.entryType) {
+    return String(body.entryType).toUpperCase();
+  }
+  if (body.kind === "MOON") {
+    return getMoonSizeLabel(body);
+  }
+  return getPlanetSizeLabel(body);
+}
+
+function showPlanetEntryLoadingOverlay(body) {
+  setPlanetEntryOverlayContent(body);
+  starWindow.classList.remove("planet-entry-moving");
+  starWindow.style.setProperty("--planet-entry-scale", "1");
+  planetEntryOverlay.classList.remove("leaving");
+  planetEntryOverlay.classList.add("active");
+  planetEntryOverlay.style.setProperty("--planet-entry-alpha", "1");
+}
+
+async function hidePlanetEntryLoadingOverlay() {
+  if (!planetEntryOverlay.classList.contains("active")) {
+    return;
+  }
+
+  planetEntryOverlay.classList.add("leaving");
+  planetEntryOverlay.style.setProperty("--planet-entry-alpha", "0");
+  await delay(PLANET_ENTRY_FADE_MS);
+  planetEntryOverlay.classList.remove("active", "leaving");
 }
 
 function delay(ms) {
@@ -15068,6 +15211,13 @@ function updateStarmapFleetMarkers() {
   }
 
   const activeSideId = getActiveGameSideId();
+  if (!activeSideId) {
+    for (const marker of starmapFleetMarkerElements.values()) {
+      hideStarmapFleetMarker(marker);
+    }
+    return;
+  }
+
   const activeFleetSystemIds = new Set(currentGameState.fleets
     .filter((fleet) => fleet.ownerSideId === activeSideId)
     .map((fleet) => String(fleet.location?.systemId ?? ""))
@@ -15075,85 +15225,130 @@ function updateStarmapFleetMarkers() {
   const fleets = currentGameState.fleets
     .filter((fleet) => fleet.ownerSideId === activeSideId || activeFleetSystemIds.has(String(fleet.location?.systemId)))
     .sort(compareVisibleFleets(activeSideId));
-  while (starmapFleetMarkerElements.length < fleets.length) {
-    const marker = document.createElement("button");
-    marker.className = "starmap-fleet-marker hidden";
-    marker.type = "button";
-    marker.innerHTML = '<span class="starmap-fleet-marker__stripe"></span><img class="starmap-fleet-marker__icon" src="/MainUI/Fleet_marker.svg" alt=""><span class="starmap-fleet-marker__number"></span>';
-    marker.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const fleet = getFleetById(marker.dataset.fleetId);
-      if (isFleetControlledByActiveSide(fleet)) {
-        selectFleet(fleet.id);
-      }
-    });
-    starLabels.append(marker);
-    starmapFleetMarkerElements.push(marker);
+
+  const visibleFleetIds = new Set(fleets.map((fleet) => String(fleet.id)));
+  for (const [fleetId, marker] of starmapFleetMarkerElements) {
+    if (!visibleFleetIds.has(fleetId) && !starmapFleetMarkerAnimations.has(fleetId)) {
+      hideStarmapFleetMarker(marker);
+    }
   }
 
   const systemMarkerUseCount = new Map();
-  for (let index = 0; index < starmapFleetMarkerElements.length; index += 1) {
-    const marker = starmapFleetMarkerElements[index];
-    const fleet = fleets[index];
-    if (!fleet) {
-      marker.classList.add("hidden");
-      marker.tabIndex = -1;
-      marker.removeAttribute("aria-label");
-      delete marker.dataset.fleetId;
+  for (const fleet of fleets) {
+    const marker = getOrCreateStarmapFleetMarker(fleet.id);
+    const targetPosition = getStarmapFleetMarkerTargetPosition(fleet, systemMarkerUseCount);
+    if (!targetPosition) {
+      hideStarmapFleetMarker(marker);
       continue;
     }
 
-    const node = getRuntimeNodeById(fleet.location.systemId);
-    if (!node) {
-      marker.classList.add("hidden");
-      marker.tabIndex = -1;
-      marker.removeAttribute("aria-label");
-      delete marker.dataset.fleetId;
-      continue;
-    }
-
-    starLabelProjection.copy(node.position).applyMatrix4(graphRoot.matrixWorld).project(camera);
-    const visible =
-      starLabelProjection.z > -1 &&
-      starLabelProjection.z < 1 &&
-      starLabelProjection.x > -1.08 &&
-      starLabelProjection.x < 1.08 &&
-      starLabelProjection.y > -1.08 &&
-      starLabelProjection.y < 1.08;
-    const x = (starLabelProjection.x * 0.5 + 0.5) * window.innerWidth;
-    const y = (-starLabelProjection.y * 0.5 + 0.5) * window.innerHeight;
-    const systemKey = String(fleet.location.systemId);
-    const useIndex = systemMarkerUseCount.get(systemKey) ?? 0;
-    systemMarkerUseCount.set(systemKey, useIndex + 1);
-    const targetPosition = {
-      systemId: systemKey,
-      anchorKey: `starmap:${systemKey}`,
-      left: x - 8,
-      top: y + (useIndex - 0.5) * 11,
-    };
     const previousPosition = starmapFleetMarkerPositions.get(fleet.id);
     const isAnimating = starmapFleetMarkerAnimations.has(fleet.id);
-    const shouldAnimate = visible && shouldAnimateStarmapFleetMarker(previousPosition, targetPosition);
+    const pendingPath = pendingStarmapFleetMarkerPaths.get(fleet.id);
+    const shouldAnimate = targetPosition.visible &&
+      !pendingPath &&
+      shouldAnimateStarmapFleetMarker(previousPosition, targetPosition);
     marker.dataset.fleetId = fleet.id;
     if (!isAnimating) {
-      marker.style.left = `${Math.round(shouldAnimate ? previousPosition.left : targetPosition.left)}px`;
-      marker.style.top = `${Math.round(shouldAnimate ? previousPosition.top : targetPosition.top)}px`;
+      const startPosition = shouldAnimate || pendingPath
+        ? previousPosition ?? getStarmapFleetMarkerPathPosition(pendingPath?.[0] ?? targetPosition.systemId) ?? targetPosition
+        : targetPosition;
+      marker.style.left = `${Math.round(startPosition.left)}px`;
+      marker.style.top = `${Math.round(startPosition.top)}px`;
     }
     marker.style.setProperty("--fleet-color", getSideColorById(fleet.ownerSideId));
     marker.style.setProperty("--fleet-idle-delay", getFleetMarkerIdleDelay(fleet));
     marker.querySelector(".starmap-fleet-marker__number").textContent = formatFleetCreationNumber(fleet);
     marker.classList.toggle("starmap-fleet-marker--foreign", fleet.ownerSideId !== activeSideId);
     marker.classList.toggle("starmap-fleet-marker--selected", selectedFleetId === fleet.id);
-    marker.classList.toggle("hidden", !visible);
-    marker.tabIndex = fleet.ownerSideId === activeSideId && visible ? 0 : -1;
+    marker.classList.toggle("hidden", !targetPosition.visible);
+    marker.tabIndex = fleet.ownerSideId === activeSideId && targetPosition.visible ? 0 : -1;
     marker.setAttribute("aria-label", fleet.name);
-    if (shouldAnimate && !isAnimating) {
+    if (pendingPath && targetPosition.visible && !isAnimating) {
+      pendingStarmapFleetMarkerPaths.delete(fleet.id);
+      const pathStartPosition = previousPosition ?? getStarmapFleetMarkerPathPosition(pendingPath[0]);
+      if (pathStartPosition) {
+        animateStarmapFleetMarkerPath(marker, fleet, pathStartPosition, pendingPath, targetPosition);
+      } else {
+        setStarmapFleetMarkerStoredPosition(fleet.id, targetPosition);
+      }
+    } else if (pendingPath && !targetPosition.visible && !isAnimating) {
+      pendingStarmapFleetMarkerPaths.delete(fleet.id);
+      setStarmapFleetMarkerStoredPosition(fleet.id, targetPosition);
+    } else if (shouldAnimate && !isAnimating) {
       animateStarmapFleetMarker(marker, fleet, previousPosition, targetPosition);
     } else if (!isAnimating) {
       setStarmapFleetMarkerStoredPosition(fleet.id, targetPosition);
     }
   }
+}
+
+function getOrCreateStarmapFleetMarker(fleetId) {
+  const normalizedFleetId = String(fleetId ?? "").trim();
+  let marker = starmapFleetMarkerElements.get(normalizedFleetId);
+  if (marker) {
+    return marker;
+  }
+
+  marker = document.createElement("button");
+  marker.className = "starmap-fleet-marker hidden";
+  marker.type = "button";
+  marker.dataset.fleetId = normalizedFleetId;
+  marker.innerHTML = '<span class="starmap-fleet-marker__stripe"></span><img class="starmap-fleet-marker__icon" src="/MainUI/Fleet_marker.svg" alt=""><span class="starmap-fleet-marker__number"></span>';
+  marker.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const fleet = getFleetById(marker.dataset.fleetId);
+    if (isFleetControlledByActiveSide(fleet)) {
+      selectFleet(fleet.id);
+    }
+  });
+  starLabels.append(marker);
+  starmapFleetMarkerElements.set(normalizedFleetId, marker);
+  return marker;
+}
+
+function hideStarmapFleetMarker(marker) {
+  marker.classList.add("hidden");
+  marker.tabIndex = -1;
+  marker.removeAttribute("aria-label");
+}
+
+function getStarmapFleetMarkerTargetPosition(fleet, systemMarkerUseCount) {
+  const systemKey = normalizeRuntimeNullableString(fleet?.location?.systemId);
+  if (!systemKey) {
+    return null;
+  }
+
+  const useIndex = systemMarkerUseCount.get(systemKey) ?? 0;
+  systemMarkerUseCount.set(systemKey, useIndex + 1);
+  return getStarmapFleetMarkerPathPosition(systemKey, useIndex);
+}
+
+function getStarmapFleetMarkerPathPosition(systemId, useIndex = 0) {
+  const systemKey = normalizeRuntimeNullableString(systemId);
+  const node = getRuntimeNodeById(systemKey);
+  if (!node) {
+    return null;
+  }
+
+  starLabelProjection.copy(node.position).applyMatrix4(graphRoot.matrixWorld).project(camera);
+  const visible =
+    starLabelProjection.z > -1 &&
+    starLabelProjection.z < 1 &&
+    starLabelProjection.x > -1.08 &&
+    starLabelProjection.x < 1.08 &&
+    starLabelProjection.y > -1.08 &&
+    starLabelProjection.y < 1.08;
+  const x = (starLabelProjection.x * 0.5 + 0.5) * window.innerWidth;
+  const y = (-starLabelProjection.y * 0.5 + 0.5) * window.innerHeight;
+  return {
+    systemId: systemKey,
+    anchorKey: `starmap:${systemKey}`,
+    left: x - 8,
+    top: y + (useIndex - 0.5) * 11,
+    visible,
+  };
 }
 
 function shouldAnimateStarmapFleetMarker(previousPosition, targetPosition) {
@@ -15228,6 +15423,88 @@ function animateStarmapFleetMarker(marker, fleet, from, to) {
   starmapFleetMarkerAnimations.set(fleet.id, { frameId, marker });
 }
 
+function animateStarmapFleetMarkerPath(marker, fleet, from, path, finalTargetPosition) {
+  cancelStarmapFleetMarkerAnimation(fleet.id);
+  const normalizedPath = Array.isArray(path)
+    ? path.map((systemId) => normalizeRuntimeNullableString(systemId)).filter(Boolean)
+    : [];
+  const segmentTargets = normalizedPath
+    .slice(1)
+    .map((systemId, index, systems) => {
+      const isFinalSegment = index === systems.length - 1;
+      return isFinalSegment
+        ? finalTargetPosition
+        : getStarmapFleetMarkerPathPosition(systemId);
+    })
+    .filter(Boolean);
+
+  if (segmentTargets.length === 0) {
+    marker.style.left = `${Math.round(finalTargetPosition.left)}px`;
+    marker.style.top = `${Math.round(finalTargetPosition.top)}px`;
+    setStarmapFleetMarkerStoredPosition(fleet.id, finalTargetPosition);
+    return;
+  }
+
+  animateStarmapFleetMarkerPathSegment(marker, fleet, from, segmentTargets, 0);
+}
+
+function animateStarmapFleetMarkerPathSegment(marker, fleet, from, segmentTargets, segmentIndex) {
+  const to = segmentTargets[segmentIndex];
+  if (!to) {
+    marker.classList.remove("starmap-fleet-marker--moving");
+    starmapFleetMarkerAnimations.delete(fleet.id);
+    return;
+  }
+
+  const movement = createFleetMovement(from, to, `${fleet.id}:starmap:${segmentIndex}`);
+  const startedAt = performance.now();
+  marker.classList.add("starmap-fleet-marker--moving");
+
+  const tick = (now) => {
+    if (!marker.isConnected) {
+      cancelStarmapFleetMarkerAnimation(fleet.id);
+      return;
+    }
+
+    const progress = THREE.MathUtils.clamp((now - startedAt) / movement.duration, 0, 1);
+    const easedProgress = easeFleetMovement(progress);
+    const point = getCubicBezierPoint(
+      movement.start,
+      movement.controlA,
+      movement.controlB,
+      movement.end,
+      easedProgress,
+    );
+    marker.style.left = `${point.x.toFixed(2)}px`;
+    marker.style.top = `${point.y.toFixed(2)}px`;
+    setStarmapFleetMarkerStoredPosition(fleet.id, {
+      ...to,
+      left: point.x,
+      top: point.y,
+    });
+
+    if (progress < 1) {
+      const frameId = requestAnimationFrame(tick);
+      starmapFleetMarkerAnimations.set(fleet.id, { frameId, marker });
+      return;
+    }
+
+    marker.style.left = `${Math.round(to.left)}px`;
+    marker.style.top = `${Math.round(to.top)}px`;
+    setStarmapFleetMarkerStoredPosition(fleet.id, to);
+    if (segmentIndex < segmentTargets.length - 1) {
+      animateStarmapFleetMarkerPathSegment(marker, fleet, to, segmentTargets, segmentIndex + 1);
+      return;
+    }
+
+    marker.classList.remove("starmap-fleet-marker--moving");
+    starmapFleetMarkerAnimations.delete(fleet.id);
+  };
+
+  const frameId = requestAnimationFrame(tick);
+  starmapFleetMarkerAnimations.set(fleet.id, { frameId, marker });
+}
+
 function cancelStarmapFleetMarkerAnimation(fleetId) {
   const normalizedFleetId = String(fleetId ?? "").trim();
   const animation = starmapFleetMarkerAnimations.get(normalizedFleetId);
@@ -15237,6 +15514,7 @@ function cancelStarmapFleetMarkerAnimation(fleetId) {
   cancelAnimationFrame(animation.frameId);
   animation.marker?.classList?.remove("starmap-fleet-marker--moving");
   starmapFleetMarkerAnimations.delete(normalizedFleetId);
+  pendingStarmapFleetMarkerPaths.delete(normalizedFleetId);
 }
 
 function cancelStarmapFleetMarkerAnimations() {
@@ -15286,15 +15564,22 @@ function showSystemPlanetMenu(planet, clientX, clientY) {
         systemId: planet.systemId,
         kind: planet.kind,
         name: planet.name,
-      }), clientX, clientY);
+      }), clientX, clientY, planet);
     }),
-    ...planet.moonList.slice(0, 3).map((moon) => createSystemPlanetMenuButton(`TO ${moon.name}`, () => {
-      openSystemPlanetDetailFromMenu(planet, getObjectDetailStateKey({
-        systemId: planet.systemId,
+    ...planet.moonList.slice(0, 3).map((moon) => {
+      const moonEntryTarget = {
+        ...moon,
         kind: "MOON",
-        name: moon.name,
-      }), clientX, clientY);
-    })),
+        entryType: moon.sizeName ?? getMoonSizeLabel(moon),
+      };
+      return createSystemPlanetMenuButton(`TO ${moon.name}`, () => {
+        openSystemPlanetDetailFromMenu(planet, getObjectDetailStateKey({
+          systemId: planet.systemId,
+          kind: "MOON",
+          name: moon.name,
+        }), clientX, clientY, moonEntryTarget);
+      });
+    }),
   );
   systemPlanetMenu.hidden = false;
   systemPlanetMenu.setAttribute("aria-hidden", "false");
@@ -15335,22 +15620,29 @@ function closeSystemPlanetMenu() {
   systemPlanetMenu.replaceChildren();
 }
 
-async function openSystemPlanetDetailFromMenu(planet, detailKey, clientX, clientY) {
+async function openSystemPlanetDetailFromMenu(planet, detailKey, clientX, clientY, entryTarget = planet) {
   if (!planet || !isPlanetAccessibleForActiveSide(planet)) {
     closeSystemPlanetMenu();
     return;
   }
 
   closeSystemPlanetMenu();
+  showPlanetEntryLoadingOverlay(entryTarget);
   markPlanetViewVisitedForActiveSide(planet);
-  await restorePlanetScreenFromSession(planet, { persist: false });
+  await restorePlanetScreenFromSession(planet, {
+    persist: false,
+    preserveEntryOverlay: true,
+  });
   await nextAnimationFrame();
   const detail = findRenderedPlanetDetailByKey(detailKey);
   if (!detail) {
+    await hidePlanetEntryLoadingOverlay();
     persistRuntimeSession("planet");
     return;
   }
-  await openObjectDetailFromPlanetView(detail, clientX, clientY);
+  await openObjectDetailFromPlanetView(detail, clientX, clientY, {
+    keepPlanetEntryOverlayUntilZoom: true,
+  });
 }
 
 function positionHoverElements(clientX, clientY, nameElement, panelElement, verticalOffset = 0) {

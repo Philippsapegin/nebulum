@@ -1719,9 +1719,7 @@ body.graph-entry-moving .hover-panel {
   border: 0;
   border-radius: 2px;
   background: rgba(10, 10, 11, 0.74);
-  box-shadow:
-    0 0 9px color-mix(in srgb, var(--fleet-color, #fff) 42%, transparent),
-    0 8px 22px rgba(0, 0, 0, 0.36);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.36);
   color: inherit;
   cursor: pointer;
   opacity: 1;
@@ -1768,7 +1766,7 @@ body.graph-entry-moving .hover-panel {
   font-weight: 700;
   line-height: 1;
   pointer-events: none;
-  text-shadow: 0 0 5px rgba(255, 255, 255, 0.22);
+  text-shadow: none;
 }
 
 .starmap-fleet-marker--foreign {
@@ -1786,6 +1784,10 @@ body.graph-entry-moving .hover-panel {
   box-shadow:
     0 0 14px color-mix(in srgb, var(--fleet-color, #fff) 82%, transparent),
     0 8px 22px rgba(0, 0, 0, 0.36);
+}
+
+.starmap-fleet-marker--selected .starmap-fleet-marker__number {
+  text-shadow: 0 0 5px rgba(255, 255, 255, 0.22);
 }
 
 .starmap-fleet-marker:focus-visible {
@@ -2672,9 +2674,7 @@ body.editor-mode .music-player {
   border: 0;
   border-radius: 3px;
   background: rgba(10, 10, 11, 0.74);
-  box-shadow:
-    0 0 10px color-mix(in srgb, var(--fleet-color, #fff) 36%, transparent),
-    0 10px 26px rgba(0, 0, 0, 0.38);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.38);
   color: rgba(255, 255, 255, 0.88);
   cursor: pointer;
   translate: 0 0;
@@ -2713,7 +2713,7 @@ body.editor-mode .music-player {
   font-weight: 700;
   line-height: 1;
   pointer-events: none;
-  text-shadow: 0 0 6px rgba(255, 255, 255, 0.24);
+  text-shadow: none;
 }
 
 .system-fleet-marker--foreign {
@@ -2769,6 +2769,36 @@ body.editor-mode .music-player {
     0 0 16px color-mix(in srgb, var(--fleet-color, #fff) 82%, transparent),
     0 0 30px color-mix(in srgb, var(--fleet-color, #fff) 44%, transparent),
     0 10px 26px rgba(0, 0, 0, 0.38);
+}
+
+.system-fleet-marker--selected .system-fleet-marker__number {
+  text-shadow: 0 0 6px rgba(255, 255, 255, 0.24);
+}
+
+.fleet-marker-ping-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--fleet-color, #fff);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(0.25);
+  animation: fleet-marker-ping-ring 980ms linear forwards;
+}
+
+@keyframes fleet-marker-ping-ring {
+  0% {
+    opacity: 0.92;
+    transform: translate(-50%, -50%) scale(0.25);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(6.2);
+  }
 }
 
 @keyframes fleet-link-jump-collapse {
