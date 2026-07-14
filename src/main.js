@@ -441,6 +441,10 @@ let starmapFleetMarkerElements = new Map();
 let starmapFleetMarkerPositions = new Map();
 let starmapFleetMarkerAnimations = new Map();
 let pendingStarmapFleetMarkerPaths = new Map();
+let systemDecorTrailLayer = null;
+let systemDecorTrailRandom = null;
+let systemDecorTrailWait = 0;
+let systemDecorTrailActiveCount = 0;
 let shouldStartGameAfterInit = false;
 let isRuntimeSessionRedirecting = false;
 let runtimeLoadingHideTimer = null;
@@ -502,6 +506,7 @@ const MENU_STAR_PILOT_MAX_COUNT = 10;
 const MENU_STAR_PILOT_BRANCH_CHANCE = 0.32;
 const MENU_STAR_PILOT_STOP_CHANCE = 0.13;
 const MENU_BUTTON_BLUR_MAX_RECTS = 8;
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
 const renderer = new THREE.WebGLRenderer({
   canvas: sceneCanvas,
@@ -834,6 +839,8 @@ function initializeNebulumRuntime() {
   outerLinks = createOuterLinks(nodes, createRandom(`${SEED}:outer-links`));
   adjacency = createAdjacency(links, nodes);
   linkPulse = createLinkPulse(createRandom(`${SEED}:link-pulse`));
+  systemDecorTrailRandom = createRandom(`${SEED}:system-decor-trails`);
+  systemDecorTrailWait = 0.8 + systemDecorTrailRandom() * 1.8;
   selectionOverlay = createSelectionOverlay();
   systemGlowLayer = createSystemGlowLayer();
 
@@ -1272,6 +1279,21 @@ async function openPwaFromBrowser() {
   return false;
 }
 
+async function closePwaWindowFromApp() {
+  if (await postOpenPwaRequest("/api/exit-pwa")) {
+    return true;
+  }
+
+  for (const url of getLocalPwaUrls("/api/exit-pwa")) {
+    if (await postOpenPwaRequest(url)) {
+      return true;
+    }
+  }
+
+  window.close();
+  return false;
+}
+
 async function postOpenPwaRequest(url) {
   try {
     const response = await fetch(url, {
@@ -1285,9 +1307,13 @@ async function postOpenPwaRequest(url) {
 }
 
 function getLocalOpenPwaUrls() {
+  return getLocalPwaUrls("/api/open-pwa");
+}
+
+function getLocalPwaUrls(pathname) {
   const currentOrigin = window.location.origin;
   return NEBULUM_LOCAL_PORTS
-    .map((port) => `http://127.0.0.1:${port}/api/open-pwa`)
+    .map((port) => `http://127.0.0.1:${port}${pathname}`)
     .filter((url) => !url.startsWith(`${currentOrigin}/`));
 }
 
@@ -6381,7 +6407,7 @@ async function exitNebulum() {
 
   menuStatus.textContent = "PROCESS CLOSED";
   window.setTimeout(() => {
-    window.close();
+    closePwaWindowFromApp();
   }, 0);
 }
 
@@ -7152,6 +7178,39 @@ function createLinkPulse(random) {
   };
 }
 
+function getPopulatedSystemIds(gameState = currentGameState) {
+  const populatedSystemIds = new Set();
+  if (!gameState?.objectDetails) {
+    return populatedSystemIds;
+  }
+
+  for (const [detailKey, detailState] of Object.entries(gameState.objectDetails)) {
+    const buildings = normalizeObjectDetailBuildings(detailState?.buildings, detailState?.towns, detailState?.cityStage);
+    if (buildings.size === 0) {
+      continue;
+    }
+    const systemId = getObjectDetailStateKeySystemId(detailKey);
+    if (systemId) {
+      populatedSystemIds.add(systemId);
+    }
+  }
+
+  return populatedSystemIds;
+}
+
+function getLinkPulseEligibleLinks() {
+  const populatedSystemIds = getPopulatedSystemIds();
+  if (populatedSystemIds.size < 2) {
+    return [];
+  }
+
+  return links.filter((link) => {
+    const fromId = normalizeRuntimeNullableString(nodes[link.a]?.id ?? link.a);
+    const toId = normalizeRuntimeNullableString(nodes[link.b]?.id ?? link.b);
+    return populatedSystemIds.has(fromId) && populatedSystemIds.has(toId);
+  });
+}
+
 function updateLinkPulse(deltaSeconds) {
   if (links.length === 0) {
     return;
@@ -7162,7 +7221,12 @@ function updateLinkPulse(deltaSeconds) {
     linkPulse.sprite.material.opacity = 0;
 
     if (linkPulse.wait <= 0) {
-      linkPulse.edge = links[Math.floor(linkPulse.random() * links.length)];
+      const eligibleLinks = getLinkPulseEligibleLinks();
+      if (eligibleLinks.length === 0) {
+        linkPulse.wait = 0.9 + linkPulse.random() * 1.4;
+        return;
+      }
+      linkPulse.edge = eligibleLinks[Math.floor(linkPulse.random() * eligibleLinks.length)];
       linkPulse.elapsed = 0;
       linkPulse.duration = 0.55 + linkPulse.random() * 0.7;
     }
@@ -8200,6 +8264,7 @@ function closeStarWindow() {
   closeSystemPlanetMenu();
   captureSystemFleetMarkerPositions();
   cancelFleetMarkerAnimations();
+  resetSystemDecorTrails();
   systemScreenController.close();
   musicPlayerController.cancelDrag();
   musicPlayerController.closeDropdown();
@@ -11870,6 +11935,7 @@ function renderStarSystem(node) {
   captureSystemFleetMarkerPositions();
   cancelFleetMarkerAnimations();
   starSystem.replaceChildren();
+  resetSystemDecorTrails();
   systemStarLayer.replaceChildren();
   activeSystemFleetAnchors = [];
   resetSystemParallaxCache();
@@ -13084,6 +13150,154 @@ function renderSystemFleetMarkers(node, anchors = []) {
       setFleetMarkerStoredPosition(fleet.id, targetPosition);
     }
   });
+}
+
+function getSystemDecorTrailRandom() {
+  if (!systemDecorTrailRandom) {
+    systemDecorTrailRandom = createRandom(`${SEED}:system-decor-trails`);
+  }
+  return systemDecorTrailRandom();
+}
+
+function resetSystemDecorTrails() {
+  systemDecorTrailLayer?.remove();
+  systemDecorTrailLayer = null;
+  systemDecorTrailActiveCount = 0;
+  systemDecorTrailWait = systemDecorTrailRandom
+    ? 0.8 + systemDecorTrailRandom() * 1.8
+    : 1.4;
+}
+
+function ensureSystemDecorTrailLayer() {
+  if (systemDecorTrailLayer?.isConnected && systemDecorTrailLayer.parentElement === starSystem) {
+    systemDecorTrailLayer.setAttribute("viewBox", `0 0 ${window.innerWidth} ${window.innerHeight}`);
+    return systemDecorTrailLayer;
+  }
+
+  const layer = document.createElementNS(SVG_NAMESPACE, "svg");
+  layer.classList.add("system-decor-trail-layer");
+  layer.setAttribute("aria-hidden", "true");
+  layer.setAttribute("viewBox", `0 0 ${window.innerWidth} ${window.innerHeight}`);
+  systemDecorTrailLayer = layer;
+  starSystem.append(layer);
+  return layer;
+}
+
+function getSystemElementCenter(element) {
+  const left = Number.parseFloat(element.style.left);
+  const top = Number.parseFloat(element.style.top);
+  const width = Number.parseFloat(element.style.width) || element.offsetWidth;
+  const height = Number.parseFloat(element.style.height) || element.offsetHeight;
+  if (![left, top, width, height].every(Number.isFinite)) {
+    return null;
+  }
+  return {
+    x: left + width / 2,
+    y: top + height / 2,
+  };
+}
+
+function getSystemDecorTrailTargets() {
+  const targets = [];
+
+  starSystem.querySelectorAll(".system-planet-hit[data-owner-side-id]").forEach((element) => {
+    const center = getSystemElementCenter(element);
+    if (!center) {
+      return;
+    }
+    targets.push({
+      ...center,
+      type: "planet",
+      color: element.dataset.ownershipColor || "#ffffff",
+    });
+  });
+
+  starSystem.querySelectorAll(".system-jump[data-target-system-id]:not(.system-jump--locked)").forEach((element) => {
+    const center = getSystemElementCenter(element);
+    if (!center) {
+      return;
+    }
+    targets.push({
+      ...center,
+      type: "gate",
+      color: "#bfeaff",
+    });
+  });
+
+  return targets;
+}
+
+function createSystemDecorTrailPath(from, to) {
+  const random = getSystemDecorTrailRandom;
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const distance = Math.hypot(dx, dy);
+  if (distance < 36) {
+    return null;
+  }
+
+  const normalX = -dy / distance;
+  const normalY = dx / distance;
+  const bendDirection = random() < 0.5 ? -1 : 1;
+  const bend = distance * (0.14 + random() * 0.24) * bendDirection;
+  const drift = Math.min(72, distance * 0.16);
+  const controlX = (from.x + to.x) / 2 + normalX * bend + (random() - 0.5) * drift;
+  const controlY = (from.y + to.y) / 2 + normalY * bend + (random() - 0.5) * drift;
+  const path = document.createElementNS(SVG_NAMESPACE, "path");
+  path.classList.add("system-decor-trail");
+  path.setAttribute(
+    "d",
+    `M ${from.x.toFixed(1)} ${from.y.toFixed(1)} Q ${controlX.toFixed(1)} ${controlY.toFixed(1)} ${to.x.toFixed(1)} ${to.y.toFixed(1)}`,
+  );
+  path.setAttribute("pathLength", "1");
+  path.style.color = from.type === "planet" ? from.color : to.color;
+  path.style.setProperty("--system-trail-dash", (0.1 + random() * 0.08).toFixed(3));
+  path.style.setProperty("--system-trail-duration", `${Math.round(900 + distance * (1.4 + random() * 0.9))}ms`);
+  return path;
+}
+
+function spawnSystemDecorTrail(targets) {
+  if (targets.length < 2 || systemDecorTrailActiveCount >= 4) {
+    return;
+  }
+
+  const fromIndex = Math.floor(getSystemDecorTrailRandom() * targets.length);
+  let toIndex = Math.floor(getSystemDecorTrailRandom() * (targets.length - 1));
+  if (toIndex >= fromIndex) {
+    toIndex += 1;
+  }
+
+  const path = createSystemDecorTrailPath(targets[fromIndex], targets[toIndex]);
+  if (!path) {
+    return;
+  }
+
+  const layer = ensureSystemDecorTrailLayer();
+  systemDecorTrailActiveCount += 1;
+  path.addEventListener("animationend", () => {
+    path.remove();
+    systemDecorTrailActiveCount = Math.max(0, systemDecorTrailActiveCount - 1);
+  }, { once: true });
+  layer.append(path);
+}
+
+function updateSystemDecorTrails(deltaSeconds) {
+  if (!systemScreenController?.isOpen?.() || planetScreenController.isOpen() || isObjectDetailOpen) {
+    return;
+  }
+
+  systemDecorTrailWait -= deltaSeconds;
+  if (systemDecorTrailWait > 0) {
+    return;
+  }
+
+  const targets = getSystemDecorTrailTargets();
+  systemDecorTrailWait = 1.6 + getSystemDecorTrailRandom() * 3.4;
+  if (targets.length < 2) {
+    return;
+  }
+
+  spawnSystemDecorTrail(targets);
 }
 
 function getSystemFleetMarkerTargetPosition(fleet, anchor, node, anchorSlotStates) {
@@ -15794,6 +16008,7 @@ function animate() {
 
   if (systemScreenController.isOpen() && !planetScreenController.isOpen() && !isObjectDetailOpen) {
     updateSystemParallax(lastClientPointer.x, lastClientPointer.y);
+    updateSystemDecorTrails(deltaSeconds);
   }
 
   planetScreenController.tick(now, deltaSeconds);

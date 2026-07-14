@@ -259,7 +259,7 @@ function localPwaLauncher() {
       return;
     }
 
-    if (url.pathname !== "/api/open-pwa") {
+    if (url.pathname !== "/api/open-pwa" && url.pathname !== "/api/exit-pwa") {
       next();
       return;
     }
@@ -279,6 +279,12 @@ function localPwaLauncher() {
 
     if (process.platform !== "win32") {
       sendJson(response, 501, { ok: false });
+      return;
+    }
+
+    if (url.pathname === "/api/exit-pwa") {
+      const scheduled = scheduleNebulumBrowserProfileExit();
+      sendJson(response, scheduled ? 200 : 501, { ok: scheduled });
       return;
     }
 
@@ -437,6 +443,14 @@ function stopNebulumBrowserProfileProcesses() {
       { stdio: "ignore", windowsHide: true, timeout: 4000 },
     );
   } catch {}
+}
+
+function scheduleNebulumBrowserProfileExit() {
+  if (process.platform !== "win32") {
+    return false;
+  }
+  setTimeout(stopNebulumBrowserProfileProcesses, 120);
+  return true;
 }
 
 function getPrimaryScreenBounds() {

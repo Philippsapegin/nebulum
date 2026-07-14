@@ -342,6 +342,14 @@ function stopNebulumBrowserProfileProcesses() {
   } catch {}
 }
 
+function scheduleNebulumBrowserProfileExit() {
+  if (process.platform !== "win32") {
+    return false;
+  }
+  setTimeout(stopNebulumBrowserProfileProcesses, 120);
+  return true;
+}
+
 
 function getPrimaryScreenBounds() {
   if (process.platform !== "win32") {
@@ -643,6 +651,16 @@ const server = createServer(async (request, response) => {
       if (request.method === "POST") {
         const opened = openPwaWindow(request);
         sendJson(response, opened ? 200 : 501, withServerMeta({ ok: opened }));
+        return;
+      }
+      sendJson(response, 405, { ok: false });
+      return;
+    }
+
+    if (url.pathname === "/api/exit-pwa") {
+      if (request.method === "POST") {
+        const scheduled = scheduleNebulumBrowserProfileExit();
+        sendJson(response, scheduled ? 200 : 501, withServerMeta({ ok: scheduled }));
         return;
       }
       sendJson(response, 405, { ok: false });
