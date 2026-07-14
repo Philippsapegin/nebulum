@@ -39,6 +39,9 @@ const PLANET_SCREEN_EMISSIVE_NOISE_SPEED = 0.030;
 const PLANET_SCREEN_EMISSIVE_NOISE_BLACK_STOP = 0.16;
 const PLANET_SCREEN_EMISSIVE_NOISE_WHITE_STOP = 1;
 const PLANET_SCREEN_EMISSIVE_NOISE_OCTAVES = 3;
+const PLANET_SCREEN_CAMERA_FOV = 75;
+const PLANET_SCREEN_LAYER_OVERSCAN = 180;
+const PLANET_SCREEN_LAYER_INSET_COMPENSATION = 80;
 const MOON_DETAIL_TEXTURE_HEIGHT = 1024;
 const MOON_SILHOUETTE_MASK_SIZE = 192;
 const MOON_SILHOUETTE_SAMPLES = 256;
@@ -223,15 +226,21 @@ function getDirection(targetX, targetY, originX, originY) {
   };
 }
 
+function getPlanetScreenLightView(starDir, lightLift) {
+  return {
+    x: THREE.MathUtils.clamp(starDir.x * 0.42, -0.46, 0.46),
+    y: THREE.MathUtils.clamp(-starDir.y * 0.42 + lightLift, -0.34, 0.62),
+    z: -1,
+  };
+}
+
+function getPlanetScreenShaderVector3(vector) {
+  return `vec3(${vector.x.toFixed(4)}, ${vector.y.toFixed(4)}, ${vector.z.toFixed(4)})`;
+}
+
 function renderPlanetScreenPlanet(layer, planet, geometry, starDir) {
   const { centerX, centerY, radius } = geometry;
 
-  const body = document.createElement("div");
-  body.className = "planet-screen__planet";
-  body.style.width = `${radius * 2}px`;
-  body.style.height = `${radius * 2}px`;
-  body.style.left = `${centerX - radius}px`;
-  body.style.top = `${centerY - radius}px`;
   const texture = planet.kind === "GAS GIANT" && planet.gasGiantTextureSeed
     ? createGasGiantTexture(planet.gasGiantTextureSeed, GAS_GIANT_WINDOW_TEXTURE_HEIGHT, GAS_GIANT_OCTAVES + 3)
     : planet.kind === "PLANET" && planet.planetTextureSeed
@@ -241,6 +250,35 @@ function renderPlanetScreenPlanet(layer, planet, geometry, starDir) {
       })
       : planet.gasGiantTexture;
   const glowColor = texture?.edgeColor ?? planet.background ?? "#ffffff";
+  let sphere3D = null;
+  try {
+    sphere3D = createPlanetScreen3D(planet, texture, geometry, starDir, glowColor);
+    layer.append(sphere3D.canvas);
+  } catch (error) {
+    console.error("Failed to render planet screen sphere", error);
+    renderPlanetScreenFallbackBody(layer, planet, texture, geometry);
+  }
+  renderPlanetScreenObjectHit(planetScreen, {
+    x: centerX,
+    y: centerY,
+    radius,
+    depth: -0.18,
+    detail: createPlanetScreenBodyDetail(planet, texture),
+  });
+  if (sphere3D) {
+    planetScreenController.state.active3D = sphere3D;
+    renderPlanetScreen3D(sphere3D);
+  }
+}
+
+function renderPlanetScreenFallbackBody(layer, planet, texture, geometry) {
+  const { centerX, centerY, radius } = geometry;
+  const body = document.createElement("div");
+  body.className = "planet-screen__planet";
+  body.style.width = `${radius * 2}px`;
+  body.style.height = `${radius * 2}px`;
+  body.style.left = `${centerX - radius}px`;
+  body.style.top = `${centerY - radius}px`;
   const fallbackTextureUrl = getPlanetScreenTextureUrl(texture);
   if (fallbackTextureUrl) {
     body.style.backgroundImage = fallbackTextureUrl;
@@ -250,18 +288,6 @@ function renderPlanetScreenPlanet(layer, planet, geometry, starDir) {
     body.style.background = planet.background;
   }
   layer.append(body);
-
-  const sphere3D = createPlanetScreen3D(planet, texture, geometry, starDir, glowColor);
-  layer.append(sphere3D.canvas);
-  renderPlanetScreenObjectHit(planetScreen, {
-    x: centerX,
-    y: centerY,
-    radius,
-    depth: -0.18,
-    detail: createPlanetScreenBodyDetail(planet, texture),
-  });
-  planetScreenController.state.active3D = sphere3D;
-  renderPlanetScreen3D(sphere3D);
 }
 
 function createMoonSilhouetteShape(seed, textureCanvas, strength = 1) {
@@ -987,8 +1013,8 @@ function createMoonBloomMotion(seed) {
 function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
   const width = window.innerWidth;
   const height = window.innerHeight;
-  const layerOverscan = 180;
-  const layerInsetCompensation = 80;
+  const layerOverscan = PLANET_SCREEN_LAYER_OVERSCAN;
+  const layerInsetCompensation = PLANET_SCREEN_LAYER_INSET_COMPENSATION;
   const canvas = document.createElement("canvas");
   canvas.className = "planet-screen__sphere-surface";
   const renderWidth = width + layerOverscan * 2;
@@ -1010,7 +1036,7 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
   renderer3D.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene3D = new THREE.Scene();
-  const fov = 75;
+  const fov = PLANET_SCREEN_CAMERA_FOV;
   const cameraDistance = renderHeight / (2 * Math.tan(THREE.MathUtils.degToRad(fov) / 2));
   const camera3D = new THREE.PerspectiveCamera(
     fov,
@@ -1074,6 +1100,14 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
   const planetSizeFactor = THREE.MathUtils.clamp(planet.sizeIndex / 9, 0, 1);
   const lightLift = THREE.MathUtils.lerp(0.23, 0.035, planetSizeFactor);
   const shadowFeather = THREE.MathUtils.lerp(0.18, 0.08, planetSizeFactor);
+  const lightView = getPlanetScreenLightView(starDir, lightLift);
+  const lightViewShader = getPlanetScreenShaderVector3(lightView);
+  const shineDirection = new THREE.Vector2(lightView.x, lightView.y);
+  if (shineDirection.lengthSq() < 0.0001) {
+    shineDirection.set(0, 1);
+  } else {
+    shineDirection.normalize();
+  }
   const textureDirectionAngle = Math.atan2(-starDir.y, starDir.x);
   const baseQuaternion = new THREE.Quaternion()
     .setFromAxisAngle(new THREE.Vector3(0, 0, 1), textureDirectionAngle);
@@ -1195,7 +1229,7 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
         vec3 normalView = normalize(
           vNormalView - (vTangentUView * heightGradient.x + vTangentVView * heightGradient.y) * bumpStrength * bumpPoleFade
         );
-        vec3 lightView = normalize(vec3(0.0, ${lightLift.toFixed(4)}, -1.0));
+        vec3 lightView = normalize(${lightViewShader});
         float lit = smoothstep(0.0, ${shadowFeather.toFixed(4)}, dot(normalView, lightView));
         vec3 color = base * lit;
         float specularMask = texture2D(specularMap, uv).r;
@@ -1262,6 +1296,7 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
   const glowMaterial = new THREE.ShaderMaterial({
     uniforms: {
       glowColor: { value: rimGlowColor },
+      shineDirection: { value: shineDirection },
       visibleOffset: { value: new THREE.Vector2(layerOverscan - layerInsetCompensation, layerOverscan - layerInsetCompensation) },
       visibleSize: { value: new THREE.Vector2(width, height) },
     },
@@ -1274,6 +1309,7 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
     `,
     fragmentShader: `
       uniform vec3 glowColor;
+      uniform vec2 shineDirection;
       uniform vec2 visibleOffset;
       uniform vec2 visibleSize;
       varying vec3 vNormalView;
@@ -1281,11 +1317,13 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
       void main() {
         vec3 normalView = normalize(vNormalView);
         float silhouette = 1.0 - abs(normalView.z);
-        float broadGlow = pow(silhouette, 2.25) * 0.78;
-        float softCore = pow(silhouette, 7.4) * 1.08;
+        vec2 rimDirection = normalize(normalView.xy + vec2(0.0001));
+        float starFacing = smoothstep(-0.2, 0.86, dot(rimDirection, shineDirection));
+        float broadGlow = pow(silhouette, 2.15) * (0.22 + starFacing * 0.95);
+        float softCore = pow(silhouette, 7.4) * (0.16 + starFacing * 1.28);
         float backSideMask = 1.0 - smoothstep(-0.08, 0.02, normalView.z);
         float screenX = clamp((gl_FragCoord.x - visibleOffset.x) / max(1.0, visibleSize.x), 0.0, 1.0);
-        float screenFade = pow(sin(screenX * PI), 1.15);
+        float screenFade = 0.58 + pow(sin(screenX * PI), 1.15) * 0.42;
         float alpha = (broadGlow + softCore) * screenFade * backSideMask;
         if (alpha < 0.002) {
           discard;
@@ -1334,14 +1372,14 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
         cloudMap,
         offset: cloudRotationPhase,
         reflectedLightColor: planet.systemStarColor,
-        lightLift,
+        lightView,
         shadowFeather,
       })
       : createPlanetScreenCloudMaterial({
         cloudMap,
         offset: cloudRotationPhase,
         reflectedLightColor: planet.systemStarColor,
-        lightLift,
+        lightView,
         shadowFeather,
       });
     cloudMesh = new THREE.Mesh(cloudGeometry, cloudMaterial);
@@ -1586,9 +1624,10 @@ function createPlanetScreenCloudMaterial({
   cloudMap,
   offset,
   reflectedLightColor,
-  lightLift,
+  lightView,
   shadowFeather,
 }) {
+  const lightViewShader = getPlanetScreenShaderVector3(lightView);
   return new THREE.ShaderMaterial({
     uniforms: {
       cloudMap: { value: cloudMap },
@@ -1620,7 +1659,7 @@ function createPlanetScreenCloudMaterial({
           discard;
         }
         vec3 normalView = normalize(vNormalView);
-        vec3 lightView = normalize(vec3(0.0, ${lightLift.toFixed(4)}, -1.0));
+        vec3 lightView = normalize(${lightViewShader});
         float rawLight = dot(normalView, lightView);
         if (rawLight <= 0.0) {
           discard;
@@ -1640,9 +1679,10 @@ function createPlanetScreenGasGiantCloudMaterial({
   cloudMap,
   offset,
   reflectedLightColor,
-  lightLift,
+  lightView,
   shadowFeather,
 }) {
+  const lightViewShader = getPlanetScreenShaderVector3(lightView);
   return new THREE.ShaderMaterial({
     uniforms: {
       cloudMap: { value: cloudMap },
@@ -1673,7 +1713,7 @@ function createPlanetScreenGasGiantCloudMaterial({
         vec2 uv = vec2(cylindricalU + textureOffset.x, cylindricalV);
         vec4 cloud = texture2D(cloudMap, uv);
         vec3 normalView = normalize(vNormalView);
-        vec3 lightView = normalize(vec3(0.0, ${lightLift.toFixed(4)}, -1.0));
+        vec3 lightView = normalize(${lightViewShader});
         float rawLight = dot(normalView, lightView);
         if (rawLight <= 0.0) {
           discard;

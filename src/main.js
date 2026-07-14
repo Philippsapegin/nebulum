@@ -83,7 +83,10 @@ const UI_BASE_CLICK_SOUND = "ui.base.click";
 const UI_CANCEL_CLICK_SOUND = "ui.cancel.click";
 const UI_SCROLL_CLICK_SOUND = "ui.scroll.click";
 const UI_TURN_SOUND = "ui.turn";
-const FLEET_VOICE_SOUNDS = [
+const FLEET_VOICE_COMMON_SOUNDS = [
+  "/Sounds/IngameUI/FleetVoices/NebFleetSelect.mp3",
+];
+const FLEET_VOICE_FEMALE_SOUNDS = [
   "/Sounds/IngameUI/FleetVoices/NebFemaleFleetSelect7.mp3",
   "/Sounds/IngameUI/FleetVoices/NebFemFleetSelect1.mp3",
   "/Sounds/IngameUI/FleetVoices/NebFemFleetSelect2.mp3",
@@ -91,13 +94,20 @@ const FLEET_VOICE_SOUNDS = [
   "/Sounds/IngameUI/FleetVoices/NebFemFleetSelect4.mp3",
   "/Sounds/IngameUI/FleetVoices/NebFemFleetSelect5.mp3",
   "/Sounds/IngameUI/FleetVoices/NebFemFleetSelect6.mp3",
-  "/Sounds/IngameUI/FleetVoices/NebFleetSelect.mp3",
+  ...FLEET_VOICE_COMMON_SOUNDS,
+];
+const FLEET_VOICE_MALE_SOUNDS = [
   "/Sounds/IngameUI/FleetVoices/NebMaleFleetSelect1.mp3",
   "/Sounds/IngameUI/FleetVoices/NebMaleFleetSelect2.mp3",
   "/Sounds/IngameUI/FleetVoices/NebMaleFleetSelect3.mp3",
   "/Sounds/IngameUI/FleetVoices/NebMaleFleetSelect4.mp3",
   "/Sounds/IngameUI/FleetVoices/NebMaleFleetSelect5.mp3",
   "/Sounds/IngameUI/FleetVoices/NebMaleFleetSelect6.mp3",
+  ...FLEET_VOICE_COMMON_SOUNDS,
+];
+const FLEET_VOICE_SOUNDS = [
+  ...FLEET_VOICE_FEMALE_SOUNDS,
+  ...FLEET_VOICE_MALE_SOUNDS.filter((sound) => !FLEET_VOICE_FEMALE_SOUNDS.includes(sound)),
 ];
 const FLEET_MOVE_SOUNDS = [
   "/Sounds/IngameUI/FleetMove/NebFleetMove1.mp3",
@@ -2716,10 +2726,20 @@ function playUiTurnSound() {
   });
 }
 
-function playRandomFleetVoiceSound() {
-  playRandomIngameSound(FLEET_VOICE_SOUNDS, {
+function playRandomFleetVoiceSound(fleet) {
+  playRandomIngameSound(getFleetVoiceSounds(fleet), {
     volume: 0.9,
   });
+}
+
+function getFleetVoiceSounds(fleet) {
+  if (fleet?.commander?.gender === "female") {
+    return FLEET_VOICE_FEMALE_SOUNDS;
+  }
+  if (fleet?.commander?.gender === "male") {
+    return FLEET_VOICE_MALE_SOUNDS;
+  }
+  return FLEET_VOICE_SOUNDS;
 }
 
 function playRandomFleetMoveSound() {
@@ -4858,8 +4878,10 @@ function createFleetCommander() {
 }
 
 function normalizeFleetCommander(commander) {
-  const source = commander && typeof commander === "object" ? commander : {};
-  const name = normalizeFleetCommanderName(source.name ?? source.fullName ?? commander);
+  const isObjectSource = commander && typeof commander === "object";
+  const source = isObjectSource ? commander : {};
+  const fallbackName = isObjectSource ? "" : commander;
+  const name = normalizeFleetCommanderName(source.name ?? source.fullName ?? fallbackName);
   const gender = source.gender === "female" || source.gender === "male"
     ? source.gender
     : null;
@@ -4875,7 +4897,10 @@ function normalizeFleetCommander(commander) {
 }
 
 function normalizeFleetCommanderName(value) {
-  return String(value ?? "").replace(/\s+/g, " ").trim();
+  const name = String(value ?? "").replace(/\s+/g, " ").trim();
+  return /^\[object object\]$/i.test(name) || /^object object$/i.test(name)
+    ? ""
+    : name;
 }
 
 function getFleetCommanderSource(fleet) {
@@ -5716,7 +5741,7 @@ function selectFleet(fleetId) {
   const willSelect = selectedFleetId !== fleet.id;
   selectedFleetId = willSelect ? fleet.id : null;
   if (willSelect) {
-    playRandomFleetVoiceSound();
+    playRandomFleetVoiceSound(fleet);
   }
   rerenderActiveSystemFleetMarkers();
   updateStarmapFleetMarkers();
@@ -7444,7 +7469,8 @@ function onPointerDown(event) {
     !isGameRuntimeReady ||
     event.button !== 0 ||
     systemScreenController.isOpen() ||
-    systemScreenController.isGraphEntering()
+    systemScreenController.isGraphEntering() ||
+    isStarmapFleetMovementLocked()
   ) {
     return;
   }
@@ -7528,6 +7554,11 @@ function onPointerMove(event) {
     cancelGraphDrag(event);
   }
 
+  if (isDragging && isStarmapFleetMovementLocked()) {
+    cancelGraphDrag(event);
+    rotationVelocity.set(0, 0);
+  }
+
   lastClientPointer.set(event.clientX, event.clientY);
   pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
   pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -7564,7 +7595,14 @@ function forceCloseViewOverlays() {
 }
 
 function onWheel(event) {
-  if (isAppExited || isStartMenuOpen || !isGameRuntimeReady || isGameDialogOpen() || systemScreenController.isOpen()) {
+  if (
+    isAppExited ||
+    isStartMenuOpen ||
+    !isGameRuntimeReady ||
+    isGameDialogOpen() ||
+    systemScreenController.isOpen() ||
+    isStarmapFleetMovementLocked()
+  ) {
     return;
   }
 
@@ -13027,7 +13065,17 @@ function getSystemFleetMarkerAlignX(value) {
 
 function getSystemFleetAnchorDistance(radius) {
   const normalizedRadius = Math.max(1, Number(radius) || 1);
-  return Math.max(normalizedRadius * 3, FLEET_SYSTEM_MARKER_WIDTH * 0.75);
+  const baseDistance = Math.max(normalizedRadius * 3, FLEET_SYSTEM_MARKER_WIDTH * 0.75);
+  return baseDistance * (2 / 3);
+}
+
+function getFleetMarkerIdleDelay(fleet) {
+  const source = String(fleet?.id ?? "");
+  let hash = 0;
+  for (let index = 0; index < source.length; index += 1) {
+    hash = ((hash << 5) - hash + source.charCodeAt(index)) | 0;
+  }
+  return `${-((Math.abs(hash) % 780) / 100).toFixed(2)}s`;
 }
 
 function shouldAnimateFleetMarker(previousPosition, targetPosition) {
@@ -13266,6 +13314,7 @@ function createSystemFleetMarker(fleet) {
   marker.disabled = isLinkJumpPending;
   marker.tabIndex = isControlled && !isLinkJumpPending ? 0 : -1;
   marker.style.setProperty("--fleet-color", getSideColorById(fleet.ownerSideId));
+  marker.style.setProperty("--fleet-idle-delay", getFleetMarkerIdleDelay(fleet));
   marker.setAttribute("aria-label", fleet.name);
 
   const stripe = document.createElement("span");
@@ -15092,6 +15141,7 @@ function updateStarmapFleetMarkers() {
       marker.style.top = `${Math.round(shouldAnimate ? previousPosition.top : targetPosition.top)}px`;
     }
     marker.style.setProperty("--fleet-color", getSideColorById(fleet.ownerSideId));
+    marker.style.setProperty("--fleet-idle-delay", getFleetMarkerIdleDelay(fleet));
     marker.querySelector(".starmap-fleet-marker__number").textContent = formatFleetCreationNumber(fleet);
     marker.classList.toggle("starmap-fleet-marker--foreign", fleet.ownerSideId !== activeSideId);
     marker.classList.toggle("starmap-fleet-marker--selected", selectedFleetId === fleet.id);
@@ -15193,6 +15243,10 @@ function cancelStarmapFleetMarkerAnimations() {
   for (const fleetId of Array.from(starmapFleetMarkerAnimations.keys())) {
     cancelStarmapFleetMarkerAnimation(fleetId);
   }
+}
+
+function isStarmapFleetMovementLocked() {
+  return starmapFleetMarkerAnimations.size > 0;
 }
 
 function positionTooltip(clientX, clientY) {
@@ -15423,15 +15477,24 @@ function animate() {
     updateSelectionAnimations();
     updateLinkPulse(deltaSeconds);
 
-    camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetCameraDistance, 0.14);
-    graphRoot.rotation.x = THREE.MathUtils.lerp(graphRoot.rotation.x, targetRotation.x, 0.08);
-    graphRoot.rotation.y = THREE.MathUtils.lerp(graphRoot.rotation.y, targetRotation.y, 0.08);
-    graphRoot.rotation.z = Math.sin(performance.now() * 0.00012) * 0.025;
+    if (isStarmapFleetMovementLocked()) {
+      cancelGraphDrag();
+      rotationVelocity.set(0, 0);
+      targetCameraDistance = camera.position.z;
+      targetRotation.x = graphRoot.rotation.x;
+      targetRotation.y = graphRoot.rotation.y;
+      targetRotation.z = graphRoot.rotation.z;
+    } else {
+      camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetCameraDistance, 0.14);
+      graphRoot.rotation.x = THREE.MathUtils.lerp(graphRoot.rotation.x, targetRotation.x, 0.08);
+      graphRoot.rotation.y = THREE.MathUtils.lerp(graphRoot.rotation.y, targetRotation.y, 0.08);
+      graphRoot.rotation.z = Math.sin(performance.now() * 0.00012) * 0.025;
 
-    if (!isDragging) {
-      targetRotation.x += rotationVelocity.x;
-      targetRotation.y += rotationVelocity.y;
-      rotationVelocity.multiplyScalar(0.95);
+      if (!isDragging) {
+        targetRotation.x += rotationVelocity.x;
+        targetRotation.y += rotationVelocity.y;
+        rotationVelocity.multiplyScalar(0.95);
+      }
     }
   } else if (!planetScreenController.isOpen() && !isObjectDetailOpen && activeSystemStarSurface) {
     drawSystemStarSurface(activeSystemStarSurface, now);

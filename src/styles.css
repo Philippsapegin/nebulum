@@ -98,14 +98,16 @@ body.editor-mode .game-bottom-ui {
 }
 
 .fleet-action-panel {
+  --fleet-commander-name-max: min(42vw, 420px);
   position: fixed;
   left: calc(18px + 131px + 7px);
   bottom: 16px;
   z-index: 67;
   display: none;
-  grid-template-columns: 190px max-content;
+  grid-template-columns: minmax(190px, max-content) max-content;
   align-items: stretch;
   gap: 4px;
+  max-width: calc(100vw - 174px);
 }
 
 body.game-running .fleet-action-panel:not([hidden]) {
@@ -129,6 +131,9 @@ body.editor-mode .fleet-action-panel {
   display: grid;
   grid-template-rows: 28px 49px 1fr;
   gap: 4px;
+  width: max-content;
+  min-width: 190px;
+  max-width: calc(var(--fleet-commander-name-max) + 55px);
   padding: 4px;
 }
 
@@ -160,18 +165,21 @@ body.editor-mode .fleet-action-panel {
 
 .fleet-action-panel__commander {
   display: grid;
-  grid-template-columns: 41px 1fr;
+  grid-template-columns: 41px minmax(130px, max-content);
   gap: 5px;
   align-items: center;
   padding: 4px;
 }
 
 .fleet-action-panel__commander-text {
+  width: max-content;
+  max-width: var(--fleet-commander-name-max);
   min-width: 0;
 }
 
 .fleet-action-panel__commander-name {
   overflow: hidden;
+  max-width: var(--fleet-commander-name-max);
   color: rgba(255, 255, 255, 0.92);
   font-size: 15px;
   font-weight: 400;
@@ -1717,8 +1725,11 @@ body.graph-entry-moving .hover-panel {
   color: inherit;
   cursor: pointer;
   opacity: 1;
+  translate: 0 0;
   transform: translate(-100%, -50%);
   transition: opacity 160ms ease;
+  animation: fleet-marker-idle 7.8s ease-in-out infinite;
+  animation-delay: var(--fleet-idle-delay, 0s);
   pointer-events: auto;
 }
 
@@ -1766,6 +1777,8 @@ body.graph-entry-moving .hover-panel {
 }
 
 .starmap-fleet-marker--moving {
+  translate: 0 0;
+  animation: none;
   will-change: left, top;
 }
 
@@ -2664,6 +2677,9 @@ body.editor-mode .music-player {
     0 10px 26px rgba(0, 0, 0, 0.38);
   color: rgba(255, 255, 255, 0.88);
   cursor: pointer;
+  translate: 0 0;
+  animation: fleet-marker-idle 7.8s ease-in-out infinite;
+  animation-delay: var(--fleet-idle-delay, 0s);
   pointer-events: auto;
 }
 
@@ -2705,6 +2721,8 @@ body.editor-mode .music-player {
 }
 
 .system-fleet-marker--moving {
+  translate: 0 0;
+  animation: none;
   will-change: left, top;
 }
 
@@ -2716,6 +2734,17 @@ body.editor-mode .music-player {
   animation: fleet-link-jump-collapse 620ms cubic-bezier(0.7, 0, 0.18, 1) forwards;
   pointer-events: none;
   transform-origin: center;
+}
+
+@keyframes fleet-marker-idle {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+
+  50% {
+    translate: 0 -1.5px;
+  }
 }
 
 .system-fleet-marker__jump-ring {
