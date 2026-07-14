@@ -69,6 +69,7 @@ const FLEET_LINK_MOVES_PER_TURN = 2;
 const FLEET_ACTION_GRID_COLUMNS = 3;
 const FLEET_ACTION_GRID_ROWS = 3;
 const FLEET_SYSTEM_SLOT_COUNT = 8;
+const FLEET_SYSTEM_OUTER_SLOT_COUNT = 10;
 const FLEET_SYSTEM_MARKER_WIDTH = 38;
 const FLEET_SYSTEM_MARKER_HEIGHT = 16;
 const FLEET_SYSTEM_MARKER_STACK_GAP = 18;
@@ -433,6 +434,7 @@ let activeSystemFleetAnchors = [];
 let activeSystemPlanetMenuPlanet = null;
 let fleetMarkerPositions = new Map();
 let fleetMarkerAnimations = new Map();
+let systemFleetAnchorDriftSpecs = new Map();
 let pendingFleetLinkJumpIds = new Set();
 let fleetLinkJumpTimers = new Map();
 let fleetMovementSerial = 0;
@@ -443,8 +445,9 @@ let starmapFleetMarkerAnimations = new Map();
 let pendingStarmapFleetMarkerPaths = new Map();
 let systemDecorTrailLayer = null;
 let systemDecorTrailRandom = null;
-let systemDecorTrailWait = 0;
-let systemDecorTrailActiveCount = 0;
+let systemDecorTrailSerial = 0;
+let systemDecorTrails = [];
+let systemDecorTrailSchedules = new Map();
 let shouldStartGameAfterInit = false;
 let isRuntimeSessionRedirecting = false;
 let runtimeLoadingHideTimer = null;
@@ -840,7 +843,8 @@ function initializeNebulumRuntime() {
   adjacency = createAdjacency(links, nodes);
   linkPulse = createLinkPulse(createRandom(`${SEED}:link-pulse`));
   systemDecorTrailRandom = createRandom(`${SEED}:system-decor-trails`);
-  systemDecorTrailWait = 0.8 + systemDecorTrailRandom() * 1.8;
+  systemDecorTrailSerial = 0;
+  systemDecorTrailSchedules.clear();
   selectionOverlay = createSelectionOverlay();
   systemGlowLayer = createSystemGlowLayer();
 
@@ -5956,10 +5960,13 @@ function getVisibleFleetMarkerElement(fleetId) {
 }
 
 function startFleetMarkerPing(marker) {
-  const ring = document.createElement("span");
-  ring.className = "fleet-marker-ping-ring";
-  marker.append(ring);
-  ring.addEventListener("animationend", () => ring.remove(), { once: true });
+  for (let index = 0; index < 2; index += 1) {
+    const ring = document.createElement("span");
+    ring.className = "fleet-marker-ping-ring";
+    ring.classList.toggle("fleet-marker-ping-ring--delayed", index === 1);
+    marker.append(ring);
+    ring.addEventListener("animationend", () => ring.remove(), { once: true });
+  }
 }
 
 function moveSelectedFleetToPlanet(planet) {
@@ -13017,8 +13024,9 @@ function renderSystemJumps({
       type: "link",
       systemId: String(node.id),
       targetSystemId: String(neighbor.id),
-      x: position.x + anchorDirectionX * anchorDistance,
-      y: position.y + anchorDirectionY * anchorDistance,
+      x: position.x,
+      y: position.y,
+      slotRadius: anchorDistance,
       radius: gateRadius,
       alignX: getSystemFleetMarkerAlignX(anchorDirectionX),
     });
@@ -13076,8 +13084,9 @@ function renderSystemJumps({
       type: "wormhole",
       systemId: String(node.id),
       wormholeKey,
-      x: position.x + anchorDirectionX * anchorDistance,
-      y: position.y + anchorDirectionY * anchorDistance,
+      x: position.x,
+      y: position.y,
+      slotRadius: anchorDistance,
       radius: 6,
       alignX: getSystemFleetMarkerAlignX(anchorDirectionX),
     });
@@ -13139,6 +13148,7 @@ function renderSystemFleetMarkers(node, anchors = []) {
     marker.dataset.systemId = String(node.id);
     marker.dataset.anchorKey = anchor.anchorKey;
     const targetPosition = getSystemFleetMarkerTargetPosition(fleet, anchor, node, anchorSlotStates);
+    marker.userData = { ...(marker.userData ?? {}), fleetTargetPosition: targetPosition };
     const previousPosition = fleetMarkerPositions.get(fleet.id);
     const shouldAnimate = shouldAnimateFleetMarker(previousPosition, targetPosition);
     marker.style.left = `${Math.round(shouldAnimate ? previousPosition.left : targetPosition.left)}px`;
@@ -13152,6 +13162,31 @@ function renderSystemFleetMarkers(node, anchors = []) {
   });
 }
 
+function updateSystemFleetMarkerDrift(now) {
+  if (!systemScreenController?.isOpen?.() || planetScreenController.isOpen() || isObjectDetailOpen) {
+    return;
+  }
+
+  starSystem.querySelectorAll(".system-fleet-marker").forEach((marker) => {
+    if (
+      marker.classList.contains("system-fleet-marker--moving") ||
+      marker.classList.contains("system-fleet-marker--link-jump")
+    ) {
+      return;
+    }
+
+    const target = marker.userData?.fleetTargetPosition;
+    if (!target?.useAnchorDrift) {
+      return;
+    }
+
+    const visualTarget = getSystemFleetMarkerVisualTarget(target, now);
+    marker.style.left = `${visualTarget.left.toFixed(2)}px`;
+    marker.style.top = `${visualTarget.top.toFixed(2)}px`;
+    setFleetMarkerStoredPosition(marker.dataset.fleetId, visualTarget);
+  });
+}
+
 function getSystemDecorTrailRandom() {
   if (!systemDecorTrailRandom) {
     systemDecorTrailRandom = createRandom(`${SEED}:system-decor-trails`);
@@ -13162,10 +13197,8 @@ function getSystemDecorTrailRandom() {
 function resetSystemDecorTrails() {
   systemDecorTrailLayer?.remove();
   systemDecorTrailLayer = null;
-  systemDecorTrailActiveCount = 0;
-  systemDecorTrailWait = systemDecorTrailRandom
-    ? 0.8 + systemDecorTrailRandom() * 1.8
-    : 1.4;
+  systemDecorTrails = [];
+  systemDecorTrailSchedules.clear();
 }
 
 function ensureSystemDecorTrailLayer() {
@@ -13207,6 +13240,7 @@ function getSystemDecorTrailTargets() {
     }
     targets.push({
       ...center,
+      key: `planet:${getPlanetExplorationKey(element.userData?.planet) || element.dataset.name || targets.length}`,
       type: "planet",
       color: element.dataset.ownershipColor || "#ffffff",
     });
@@ -13219,6 +13253,7 @@ function getSystemDecorTrailTargets() {
     }
     targets.push({
       ...center,
+      key: `gate:${element.dataset.targetSystemId || targets.length}`,
       type: "gate",
       color: "#bfeaff",
     });
@@ -13227,7 +13262,11 @@ function getSystemDecorTrailTargets() {
   return targets;
 }
 
-function createSystemDecorTrailPath(from, to) {
+function createSystemDecorTrailSpawnDelayMs() {
+  return (1 + getSystemDecorTrailRandom() * 9) * 1000;
+}
+
+function createSystemDecorTrail(from, to) {
   const random = getSystemDecorTrailRandom;
   const dx = to.x - from.x;
   const dy = to.y - from.y;
@@ -13243,66 +13282,229 @@ function createSystemDecorTrailPath(from, to) {
   const drift = Math.min(72, distance * 0.16);
   const controlX = (from.x + to.x) / 2 + normalX * bend + (random() - 0.5) * drift;
   const controlY = (from.y + to.y) / 2 + normalY * bend + (random() - 0.5) * drift;
+  const durationMs = Math.round((620 + distance * (0.44 + random() * 0.22)) * 4);
+  const trailElement = document.createElementNS(SVG_NAMESPACE, "g");
+  const gradientId = `system-decor-trail-gradient-${++systemDecorTrailSerial}`;
+  const routeGradientId = `system-decor-route-gradient-${systemDecorTrailSerial}`;
+  const defs = document.createElementNS(SVG_NAMESPACE, "defs");
+  const gradient = document.createElementNS(SVG_NAMESPACE, "linearGradient");
+  gradient.setAttribute("id", gradientId);
+  gradient.setAttribute("gradientUnits", "userSpaceOnUse");
+  [
+    ["0%", "0"],
+    ["28%", "0.12"],
+    ["72%", "0.48"],
+    ["100%", "0.9"],
+  ].forEach(([offset, opacity]) => {
+    const stop = document.createElementNS(SVG_NAMESPACE, "stop");
+    stop.setAttribute("offset", offset);
+    stop.setAttribute("stop-color", "#ffffff");
+    stop.setAttribute("stop-opacity", opacity);
+    gradient.append(stop);
+  });
+  defs.append(gradient);
+
+  const routeGradient = document.createElementNS(SVG_NAMESPACE, "linearGradient");
+  routeGradient.setAttribute("id", routeGradientId);
+  routeGradient.setAttribute("gradientUnits", "userSpaceOnUse");
+  [
+    ["0%", "0"],
+    ["9%", "1"],
+    ["91%", "1"],
+    ["100%", "0"],
+  ].forEach(([offset, opacity]) => {
+    const stop = document.createElementNS(SVG_NAMESPACE, "stop");
+    stop.setAttribute("offset", offset);
+    stop.setAttribute("stop-color", "#ffffff");
+    stop.setAttribute("stop-opacity", opacity);
+    routeGradient.append(stop);
+  });
+  defs.append(routeGradient);
+
+  const routePath = document.createElementNS(SVG_NAMESPACE, "path");
+  routePath.classList.add("system-decor-trail__route");
+  routePath.style.stroke = `url(#${routeGradientId})`;
+
   const path = document.createElementNS(SVG_NAMESPACE, "path");
-  path.classList.add("system-decor-trail");
-  path.setAttribute(
-    "d",
-    `M ${from.x.toFixed(1)} ${from.y.toFixed(1)} Q ${controlX.toFixed(1)} ${controlY.toFixed(1)} ${to.x.toFixed(1)} ${to.y.toFixed(1)}`,
-  );
-  path.setAttribute("pathLength", "1");
-  path.style.color = from.type === "planet" ? from.color : to.color;
-  path.style.setProperty("--system-trail-dash", (0.1 + random() * 0.08).toFixed(3));
-  path.style.setProperty("--system-trail-duration", `${Math.round(900 + distance * (1.4 + random() * 0.9))}ms`);
-  return path;
+  path.classList.add("system-decor-trail__trace");
+  path.style.stroke = `url(#${gradientId})`;
+
+  const head = document.createElementNS(SVG_NAMESPACE, "circle");
+  head.classList.add("system-decor-trail__head");
+  head.setAttribute("r", (1.35 + random() * 0.45).toFixed(2));
+
+  trailElement.classList.add("system-decor-trail");
+  trailElement.append(defs, routePath, path, head);
+  const trail = {
+    element: trailElement,
+    routePath,
+    path,
+    head,
+    gradient,
+    routeGradient,
+    start: { x: from.x, y: from.y },
+    control: { x: controlX, y: controlY },
+    end: { x: to.x, y: to.y },
+    startedAt: performance.now(),
+    durationMs,
+    tailLength: 0.17 + random() * 0.06,
+    routeFadeMs: 1000,
+  };
+  updateSystemDecorTrailElement(trail, trail.startedAt);
+  return trail;
 }
 
-function spawnSystemDecorTrail(targets) {
-  if (targets.length < 2 || systemDecorTrailActiveCount >= 4) {
+function getSystemDecorTrailPoint(trail, progress) {
+  const t = THREE.MathUtils.clamp(progress, 0, 1);
+  const inverse = 1 - t;
+  return {
+    x: inverse * inverse * trail.start.x + 2 * inverse * t * trail.control.x + t * t * trail.end.x,
+    y: inverse * inverse * trail.start.y + 2 * inverse * t * trail.control.y + t * t * trail.end.y,
+  };
+}
+
+function buildSystemDecorTrailSegmentPath(trail, progress) {
+  const fromProgress = Math.max(0, progress - trail.tailLength);
+  const sampleCount = 7;
+  const commands = [];
+  for (let index = 0; index <= sampleCount; index += 1) {
+    const t = fromProgress + (progress - fromProgress) * (index / sampleCount);
+    const point = getSystemDecorTrailPoint(trail, t);
+    commands.push(`${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`);
+  }
+  return commands.join(" ");
+}
+
+function buildSystemDecorRoutePath(trail, progress) {
+  const startProgress = 0.035;
+  const endProgress = Math.min(0.965, Math.max(startProgress, progress));
+  if (endProgress <= startProgress) {
+    const point = getSystemDecorTrailPoint(trail, startProgress);
+    return `M ${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
+  }
+
+  const sampleCount = 18;
+  const commands = [];
+  for (let index = 0; index <= sampleCount; index += 1) {
+    const t = startProgress + (endProgress - startProgress) * (index / sampleCount);
+    const point = getSystemDecorTrailPoint(trail, t);
+    commands.push(`${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`);
+  }
+  return commands.join(" ");
+}
+
+function updateSystemDecorTrailElement(trail, now) {
+  const elapsedMs = now - trail.startedAt;
+  const rawProgress = THREE.MathUtils.clamp(elapsedMs / trail.durationMs, 0, 1);
+  const progress = smoothstep(0, 1, rawProgress);
+  const headPoint = getSystemDecorTrailPoint(trail, progress);
+  const tailPoint = getSystemDecorTrailPoint(trail, Math.max(0, progress - trail.tailLength));
+  const opacity =
+    smoothstep(0, 0.08, rawProgress) *
+    (1 - smoothstep(0.82, 1, rawProgress));
+  const routeEndProgress = rawProgress >= 1 ? 1 : progress;
+  const routeStartPoint = getSystemDecorTrailPoint(trail, 0.035);
+  const routeEndPoint = getSystemDecorTrailPoint(trail, 0.965);
+  const routeHoldProgress = THREE.MathUtils.clamp((elapsedMs - trail.durationMs) / trail.routeFadeMs, 0, 1);
+  const routeOpacity = rawProgress < 1 ? 1 : 1 - smoothstep(0, 1, routeHoldProgress);
+
+  trail.routePath.setAttribute("d", buildSystemDecorRoutePath(trail, routeEndProgress));
+  trail.routePath.style.opacity = String(0.05 * routeOpacity);
+  trail.routeGradient.setAttribute("x1", routeStartPoint.x.toFixed(1));
+  trail.routeGradient.setAttribute("y1", routeStartPoint.y.toFixed(1));
+  trail.routeGradient.setAttribute("x2", routeEndPoint.x.toFixed(1));
+  trail.routeGradient.setAttribute("y2", routeEndPoint.y.toFixed(1));
+  trail.path.setAttribute("d", buildSystemDecorTrailSegmentPath(trail, progress));
+  trail.path.style.opacity = String(0.78 * opacity);
+  trail.gradient.setAttribute("x1", tailPoint.x.toFixed(1));
+  trail.gradient.setAttribute("y1", tailPoint.y.toFixed(1));
+  trail.gradient.setAttribute("x2", headPoint.x.toFixed(1));
+  trail.gradient.setAttribute("y2", headPoint.y.toFixed(1));
+  trail.head.setAttribute("cx", headPoint.x.toFixed(1));
+  trail.head.setAttribute("cy", headPoint.y.toFixed(1));
+  trail.head.style.opacity = String(0.96 * opacity);
+
+  return elapsedMs < trail.durationMs + trail.routeFadeMs;
+}
+
+function spawnSystemDecorTrail(from, targets) {
+  if (!from || targets.length < 2) {
     return;
   }
 
-  const fromIndex = Math.floor(getSystemDecorTrailRandom() * targets.length);
-  let toIndex = Math.floor(getSystemDecorTrailRandom() * (targets.length - 1));
-  if (toIndex >= fromIndex) {
-    toIndex += 1;
+  const availableTargets = targets.filter((target) => target.key !== from.key);
+  if (availableTargets.length === 0) {
+    return;
   }
 
-  const path = createSystemDecorTrailPath(targets[fromIndex], targets[toIndex]);
-  if (!path) {
+  const toIndex = Math.floor(getSystemDecorTrailRandom() * availableTargets.length);
+  const to = availableTargets[toIndex];
+  const trail = createSystemDecorTrail(from, to);
+  if (!trail) {
     return;
   }
 
   const layer = ensureSystemDecorTrailLayer();
-  systemDecorTrailActiveCount += 1;
-  path.addEventListener("animationend", () => {
-    path.remove();
-    systemDecorTrailActiveCount = Math.max(0, systemDecorTrailActiveCount - 1);
-  }, { once: true });
-  layer.append(path);
+  systemDecorTrails.push(trail);
+  layer.append(trail.element);
 }
 
-function updateSystemDecorTrails(deltaSeconds) {
+function syncSystemDecorTrailSchedules(targets, now) {
+  const visibleKeys = new Set(targets.map((target) => target.key));
+  for (const key of Array.from(systemDecorTrailSchedules.keys())) {
+    if (!visibleKeys.has(key)) {
+      systemDecorTrailSchedules.delete(key);
+    }
+  }
+
+  for (const target of targets) {
+    if (systemDecorTrailSchedules.has(target.key)) {
+      continue;
+    }
+    systemDecorTrailSchedules.set(target.key, now + createSystemDecorTrailSpawnDelayMs());
+  }
+}
+
+function updateSystemDecorTrails(now) {
   if (!systemScreenController?.isOpen?.() || planetScreenController.isOpen() || isObjectDetailOpen) {
     return;
   }
 
-  systemDecorTrailWait -= deltaSeconds;
-  if (systemDecorTrailWait > 0) {
-    return;
+  for (let index = systemDecorTrails.length - 1; index >= 0; index -= 1) {
+    const trail = systemDecorTrails[index];
+    if (updateSystemDecorTrailElement(trail, now)) {
+      continue;
+    }
+    trail.element.remove();
+    systemDecorTrails.splice(index, 1);
   }
 
   const targets = getSystemDecorTrailTargets();
-  systemDecorTrailWait = 1.6 + getSystemDecorTrailRandom() * 3.4;
   if (targets.length < 2) {
+    systemDecorTrailSchedules.clear();
     return;
   }
 
-  spawnSystemDecorTrail(targets);
+  syncSystemDecorTrailSchedules(targets, now);
+  for (const target of targets) {
+    const nextSpawnAt = systemDecorTrailSchedules.get(target.key);
+    if (!Number.isFinite(nextSpawnAt) || now < nextSpawnAt) {
+      continue;
+    }
+    spawnSystemDecorTrail(target, targets);
+    systemDecorTrailSchedules.set(target.key, now + createSystemDecorTrailSpawnDelayMs());
+  }
 }
 
 function getSystemFleetMarkerTargetPosition(fleet, anchor, node, anchorSlotStates) {
+  const state = getSystemFleetAnchorSlotState(anchorSlotStates, anchor.anchorKey);
+  if (shouldUseSystemFleetAnchorRings(anchor)) {
+    const slot = resolveFleetAnchorSlot(fleet, anchor, state);
+    const target = getFleetAnchorSlotTarget(anchor, slot, node);
+    return getSystemFleetMarkerVisualTarget(target, performance.now());
+  }
+
   if (anchor.type !== "planet") {
-    const state = getSystemFleetAnchorSlotState(anchorSlotStates, anchor.anchorKey);
     const useIndex = state.stackIndex++;
     const offsetY = (useIndex - Math.max(0, state.stackIndex - 1) / 2) * FLEET_SYSTEM_MARKER_STACK_GAP;
     const position = getSystemFleetMarkerTopLeft({
@@ -13318,23 +13520,20 @@ function getSystemFleetMarkerTargetPosition(fleet, anchor, node, anchorSlotState
     };
   }
 
-  const state = getSystemFleetAnchorSlotState(anchorSlotStates, anchor.anchorKey);
-  const slotIndex = resolveFleetPlanetSlotIndex(fleet, anchor, state);
-  const position = slotIndex === null
-    ? getOverflowFleetPlanetSlotPosition(anchor, state.overflowIndex++)
-    : getFleetPlanetSlotPosition(anchor, slotIndex);
+  const slot = resolveFleetAnchorSlot(fleet, anchor, state);
+  const target = getFleetAnchorSlotTarget(anchor, slot, node);
+  return getSystemFleetMarkerVisualTarget(target, performance.now());
+}
 
-  return {
-    systemId: String(node.id),
-    anchorKey: anchor.anchorKey,
-    ...getSystemFleetMarkerTopLeft(position),
-  };
+function shouldUseSystemFleetAnchorRings(anchor) {
+  return anchor?.type === "planet" || anchor?.type === "link" || anchor?.type === "wormhole";
 }
 
 function getSystemFleetAnchorSlotState(anchorSlotStates, anchorKey) {
   if (!anchorSlotStates.has(anchorKey)) {
     anchorSlotStates.set(anchorKey, {
-      usedSlots: new Set(),
+      usedInnerSlots: new Set(),
+      usedOuterSlots: new Set(),
       overflowIndex: 0,
       stackIndex: 0,
     });
@@ -13342,21 +13541,31 @@ function getSystemFleetAnchorSlotState(anchorSlotStates, anchorKey) {
   return anchorSlotStates.get(anchorKey);
 }
 
-function resolveFleetPlanetSlotIndex(fleet, anchor, state) {
-  if (state.usedSlots.size >= FLEET_SYSTEM_SLOT_COUNT) {
-    return null;
-  }
-
+function resolveFleetAnchorSlot(fleet, anchor, state) {
   const preferredSlot = normalizeFleetSlotIndex(fleet.location?.slotIndex)
     ?? createFallbackFleetPlanetSlotIndex(fleet, anchor);
   for (let offset = 0; offset < FLEET_SYSTEM_SLOT_COUNT; offset += 1) {
     const candidate = (preferredSlot + offset) % FLEET_SYSTEM_SLOT_COUNT;
-    if (!state.usedSlots.has(candidate)) {
-      state.usedSlots.add(candidate);
-      return candidate;
+    if (!state.usedInnerSlots.has(candidate)) {
+      state.usedInnerSlots.add(candidate);
+      return { ring: 0, index: candidate };
     }
   }
-  return null;
+
+  const outerPreferredSlot = createFallbackFleetOuterSlotIndex(fleet, anchor);
+  for (let offset = 0; offset < FLEET_SYSTEM_OUTER_SLOT_COUNT; offset += 1) {
+    const candidate = (outerPreferredSlot + offset) % FLEET_SYSTEM_OUTER_SLOT_COUNT;
+    if (!state.usedOuterSlots.has(candidate)) {
+      state.usedOuterSlots.add(candidate);
+      return { ring: 1, index: candidate };
+    }
+  }
+
+  const overflowIndex = state.overflowIndex++;
+  return {
+    ring: 2 + Math.floor(overflowIndex / FLEET_SYSTEM_OUTER_SLOT_COUNT),
+    index: overflowIndex % FLEET_SYSTEM_OUTER_SLOT_COUNT,
+  };
 }
 
 function createFallbackFleetPlanetSlotIndex(fleet, anchor) {
@@ -13370,38 +13579,96 @@ function createFallbackFleetPlanetSlotIndex(fleet, anchor) {
   return Math.floor(random() * FLEET_SYSTEM_SLOT_COUNT);
 }
 
-function getFleetPlanetSlotPosition(anchor, slotIndex) {
-  const angle = (-Math.PI / 2) + slotIndex * (Math.PI * 2 / FLEET_SYSTEM_SLOT_COUNT);
-  const radius = Number(anchor.slotRadius) || Number(anchor.radius) || 18;
+function createFallbackFleetOuterSlotIndex(fleet, anchor) {
+  const random = createRandom([
+    SEED,
+    "fleet-outer-slot-fallback",
+    fleet?.id,
+    anchor?.systemId,
+    anchor?.anchorKey,
+  ].join(":"));
+  return Math.floor(random() * FLEET_SYSTEM_OUTER_SLOT_COUNT);
+}
+
+function getFleetAnchorSlotTarget(anchor, slot, node) {
+  const slotCount = slot.ring === 0 ? FLEET_SYSTEM_SLOT_COUNT : FLEET_SYSTEM_OUTER_SLOT_COUNT;
+  const angleOffset = slot.ring === 0
+    ? -Math.PI / 2
+    : -Math.PI / 2 + Math.PI / slotCount;
+  const angle = angleOffset + slot.index * (Math.PI * 2 / slotCount);
   return {
-    x: anchor.x + Math.cos(angle) * radius,
-    y: anchor.y + Math.sin(angle) * radius,
-    alignX: getSystemFleetMarkerAlignX(Math.cos(angle)),
+    systemId: String(node.id),
+    anchorKey: anchor.anchorKey,
+    anchorX: Number(anchor.x) || 0,
+    anchorY: Number(anchor.y) || 0,
+    slotAngle: angle,
+    slotRadius: getFleetAnchorSlotRadius(anchor, slot.ring),
+    driftKey: `${node.id}:${anchor.anchorKey}`,
+    useAnchorDrift: true,
   };
 }
 
-function getOverflowFleetPlanetSlotPosition(anchor, overflowIndex) {
-  const isUpperHalf = anchor.y < window.innerHeight / 2;
-  const baseSlotIndex = isUpperHalf ? 4 : 0;
-  const base = getFleetPlanetSlotPosition(anchor, baseSlotIndex);
-  const direction = isUpperHalf ? 1 : -1;
+function getFleetAnchorSlotRadius(anchor, ring) {
+  const radius = Number(anchor.slotRadius) || Number(anchor.radius) || 18;
+  const ringGap = Math.max(22, Math.min(54, radius * 0.24));
+  return radius + ringGap * ring;
+}
+
+function getSystemFleetAnchorDriftSpec(driftKey) {
+  const key = String(driftKey ?? "anchor");
+  if (!systemFleetAnchorDriftSpecs.has(key)) {
+    const random = createRandom(`${SEED}:fleet-anchor-drift:${key}`);
+    systemFleetAnchorDriftSpecs.set(key, {
+      phase: random() * Math.PI * 2,
+      periodMs: 52000 + random() * 36000,
+      wobblePhaseX: random() * Math.PI * 2,
+      wobblePhaseY: random() * Math.PI * 2,
+      wobblePeriodX: 9000 + random() * 9000,
+      wobblePeriodY: 11000 + random() * 11000,
+      wobbleX: 3 + random() * 4,
+      wobbleY: 2.5 + random() * 3.5,
+    });
+  }
+  return systemFleetAnchorDriftSpecs.get(key);
+}
+
+function getSystemFleetAnchorDrift(driftKey, now) {
+  const spec = getSystemFleetAnchorDriftSpec(driftKey);
+  const time = Number(now) || 0;
   return {
-    x: base.x,
-    y: base.y + direction * (overflowIndex + 1) * FLEET_SYSTEM_MARKER_STACK_GAP,
-    alignX: base.alignX,
+    angle: spec.phase + (time / spec.periodMs) * Math.PI * 2,
+    x: Math.sin(time / spec.wobblePeriodX + spec.wobblePhaseX) * spec.wobbleX,
+    y: Math.sin(time / spec.wobblePeriodY + spec.wobblePhaseY) * spec.wobbleY,
   };
+}
+
+function getSystemFleetMarkerVisualTarget(target, now) {
+  if (!target?.useAnchorDrift) {
+    return target;
+  }
+
+  const drift = getSystemFleetAnchorDrift(target.driftKey, now);
+  const angle = target.slotAngle + drift.angle;
+  const point = {
+    x: target.anchorX + drift.x + Math.cos(angle) * target.slotRadius,
+    y: target.anchorY + drift.y + Math.sin(angle) * target.slotRadius,
+    alignX: Math.cos(angle),
+  };
+  return {
+    ...target,
+    ...getSystemFleetMarkerTopLeft(point),
+  };
+}
+
+function getLiveSystemFleetMarkerTarget(target, now) {
+  return target?.useAnchorDrift ? getSystemFleetMarkerVisualTarget(target, now) : target;
 }
 
 function getSystemFleetMarkerTopLeft(point) {
-  const alignX = getSystemFleetMarkerAlignX(point?.alignX);
+  const alignX = THREE.MathUtils.clamp(Number(point?.alignX) || 0, -1, 1);
   const x = Number(point?.x) || 0;
   const y = Number(point?.y) || 0;
-  let left = x - FLEET_SYSTEM_MARKER_WIDTH / 2;
-  if (alignX < 0) {
-    left = x - FLEET_SYSTEM_MARKER_WIDTH;
-  } else if (alignX > 0) {
-    left = x;
-  }
+  const left = x - FLEET_SYSTEM_MARKER_WIDTH / 2 + alignX * FLEET_SYSTEM_MARKER_WIDTH / 2;
 
   return {
     left,
@@ -13439,8 +13706,7 @@ function shouldAnimateFleetMarker(previousPosition, targetPosition) {
   if (suppressFleetMarkerAnimation || !previousPosition || !targetPosition) {
     return false;
   }
-  if (previousPosition.systemId !== targetPosition.systemId ||
-    previousPosition.anchorKey === targetPosition.anchorKey) {
+  if (previousPosition.systemId !== targetPosition.systemId) {
     return false;
   }
 
@@ -13501,11 +13767,21 @@ function animateFleetMarker(marker, fleet, from, to) {
 
     const progress = THREE.MathUtils.clamp((now - startedAt) / movement.duration, 0, 1);
     const easedProgress = easeFleetMovement(progress);
+    const liveTarget = getLiveSystemFleetMarkerTarget(to, now);
+    const liveEnd = { x: liveTarget.left, y: liveTarget.top };
+    const liveEndOffset = {
+      x: liveEnd.x - movement.end.x,
+      y: liveEnd.y - movement.end.y,
+    };
+    const liveControlB = {
+      x: movement.controlB.x + liveEndOffset.x,
+      y: movement.controlB.y + liveEndOffset.y,
+    };
     const point = getCubicBezierPoint(
       movement.start,
       movement.controlA,
-      movement.controlB,
-      movement.end,
+      liveControlB,
+      liveEnd,
       easedProgress,
     );
     marker.style.left = `${point.x.toFixed(2)}px`;
@@ -13522,10 +13798,10 @@ function animateFleetMarker(marker, fleet, from, to) {
       return;
     }
 
-    marker.style.left = `${Math.round(to.left)}px`;
-    marker.style.top = `${Math.round(to.top)}px`;
+    marker.style.left = `${liveTarget.left.toFixed(2)}px`;
+    marker.style.top = `${liveTarget.top.toFixed(2)}px`;
     marker.classList.remove("system-fleet-marker--moving");
-    setFleetMarkerStoredPosition(fleet.id, to);
+    setFleetMarkerStoredPosition(fleet.id, liveTarget);
     fleetMarkerAnimations.delete(fleet.id);
   };
 
@@ -15682,11 +15958,21 @@ function animateStarmapFleetMarkerPathSegment(marker, fleet, from, segmentTarget
 
     const progress = THREE.MathUtils.clamp((now - startedAt) / movement.duration, 0, 1);
     const easedProgress = easeFleetMovement(progress);
+    const liveTarget = getLiveSystemFleetMarkerTarget(to, now);
+    const liveEnd = { x: liveTarget.left, y: liveTarget.top };
+    const liveEndOffset = {
+      x: liveEnd.x - movement.end.x,
+      y: liveEnd.y - movement.end.y,
+    };
+    const liveControlB = {
+      x: movement.controlB.x + liveEndOffset.x,
+      y: movement.controlB.y + liveEndOffset.y,
+    };
     const point = getCubicBezierPoint(
       movement.start,
       movement.controlA,
-      movement.controlB,
-      movement.end,
+      liveControlB,
+      liveEnd,
       easedProgress,
     );
     marker.style.left = `${point.x.toFixed(2)}px`;
@@ -16008,7 +16294,8 @@ function animate() {
 
   if (systemScreenController.isOpen() && !planetScreenController.isOpen() && !isObjectDetailOpen) {
     updateSystemParallax(lastClientPointer.x, lastClientPointer.y);
-    updateSystemDecorTrails(deltaSeconds);
+    updateSystemFleetMarkerDrift(now);
+    updateSystemDecorTrails(now);
   }
 
   planetScreenController.tick(now, deltaSeconds);

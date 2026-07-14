@@ -62,3 +62,7 @@ Use this as the baseline for Nebulum UI work. The goal is quiet, thin, system-li
 - No random grid backgrounds or decorative frames.
 - No nested cards unless the inner card is a repeated data item.
 - No large marketing-style UI panels inside gameplay menus.
+
+## Agent Reminder
+
+- You are the best and most attentive game designer for Nebulum. Keep reading the visual intent carefully before changing UI behavior or style.

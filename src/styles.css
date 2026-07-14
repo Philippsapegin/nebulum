@@ -2234,37 +2234,30 @@ body.editor-mode .music-player {
 }
 
 .system-decor-trail {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1px;
-  stroke-linecap: round;
-  stroke-dasharray: var(--system-trail-dash, 0.14) 1;
-  stroke-dashoffset: 1;
-  opacity: 0;
-  filter:
-    drop-shadow(0 0 4px currentColor)
-    drop-shadow(0 0 10px color-mix(in srgb, currentColor 42%, transparent));
-  animation: system-decor-trail-flight var(--system-trail-duration, 1400ms) linear forwards;
+  pointer-events: none;
 }
 
-@keyframes system-decor-trail-flight {
-  0% {
-    opacity: 0;
-    stroke-dashoffset: 1;
-  }
+.system-decor-trail__route {
+  fill: none;
+  stroke-width: 1px;
+  stroke-linecap: round;
+  opacity: 0;
+}
 
-  14% {
-    opacity: 0.78;
-  }
+.system-decor-trail__trace {
+  fill: none;
+  stroke-width: 1px;
+  stroke-linecap: round;
+  opacity: 0;
+  filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.38));
+}
 
-  72% {
-    opacity: 0.66;
-  }
-
-  100% {
-    opacity: 0;
-    stroke-dashoffset: 0;
-  }
+.system-decor-trail__head {
+  fill: #fff;
+  opacity: 0;
+  filter:
+    drop-shadow(0 0 4px rgba(255, 255, 255, 0.9))
+    drop-shadow(0 0 12px rgba(255, 255, 255, 0.42));
 }
 
 .star-window.system-transitioning {
@@ -2712,6 +2705,7 @@ body.editor-mode .music-player {
 .system-fleet-marker {
   position: absolute;
   z-index: 16;
+  isolation: isolate;
   width: 38px;
   height: 16px;
   padding: 0;
@@ -2724,11 +2718,13 @@ body.editor-mode .music-player {
   translate: 0 0;
   animation: fleet-marker-idle 7.8s ease-in-out infinite;
   animation-delay: var(--fleet-idle-delay, 0s);
+  overflow: visible;
   pointer-events: auto;
 }
 
 .system-fleet-marker__stripe {
   position: absolute;
+  z-index: 1;
   left: 0;
   top: 0;
   width: 4px;
@@ -2739,6 +2735,7 @@ body.editor-mode .music-player {
 
 .system-fleet-marker__icon {
   position: absolute;
+  z-index: 1;
   left: 7px;
   top: 3px;
   width: 15px;
@@ -2750,6 +2747,7 @@ body.editor-mode .music-player {
 
 .system-fleet-marker__number {
   position: absolute;
+  z-index: 1;
   left: 26px;
   top: 4px;
   color: rgba(255, 255, 255, 0.92);
@@ -2821,16 +2819,21 @@ body.editor-mode .music-player {
 
 .fleet-marker-ping-ring {
   position: absolute;
+  z-index: -1;
   left: 50%;
   top: 50%;
   width: 12px;
   height: 12px;
-  border: 1px solid var(--fleet-color, #fff);
+  border: 1px solid #fff;
   border-radius: 50%;
   opacity: 0;
   pointer-events: none;
   transform: translate(-50%, -50%) scale(0.25);
-  animation: fleet-marker-ping-ring 980ms linear forwards;
+  animation: fleet-marker-ping-ring 490ms linear forwards;
+}
+
+.fleet-marker-ping-ring--delayed {
+  animation-delay: 300ms;
 }
 
 @keyframes fleet-marker-ping-ring {
@@ -2841,7 +2844,7 @@ body.editor-mode .music-player {
 
   100% {
     opacity: 0;
-    transform: translate(-50%, -50%) scale(6.2);
+    transform: translate(-50%, -50%) scale(12.4);
   }
 }
 
