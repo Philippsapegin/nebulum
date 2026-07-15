@@ -5560,6 +5560,22 @@ function getVisiblePlanetOwnership(planetOrKey, gameState = currentGameState) {
   return getDominantVisibleOwnershipForDetailKey(planetKey, gameState);
 }
 
+function getPlanetOwnership(planetOrKey, gameState = currentGameState) {
+  const planetKey = typeof planetOrKey === "string"
+    ? planetOrKey
+    : getPlanetExplorationKey(planetOrKey);
+  if (!planetKey) {
+    return null;
+  }
+
+  const detailState = getObjectDetailStateByKey(planetKey, gameState);
+  if (!detailState) {
+    return null;
+  }
+
+  return getDominantOwnership(getObjectDetailOwnershipCounts(detailState), gameState);
+}
+
 function getDominantVisibleOwnershipForDetailKey(detailKey, gameState = currentGameState) {
   const detailState = getObjectDetailStateByKey(detailKey, gameState);
   if (!detailState) {
@@ -12236,8 +12252,8 @@ function renderStarSystem(node) {
       planetKey,
       x: planetX,
       y: planetY,
-      slotRadius: getSystemFleetAnchorDistance(hitTargetRadius),
-      radius: hitTargetRadius,
+      slotRadius: getSystemFleetAnchorDistance(planetRadius),
+      radius: planetRadius,
     });
     hitTarget.addEventListener("pointerenter", (event) => {
       if (isGameDialogOpen()) {
@@ -13233,16 +13249,22 @@ function getSystemElementCenter(element) {
 function getSystemDecorTrailTargets() {
   const targets = [];
 
-  starSystem.querySelectorAll(".system-planet-hit[data-owner-side-id]").forEach((element) => {
+  starSystem.querySelectorAll(".system-planet-hit").forEach((element) => {
+    const planetKey = getPlanetExplorationKey(element.userData?.planet) || element.dataset.name || "";
+    const ownership = getPlanetOwnership(planetKey);
+    if (!ownership) {
+      return;
+    }
+
     const center = getSystemElementCenter(element);
     if (!center) {
       return;
     }
     targets.push({
       ...center,
-      key: `planet:${getPlanetExplorationKey(element.userData?.planet) || element.dataset.name || targets.length}`,
+      key: `planet:${planetKey || targets.length}`,
       type: "planet",
-      color: element.dataset.ownershipColor || "#ffffff",
+      color: "#ffffff",
     });
   });
 

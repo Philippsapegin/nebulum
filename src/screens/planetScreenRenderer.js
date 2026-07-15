@@ -226,10 +226,19 @@ function getDirection(targetX, targetY, originX, originY) {
   };
 }
 
-function getPlanetScreenLightView(starDir, lightLift) {
+function getPlanetScreenDirectionalLightView(starDir, lightLift) {
   return {
     x: THREE.MathUtils.clamp(starDir.x * 0.42, -0.46, 0.46),
     y: THREE.MathUtils.clamp(-starDir.y * 0.42 + lightLift, -0.34, 0.62),
+    z: -1,
+  };
+}
+
+function getPlanetScreenSurfaceLightView(starDir, lightLift, planetSizeFactor) {
+  const directionalInfluence = THREE.MathUtils.lerp(0.11, 0.035, planetSizeFactor);
+  return {
+    x: THREE.MathUtils.clamp(starDir.x * directionalInfluence, -0.12, 0.12),
+    y: THREE.MathUtils.clamp(lightLift - starDir.y * directionalInfluence, -0.08, 0.34),
     z: -1,
   };
 }
@@ -1100,9 +1109,10 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
   const planetSizeFactor = THREE.MathUtils.clamp(planet.sizeIndex / 9, 0, 1);
   const lightLift = THREE.MathUtils.lerp(0.23, 0.035, planetSizeFactor);
   const shadowFeather = THREE.MathUtils.lerp(0.18, 0.08, planetSizeFactor);
-  const lightView = getPlanetScreenLightView(starDir, lightLift);
-  const lightViewShader = getPlanetScreenShaderVector3(lightView);
-  const shineDirection = new THREE.Vector2(lightView.x, lightView.y);
+  const surfaceLightView = getPlanetScreenSurfaceLightView(starDir, lightLift, planetSizeFactor);
+  const surfaceLightViewShader = getPlanetScreenShaderVector3(surfaceLightView);
+  const directionalLightView = getPlanetScreenDirectionalLightView(starDir, lightLift);
+  const shineDirection = new THREE.Vector2(directionalLightView.x, directionalLightView.y);
   if (shineDirection.lengthSq() < 0.0001) {
     shineDirection.set(0, 1);
   } else {
@@ -1119,7 +1129,7 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
       specularMap: { value: specularMap ?? map },
       emissiveMap: { value: emissiveMap ?? map },
       textureOffset: { value: new THREE.Vector2(rotationPhase + manualTextureOffset, 0) },
-      bumpStrength: { value: bumpMap ? PLANET_SCREEN_BUMP_STRENGTH : 0 },
+      bumpStrength: { value: bumpMap ? PLANET_SCREEN_BUMP_STRENGTH * THREE.MathUtils.lerp(1.1, 1.65, planetSizeFactor) : 0 },
       bumpTexelSize: { value: new THREE.Vector2(1 / sourceCanvas.width, 1 / sourceCanvas.height) },
       specularStrength: { value: specularMap ? PLANET_SCREEN_SPECULAR_STRENGTH : 0 },
       emissiveStrength: { value: emissiveMap ? PLANET_SCREEN_EMISSIVE_STRENGTH : 0 },
@@ -1229,7 +1239,7 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
         vec3 normalView = normalize(
           vNormalView - (vTangentUView * heightGradient.x + vTangentVView * heightGradient.y) * bumpStrength * bumpPoleFade
         );
-        vec3 lightView = normalize(${lightViewShader});
+        vec3 lightView = normalize(${surfaceLightViewShader});
         float lit = smoothstep(0.0, ${shadowFeather.toFixed(4)}, dot(normalView, lightView));
         vec3 color = base * lit;
         float specularMask = texture2D(specularMap, uv).r;
@@ -1372,14 +1382,14 @@ function createPlanetScreen3D(planet, texture, geometry, starDir, glowColor) {
         cloudMap,
         offset: cloudRotationPhase,
         reflectedLightColor: planet.systemStarColor,
-        lightView,
+        lightView: surfaceLightView,
         shadowFeather,
       })
       : createPlanetScreenCloudMaterial({
         cloudMap,
         offset: cloudRotationPhase,
         reflectedLightColor: planet.systemStarColor,
-        lightView,
+        lightView: surfaceLightView,
         shadowFeather,
       });
     cloudMesh = new THREE.Mesh(cloudGeometry, cloudMaterial);
