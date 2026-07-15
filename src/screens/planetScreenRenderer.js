@@ -110,9 +110,17 @@ function renderPlanetScreen(planet) {
   );
 
   renderPlanetScreenStars(backgroundLayer, random, width, height);
-  renderPlanetScreenParentStar(backgroundLayer, planet, starGeometry, backgroundDepth);
+  try {
+    renderPlanetScreenParentStar(backgroundLayer, planet, starGeometry, backgroundDepth);
+  } catch (error) {
+    console.error("Failed to render planet screen parent star", error);
+  }
   renderPlanetScreenPlanet(planetLayer, planet, planetGeometry, starDir);
-  renderPlanetScreenMoons(moonLayers, planet, width, height, starGeometry, starDir);
+  try {
+    renderPlanetScreenMoons(moonLayers, planet, width, height, starGeometry, starDir);
+  } catch (error) {
+    console.error("Failed to render planet screen moons", error);
+  }
   renderPlanetScreenTitle(planetScreen, planet);
   applyMoonBloomSettings();
 
@@ -249,15 +257,7 @@ function getPlanetScreenShaderVector3(vector) {
 
 function renderPlanetScreenPlanet(layer, planet, geometry, starDir) {
   const { centerX, centerY, radius } = geometry;
-
-  const texture = planet.kind === "GAS GIANT" && planet.gasGiantTextureSeed
-    ? createGasGiantTexture(planet.gasGiantTextureSeed, GAS_GIANT_WINDOW_TEXTURE_HEIGHT, GAS_GIANT_OCTAVES + 3)
-    : planet.kind === "PLANET" && planet.planetTextureSeed
-      ? createPlanetTexture(planet.planetTextureSeed, PLANET_WINDOW_TEXTURE_HEIGHT, {
-        ...planet.surfaceTextureParams,
-        createUrls: false,
-      })
-      : planet.gasGiantTexture;
+  const texture = createPlanetScreenBodyTexture(planet);
   const glowColor = texture?.edgeColor ?? planet.background ?? "#ffffff";
   let sphere3D = null;
   try {
@@ -277,6 +277,28 @@ function renderPlanetScreenPlanet(layer, planet, geometry, starDir) {
   if (sphere3D) {
     planetScreenController.state.active3D = sphere3D;
     renderPlanetScreen3D(sphere3D);
+  }
+}
+
+function createPlanetScreenBodyTexture(planet) {
+  try {
+    if (planet.kind === "GAS GIANT" && planet.gasGiantTextureSeed) {
+      return createGasGiantTexture(planet.gasGiantTextureSeed, GAS_GIANT_WINDOW_TEXTURE_HEIGHT, GAS_GIANT_OCTAVES + 3);
+    }
+    if (planet.kind === "PLANET" && planet.planetTextureSeed) {
+      return createPlanetTexture(planet.planetTextureSeed, PLANET_WINDOW_TEXTURE_HEIGHT, {
+        ...planet.surfaceTextureParams,
+        createUrls: false,
+      });
+    }
+    return planet.gasGiantTexture ?? null;
+  } catch (error) {
+    console.error("Failed to create planet screen body texture", error);
+    return {
+      canvas: createFallbackPlanetTextureCanvas(planet.background),
+      edgeColor: planet.background ?? "#ffffff",
+      textureMode: "fallback",
+    };
   }
 }
 
@@ -830,7 +852,34 @@ function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, st
     { x: width * 0.83, y: height * 0.68 },
     { x: width * 0.36, y: height * 0.72 },
   ];
-  for (const [index, moon] of planet.moonList.slice(0, 3).entries()) {
+  for (const [index, moon] of (planet.moonList ?? []).slice(0, 3).entries()) {
+    try {
+      renderPlanetScreenMoon({
+        layers,
+        planet,
+        moon,
+        index,
+        moonSizes,
+        moonPaletteMode,
+        positions,
+        starGeometry,
+      });
+    } catch (error) {
+      console.error("Failed to render planet screen moon", error);
+    }
+  }
+}
+
+function renderPlanetScreenMoon({
+  layers,
+  planet,
+  moon,
+  index,
+  moonSizes,
+  moonPaletteMode,
+  positions,
+  starGeometry,
+}) {
     const layer = layers[index];
     const depth = Number(layer.style.getPropertyValue("--planet-screen-depth")) || 0;
     const radius = moonSizes[Math.max(0, Math.min(2, Math.round((moon.radius - 1.2) / 0.4)))];
@@ -993,7 +1042,6 @@ function renderPlanetScreenMoons(layers, planet, width, height, starGeometry, st
       depth,
       detail: moonDetail,
     });
-  }
 }
 
 function shouldUseMoltenMoons(planet) {

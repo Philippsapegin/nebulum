@@ -11,13 +11,43 @@
     <link rel="icon" href="/pwa-192x192.png" sizes="192x192" type="image/png" />
     <link rel="shortcut icon" href="/pwa-512x512.ico" type="image/x-icon" />
     <link rel="apple-touch-icon" href="/pwa-512x512.png" sizes="512x512" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Albert+Sans:wght@400;500&family=League+Gothic&family=Wire+One&display=swap"
-      rel="stylesheet"
-    />
+    <link rel="preload" href="/fonts/WireOne-Regular.ttf" as="font" type="font/ttf" crossorigin />
+    <link rel="preload" href="/fonts/AlbertSans-Regular.ttf" as="font" type="font/ttf" crossorigin />
+    <link rel="preload" href="/fonts/AlbertSans-Medium.ttf" as="font" type="font/ttf" crossorigin />
+    <link rel="preload" href="/fonts/LeagueGothic-Regular.ttf" as="font" type="font/ttf" crossorigin />
     <style>
+      @font-face {
+        font-family: "Albert Sans";
+        font-style: normal;
+        font-weight: 400;
+        font-display: block;
+        src: url("/fonts/AlbertSans-Regular.ttf") format("truetype");
+      }
+
+      @font-face {
+        font-family: "Albert Sans";
+        font-style: normal;
+        font-weight: 500;
+        font-display: block;
+        src: url("/fonts/AlbertSans-Medium.ttf") format("truetype");
+      }
+
+      @font-face {
+        font-family: "League Gothic";
+        font-style: normal;
+        font-weight: 400;
+        font-display: block;
+        src: url("/fonts/LeagueGothic-Regular.ttf") format("truetype");
+      }
+
+      @font-face {
+        font-family: "Wire One";
+        font-style: normal;
+        font-weight: 400;
+        font-display: block;
+        src: url("/fonts/WireOne-Regular.ttf") format("truetype");
+      }
+
       .runtime-loading-overlay {
         position: fixed;
         inset: 0;
@@ -59,8 +89,25 @@
     <script>
       (() => {
         try {
-          const session = JSON.parse(localStorage.getItem("nebulum:runtime-session") || "null");
-          if (session && session.seed && session.view && session.view !== "menu") {
+          if (localStorage.getItem("nebulum:force-menu-on-next-launch") === "true") {
+            return;
+          }
+          const shouldRestoreRuntime =
+            sessionStorage.getItem("nebulum:runtime-reload-requested") === "true" ||
+            Boolean(sessionStorage.getItem("nebulum:start-after-seed")) ||
+            Boolean(sessionStorage.getItem("nebulum:start-after-runtime-session"));
+          if (!shouldRestoreRuntime) {
+            return;
+          }
+          const sessionRaw =
+            sessionStorage.getItem("nebulum:start-after-runtime-session") ||
+            localStorage.getItem("nebulum:runtime-session") ||
+            "null";
+          const session = JSON.parse(sessionRaw);
+          if (
+            sessionStorage.getItem("nebulum:start-after-seed") ||
+            (session && session.seed && session.view && session.view !== "menu")
+          ) {
             document.documentElement.classList.add("runtime-restore-loading");
           }
         } catch {}

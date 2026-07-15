@@ -28,7 +28,7 @@ import { createPlanetTexture } from "./planet/planetTexture.js";
 import { createPlanetRotationState } from "./planet/rotation.js";
 import { createPlanetScreenController } from "./screens/planetScreen.js";
 import { createSystemScreenController } from "./screens/systemScreen.js";
-import { RADIO_CHATTER_FEED_MACHINE } from "./audio/ambientMachines.js";
+import { RADIO_CHATTER_FEED_MACHINE, createSystemRadioChatterMachine } from "./audio/ambientMachines.js";
 import { createAudioMixer } from "./audio/audioMixer.js";
 import { openColorPicker } from "./ui/colorPicker.js";
 import { createMusicPlayer } from "./ui/musicPlayer.js";
@@ -52,10 +52,12 @@ const APP_LAUNCH_PARAM = "nebulumApp";
 const START_AFTER_SEED_STORAGE_KEY = "nebulum:start-after-seed";
 const START_AFTER_SAVE_STATE_STORAGE_KEY = "nebulum:start-after-save-state";
 const START_AFTER_RUNTIME_SESSION_STORAGE_KEY = "nebulum:start-after-runtime-session";
+const RUNTIME_RELOAD_STORAGE_KEY = "nebulum:runtime-reload-requested";
 const AUDIO_SETTINGS_STORAGE_KEY = "nebulum:audio-settings";
 const GAME_UI_SETTINGS_STORAGE_KEY = "nebulum:game-ui-settings";
 const WINDOW_SETTINGS_STORAGE_KEY = "nebulum:window-settings";
 const PWA_INSTALL_STORAGE_KEY = "nebulum:pwa-installed";
+const FORCE_MENU_ON_NEXT_LAUNCH_STORAGE_KEY = "nebulum:force-menu-on-next-launch";
 const LEGACY_SAVE_STORAGE_KEY = "nebulum:saves";
 const SAVE_STORAGE_KEY = "nebulum:saves:v2";
 const SAVE_INDEX_STORAGE_KEY = "nebulum:saves:index:v1";
@@ -183,6 +185,7 @@ const UI_BASE_CLICK_SOUND_SELECTOR = [
   ".system-planet-menu__button",
 ].join(",");
 const MENU_ENVIRONMENT_AUDIO_CHANNEL = "menuEnvironment";
+const SYSTEM_ENVIRONMENT_AUDIO_CHANNEL = "systemEnvironment";
 const LEGACY_ENVIRONMENT_AUDIO_CHANNEL = "environment";
 const NEBULUM_LOCAL_PORTS = Array.from({ length: 11 }, (_, index) => 4173 + index);
 const DEFAULT_SKY_GRADIENT_COLORS = ["#27648f", "#000000", "#884d26", "#000000"];
@@ -413,12 +416,15 @@ let gameUiSettings = readGameUiSettings();
 let windowSettings = readWindowSettings();
 let audioMixer = null;
 let menuEnvironmentMachine = null;
+let systemEnvironmentMachine = null;
+let systemEnvironmentOwnedPlanetCount = 0;
 let isMenuEnvironmentAudioEnabled = false;
 let deferredInstallPrompt = null;
 let pwaMenuAction = isNebulumAppWindow() ? "exit" : "install";
 let borderlessBoundsSyncTimer = null;
 let lastBorderlessBoundsSyncAt = 0;
 let ignoreBorderlessKeySyncUntil = 0;
+let isRuntimeReloadRequested = false;
 let activeUiHoverSoundElement = null;
 let fleetMoveSoundDeck = [];
 let lastFleetMoveSound = null;
@@ -428,6 +434,8 @@ let isAddingGameSave = false;
 let gameSaveDraftName = "";
 let pendingStartGameState = null;
 let pendingRuntimeSession = null;
+let screenTransitionToken = 0;
+let planetEntryLoadingOverlayToken = 0;
 let currentGameState = createEmptyGameState();
 let selectedFleetId = null;
 let activeSystemFleetAnchors = [];
@@ -767,17 +775,27 @@ if (!isRuntimeSessionRedirecting) {
 window.addEventListener("resize", onWindowResize);
 window.addEventListener("beforeunload", () => {
   if (!isStartMenuOpen && !isRuntimeSessionRedirecting) {
+    if (isRuntimeReloadRequested) {
+      markRuntimeReloadRequested();
+    }
+    persistRuntimeSession();
     showRuntimeLoadingOverlay();
   }
 });
 window.addEventListener("pagehide", () => {
+  if (isRuntimeReloadRequested) {
+    markRuntimeReloadRequested();
+  }
   persistRuntimeSession();
   stopMenuEnvironmentMachine();
+  stopSystemEnvironmentMachine();
 });
 document.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
   const isReloadKey = event.key === "F5" || ((event.ctrlKey || event.metaKey) && key === "r");
   if (isReloadKey && !isStartMenuOpen && !isRuntimeSessionRedirecting) {
+    isRuntimeReloadRequested = true;
+    markRuntimeReloadRequested();
     showRuntimeLoadingOverlay();
   }
 }, { capture: true });
@@ -2585,11 +2603,13 @@ function initAudioMixer() {
       ui: 0.72,
       ambient: 1,
       [MENU_ENVIRONMENT_AUDIO_CHANNEL]: 0,
+      [SYSTEM_ENVIRONMENT_AUDIO_CHANNEL]: 0,
       [LEGACY_ENVIRONMENT_AUDIO_CHANNEL]: 0,
     },
     sounds: UI_SOUNDS,
   });
   audioMixer.setChannelEnabled(MENU_ENVIRONMENT_AUDIO_CHANNEL, false);
+  audioMixer.setChannelEnabled(SYSTEM_ENVIRONMENT_AUDIO_CHANNEL, false);
   audioMixer.setChannelEnabled(LEGACY_ENVIRONMENT_AUDIO_CHANNEL, false);
   audioMixer.preload(UI_HOVER_SOUND);
   audioMixer.preload(UI_MENU_CLICK_SOUND);
@@ -2844,7 +2864,7 @@ function startMenuEnvironmentMachine() {
 
   isMenuEnvironmentAudioEnabled = true;
   audioMixer.setChannelEnabled(MENU_ENVIRONMENT_AUDIO_CHANNEL, true);
-  audioMixer.setChannelVolume(MENU_ENVIRONMENT_AUDIO_CHANNEL, getEnvironmentChannelVolume());
+  audioMixer.setChannelVolume(MENU_ENVIRONMENT_AUDIO_CHANNEL, getMenuEnvironmentChannelVolume());
   menuEnvironmentMachine = audioMixer.createAmbientMachine(
     RADIO_CHATTER_FEED_MACHINE.id,
     RADIO_CHATTER_FEED_MACHINE,
@@ -2874,13 +2894,99 @@ function enforceNoMenuEnvironmentAudioInGame() {
   stopMenuEnvironmentMachine();
 }
 
-function getEnvironmentChannelVolume() {
+function shouldSystemEnvironmentMachineRun() {
+  return Boolean(
+    audioMixer
+    && !isStartMenuOpen
+    && !isAppExited
+    && isGameRuntimeReady
+    && systemScreenController?.isOpen?.()
+    && !planetScreenController?.isOpen?.()
+    && !isObjectDetailOpen
+  );
+}
+
+function updateSystemEnvironmentMachineState() {
+  if (!shouldSystemEnvironmentMachineRun()) {
+    stopSystemEnvironmentMachine();
+    return;
+  }
+
+  if (!systemEnvironmentMachine) {
+    startSystemEnvironmentMachine();
+    return;
+  }
+
+  audioMixer?.setChannelVolume(SYSTEM_ENVIRONMENT_AUDIO_CHANNEL, getGameEnvironmentChannelVolume());
+}
+
+function startSystemEnvironmentMachine() {
+  if (!shouldSystemEnvironmentMachineRun() || systemEnvironmentMachine) {
+    return;
+  }
+
+  refreshSystemEnvironmentOwnedPlanetCount();
+  audioMixer.setChannelEnabled(SYSTEM_ENVIRONMENT_AUDIO_CHANNEL, true);
+  audioMixer.setChannelVolume(SYSTEM_ENVIRONMENT_AUDIO_CHANNEL, getGameEnvironmentChannelVolume());
+  const machineConfig = createSystemRadioChatterMachine({
+    getOwnedPlanetCount: () => systemEnvironmentOwnedPlanetCount,
+  });
+  systemEnvironmentMachine = audioMixer.createAmbientMachine(machineConfig.id, machineConfig);
+  systemEnvironmentMachine.start();
+}
+
+function stopSystemEnvironmentMachine() {
+  if (systemEnvironmentMachine) {
+    systemEnvironmentMachine.stop();
+    systemEnvironmentMachine = null;
+  }
+  audioMixer?.stopAmbientMachine("systemRadioChatterFeed");
+  audioMixer?.stopChannel(SYSTEM_ENVIRONMENT_AUDIO_CHANNEL);
+  audioMixer?.setChannelVolume(SYSTEM_ENVIRONMENT_AUDIO_CHANNEL, 0);
+  audioMixer?.setChannelEnabled(SYSTEM_ENVIRONMENT_AUDIO_CHANNEL, false);
+}
+
+function refreshSystemEnvironmentOwnedPlanetCount() {
+  systemEnvironmentOwnedPlanetCount = countOwnedPlanetsInCurrentSystem();
+}
+
+function countOwnedPlanetsInCurrentSystem() {
+  if (!systemScreenController?.isOpen?.()) {
+    return 0;
+  }
+
+  const planetKeys = new Set();
+  starSystem.querySelectorAll(".system-planet-hit").forEach((hitTarget) => {
+    const planetKey = getPlanetExplorationKey(hitTarget.userData?.planet);
+    if (!planetKey || planetKeys.has(planetKey)) {
+      return;
+    }
+    if (getPlanetOwnership(planetKey)) {
+      planetKeys.add(planetKey);
+    }
+  });
+  return Math.min(13, planetKeys.size);
+}
+
+function getMenuEnvironmentChannelVolume() {
   if (
     !isMenuEnvironmentAudioEnabled
     || !isStartMenuOpen
     || isAppExited
     || shouldStartGameAfterInit
     || document.body.classList.contains("game-running")
+  ) {
+    return 0;
+  }
+  return audioSettings.environmentVolume;
+}
+
+function getGameEnvironmentChannelVolume() {
+  if (
+    isStartMenuOpen
+    || isAppExited
+    || shouldStartGameAfterInit
+    || !document.body.classList.contains("game-running")
   ) {
     return 0;
   }
@@ -3015,7 +3121,8 @@ function updateGameUiSettingsFromMenu() {
 function applyAudioSettings() {
   menuMusicAudio.volume = getMenuMusicVolume();
   audioMixer?.setMasterVolume(audioSettings.masterVolume);
-  audioMixer?.setChannelVolume(MENU_ENVIRONMENT_AUDIO_CHANNEL, getEnvironmentChannelVolume());
+  audioMixer?.setChannelVolume(MENU_ENVIRONMENT_AUDIO_CHANNEL, getMenuEnvironmentChannelVolume());
+  audioMixer?.setChannelVolume(SYSTEM_ENVIRONMENT_AUDIO_CHANNEL, getGameEnvironmentChannelVolume());
   audioMixer?.setChannelVolume(LEGACY_ENVIRONMENT_AUDIO_CHANNEL, 0);
   musicPlayerController?.setMasterVolume(audioSettings.masterVolume);
   applyMusicPlayerVisibility();
@@ -3859,9 +3966,11 @@ function startGameWithSeed(nextSeed, gameState = null) {
 
 function disposeAudioMixerForNavigation() {
   stopMenuEnvironmentMachine();
+  stopSystemEnvironmentMachine();
   audioMixer?.dispose();
   audioMixer = null;
   menuEnvironmentMachine = null;
+  systemEnvironmentMachine = null;
   activeUiHoverSoundElement = null;
 }
 
@@ -3894,6 +4003,13 @@ function consumeStartAfterSeedFlag() {
 }
 
 function initRuntimeStartupState() {
+  const shouldResumeAfterReload = consumeRuntimeReloadRequested();
+  if (consumeForceMenuOnNextLaunchFlag()) {
+    persistRuntimeSession("menu");
+    hideRuntimeLoadingOverlay({ delayMs: 0 });
+    return;
+  }
+
   const shouldStartAfterSeed = consumeStartAfterSeedFlag();
   const runtimeSession = consumePendingRuntimeSession();
   if (shouldStartAfterSeed) {
@@ -3906,7 +4022,7 @@ function initRuntimeStartupState() {
     return;
   }
 
-  const storedRuntimeSession = runtimeSession ?? readRuntimeSession();
+  const storedRuntimeSession = runtimeSession ?? (shouldResumeAfterReload ? readRuntimeSession() : null);
   if (!shouldResumeRuntimeSession(storedRuntimeSession)) {
     persistRuntimeSession("menu");
     hideRuntimeLoadingOverlay({ delayMs: 0 });
@@ -3975,6 +4091,38 @@ function writeRuntimeSession(session) {
   try {
     localStorage.setItem(RUNTIME_SESSION_STORAGE_KEY, JSON.stringify(normalizeRuntimeSession(session)));
   } catch {}
+}
+
+function setForceMenuOnNextLaunchFlag() {
+  try {
+    localStorage.setItem(FORCE_MENU_ON_NEXT_LAUNCH_STORAGE_KEY, "true");
+  } catch {}
+}
+
+function consumeForceMenuOnNextLaunchFlag() {
+  try {
+    const shouldForceMenu = localStorage.getItem(FORCE_MENU_ON_NEXT_LAUNCH_STORAGE_KEY) === "true";
+    localStorage.removeItem(FORCE_MENU_ON_NEXT_LAUNCH_STORAGE_KEY);
+    return shouldForceMenu;
+  } catch {
+    return false;
+  }
+}
+
+function markRuntimeReloadRequested() {
+  try {
+    sessionStorage.setItem(RUNTIME_RELOAD_STORAGE_KEY, "true");
+  } catch {}
+}
+
+function consumeRuntimeReloadRequested() {
+  try {
+    const shouldResume = sessionStorage.getItem(RUNTIME_RELOAD_STORAGE_KEY) === "true";
+    sessionStorage.removeItem(RUNTIME_RELOAD_STORAGE_KEY);
+    return shouldResume;
+  } catch {
+    return false;
+  }
 }
 
 function normalizeRuntimeSession(session) {
@@ -4087,7 +4235,9 @@ function persistRuntimeSession(viewOverride = null) {
 
 function createRuntimeSessionSnapshot(viewOverride = null) {
   const view = normalizeRuntimeView(viewOverride ?? getCurrentRuntimeView());
-  const gameState = isGameRuntimeReady
+  const gameState = view === "menu"
+    ? createEmptyGameState()
+    : isGameRuntimeReady
     ? serializeCurrentGameState()
     : normalizeGameState(currentGameState);
   const activeNode = systemScreenController?.state?.activeNode ?? null;
@@ -4103,7 +4253,7 @@ function createRuntimeSessionSnapshot(viewOverride = null) {
     version: 1,
     seed: SEED,
     view,
-    editorMode: isEditorMode,
+    editorMode: view === "menu" ? false : isEditorMode,
     systemId,
     planetKey: view === "planet" || view === "detail"
       ? getRuntimeObjectKey(activePlanet)
@@ -4143,6 +4293,21 @@ function getActiveRuntimePlanet() {
 
 function getRuntimeObjectKey(object) {
   return getObjectDetailStateKey(object) || null;
+}
+
+function clearActiveRuntimeGameStateForMenu() {
+  pendingRuntimeSession = null;
+  pendingStartGameState = null;
+  selectedFleetId = null;
+  systemEnvironmentOwnedPlanetCount = 0;
+  activeSystemFleetAnchors = [];
+  fleetMarkerPositions.clear();
+  starmapFleetMarkerPositions.clear();
+  pendingStarmapFleetMarkerPaths.clear();
+  cancelFleetMarkerAnimations();
+  cancelStarmapFleetMarkerAnimations();
+  currentGameState = createEmptyGameState();
+  isEditorMode = false;
 }
 
 function playMenuMusic() {
@@ -4197,6 +4362,9 @@ async function returnToMainMenu() {
   isReturningToMainMenu = true;
   closeGameDialogs();
   stopAnimationLoop();
+  stopSystemEnvironmentMachine();
+  setForceMenuOnNextLaunchFlag();
+  clearActiveRuntimeGameStateForMenu();
   persistRuntimeSession("menu");
   isRuntimeSessionRedirecting = true;
   await musicPlayerController?.fadeOutStop(650);
@@ -4345,10 +4513,14 @@ function findRenderedSystemPlanetByKey(planetKey) {
 }
 
 async function restorePlanetScreenFromSession(planet, { persist = true, preserveEntryOverlay = false } = {}) {
+  const transitionToken = ++screenTransitionToken;
   try {
     await loadPlanetScreenRenderer();
   } catch (error) {
     console.error("Planet screen module failed to load", error);
+  }
+  if (transitionToken !== screenTransitionToken) {
+    return;
   }
 
   if (preserveEntryOverlay) {
@@ -4366,6 +4538,9 @@ async function restorePlanetScreenFromSession(planet, { persist = true, preserve
   planetScreenController.open(planet);
   void planetScreen.offsetWidth;
   await nextAnimationFrame();
+  if (transitionToken !== screenTransitionToken) {
+    return;
+  }
   planetScreen.style.removeProperty("transition");
   if (planetScreenController?.isOpen?.() && planetScreenController.state.activePlanet === planet) {
     planetScreenController.resize();
@@ -5700,6 +5875,7 @@ function syncVisibleSystemOwnershipColors() {
 function refreshOwnershipVisualsAfterGameStateChange() {
   syncVisibleSystemOwnershipColors();
   refreshSystemOwnershipVisuals();
+  refreshSystemEnvironmentOwnedPlanetCount();
   updateStarmapFleetMarkers();
 }
 
@@ -6418,10 +6594,14 @@ async function exitNebulum() {
 
   isAppExited = true;
   isStartMenuOpen = true;
+  setForceMenuOnNextLaunchFlag();
+  clearActiveRuntimeGameStateForMenu();
+  persistRuntimeSession("menu");
   stopAnimationLoop();
   closeMenuDialogs();
   closeGameDialogs();
   stopMenuEnvironmentMachine();
+  stopSystemEnvironmentMachine();
   startMenu.classList.remove("start-menu--hidden");
   startMenu.classList.add("start-menu--shutdown");
   startMenu.setAttribute("aria-hidden", "false");
@@ -6431,6 +6611,7 @@ async function exitNebulum() {
   audioMixer?.dispose();
   audioMixer = null;
   menuEnvironmentMachine = null;
+  systemEnvironmentMachine = null;
 
   disposeNebulumRuntime();
   await clearTextureRuntimeCache();
@@ -8292,6 +8473,7 @@ function openStarWindow(node) {
 function closeStarWindow() {
   cancelPlanetEntryTransition();
   closeSystemPlanetMenu();
+  stopSystemEnvironmentMachine();
   captureSystemFleetMarkerPositions();
   cancelFleetMarkerAnimations();
   resetSystemDecorTrails();
@@ -8320,6 +8502,7 @@ function closeStarWindow() {
 
 function disposeNebulumRuntime() {
   disposeStartMenuScene();
+  stopSystemEnvironmentMachine();
   isEditorMode = false;
   document.body.classList.remove("game-running", "editor-mode", "space-gradient-visible");
   if (!isGameRuntimeReady) {
@@ -8477,6 +8660,7 @@ async function returnToStarSystemFromPlanet() {
     return;
   }
 
+  const transitionToken = ++screenTransitionToken;
   if (planetScreenController.state.activePlanet) {
     markPlanetViewVisitedForActiveSide(planetScreenController.state.activePlanet);
   }
@@ -8485,6 +8669,9 @@ async function returnToStarSystemFromPlanet() {
     originX: window.innerWidth / 2,
     originY: window.innerHeight / 2,
   });
+  if (transitionToken !== screenTransitionToken) {
+    return;
+  }
   planetScreenController.close();
   closePlanetWindow();
   systemScreenController.open(activeNode);
@@ -8500,6 +8687,9 @@ async function returnToStarSystemFromPlanet() {
   updateGameNavigationUi(true);
   snapPlanetScreenHidden();
   await revealObjectDetailEntryOverlay(300);
+  if (transitionToken !== screenTransitionToken) {
+    return;
+  }
   persistRuntimeSession("system");
 }
 
@@ -8507,7 +8697,10 @@ async function openObjectDetailFromPlanetView(
   detail,
   clientX = window.innerWidth / 2,
   clientY = window.innerHeight / 2,
-  { keepPlanetEntryOverlayUntilZoom = false } = {},
+  {
+    keepPlanetEntryOverlayUntilZoom = false,
+    keepPlanetEntryOverlayUntilReady = false,
+  } = {},
 ) {
   if (!detail || !openPlanetData) {
     return;
@@ -8516,6 +8709,7 @@ async function openObjectDetailFromPlanetView(
     return;
   }
 
+  const transitionToken = ++screenTransitionToken;
   objectDetailOrbitPlanet = openPlanetData;
   activeObjectDetail = detail;
   isObjectDetailOpen = true;
@@ -8524,7 +8718,7 @@ async function openObjectDetailFromPlanetView(
   objectDetailOptions.borders = true;
   starWindow.classList.add("object-detail-open");
   const detailToken = ++objectDetailToken;
-  if (!keepPlanetEntryOverlayUntilZoom) {
+  if (!keepPlanetEntryOverlayUntilZoom && !keepPlanetEntryOverlayUntilReady) {
     cancelPlanetEntryTransition();
   }
   closePlanetWindow();
@@ -8537,30 +8731,34 @@ async function openObjectDetailFromPlanetView(
   planetScreen.style.setProperty("--surface-entry-origin-x", `${origin.x}px`);
   planetScreen.style.setProperty("--surface-entry-origin-y", `${origin.y}px`);
   planetScreen.style.setProperty("--surface-entry-scale", "1");
-  objectDetailEntryOverlay.classList.add("active");
-  objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "0");
+  if (!keepPlanetEntryOverlayUntilReady) {
+    objectDetailEntryOverlay.classList.add("active");
+    objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "0");
+  }
 
   await nextAnimationFrame();
-  if (!isObjectDetailOpen || detailToken !== objectDetailToken) {
+  if (!isObjectDetailOpen || detailToken !== objectDetailToken || transitionToken !== screenTransitionToken) {
     return;
   }
 
-  planetScreen.classList.add("surface-entry-moving");
-  planetScreen.style.setProperty("--surface-entry-scale", "7");
-  objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "1");
-  if (keepPlanetEntryOverlayUntilZoom) {
-    cancelPlanetEntryTransition();
-  }
+  if (!keepPlanetEntryOverlayUntilReady) {
+    planetScreen.classList.add("surface-entry-moving");
+    planetScreen.style.setProperty("--surface-entry-scale", "7");
+    objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "1");
+    if (keepPlanetEntryOverlayUntilZoom) {
+      cancelPlanetEntryTransition();
+    }
 
-  await delay(420);
-  if (!isObjectDetailOpen || detailToken !== objectDetailToken) {
-    return;
+    await delay(420);
+    if (!isObjectDetailOpen || detailToken !== objectDetailToken || transitionToken !== screenTransitionToken) {
+      return;
+    }
   }
 
   planetScreenController.close();
 
   await nextAnimationFrame();
-  if (!isObjectDetailOpen || detailToken !== objectDetailToken) {
+  if (!isObjectDetailOpen || detailToken !== objectDetailToken || transitionToken !== screenTransitionToken) {
     return;
   }
 
@@ -8571,18 +8769,23 @@ async function openObjectDetailFromPlanetView(
   objectDetailScreen.setAttribute("aria-hidden", "false");
 
   await nextAnimationFrame();
-  if (!isObjectDetailOpen || detailToken !== objectDetailToken) {
+  if (!isObjectDetailOpen || detailToken !== objectDetailToken || transitionToken !== screenTransitionToken) {
     return;
   }
 
   resetTransitionSurfaces();
-  objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "0");
-  await delay(240);
-  if (!isObjectDetailOpen || detailToken !== objectDetailToken) {
-    return;
-  }
+  if (keepPlanetEntryOverlayUntilReady) {
+    objectDetailEntryOverlay.classList.remove("active");
+    objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "0");
+  } else {
+    objectDetailEntryOverlay.style.setProperty("--surface-entry-alpha", "0");
+    await delay(240);
+    if (!isObjectDetailOpen || detailToken !== objectDetailToken || transitionToken !== screenTransitionToken) {
+      return;
+    }
 
-  objectDetailEntryOverlay.classList.remove("active");
+    objectDetailEntryOverlay.classList.remove("active");
+  }
   persistRuntimeSession("detail");
   scheduleObjectDetailTextureUpgrade(detail, detailToken);
 }
@@ -11699,8 +11902,12 @@ async function returnToOrbitFromObjectDetail() {
     return;
   }
 
+  const transitionToken = ++screenTransitionToken;
   persistRuntimeSession("planet");
   await runObjectDetailZoomOutTransition();
+  if (transitionToken !== screenTransitionToken) {
+    return;
+  }
   closeObjectDetailScreen({ preserveTransitionOverlay: true, keepSystemHidden: true });
 
   try {
@@ -11708,12 +11915,18 @@ async function returnToOrbitFromObjectDetail() {
   } catch (error) {
     console.error("Planet screen module failed to load", error);
   }
+  if (transitionToken !== screenTransitionToken) {
+    return;
+  }
   planetScreenController.open(planet);
   starWindow.classList.remove("object-detail-open");
   planetScreenController.updateParallax(lastClientPointer.x, lastClientPointer.y);
   resetTransitionSurfaces();
   snapObjectDetailHidden();
   await revealObjectDetailEntryOverlay(260);
+  if (transitionToken !== screenTransitionToken) {
+    return;
+  }
   persistRuntimeSession("planet");
 }
 
@@ -11725,8 +11938,12 @@ async function returnToStarSystemFromObjectDetail() {
     return;
   }
 
+  const transitionToken = ++screenTransitionToken;
   cancelPlanetEntryTransition();
   await runObjectDetailZoomOutTransition();
+  if (transitionToken !== screenTransitionToken) {
+    return;
+  }
   closeObjectDetailScreen({ preserveTransitionOverlay: true });
   planetScreenController.close();
   closePlanetWindow();
@@ -11745,6 +11962,9 @@ async function returnToStarSystemFromObjectDetail() {
   snapObjectDetailHidden();
   snapPlanetScreenHidden();
   await revealObjectDetailEntryOverlay(260);
+  if (transitionToken !== screenTransitionToken) {
+    return;
+  }
   persistRuntimeSession("system");
 }
 
@@ -12319,6 +12539,8 @@ function renderStarSystem(node) {
     fleetAnchors: activeSystemFleetAnchors,
   });
   renderSystemFleetMarkers(node, activeSystemFleetAnchors);
+  refreshSystemEnvironmentOwnedPlanetCount();
+  updateSystemEnvironmentMachineState();
 }
 
 function refreshSystemOwnershipVisuals() {
@@ -12613,8 +12835,10 @@ async function startPlanetEntryTransition(planet, clientX, clientY) {
     return;
   }
 
+  const screenToken = ++screenTransitionToken;
   markPlanetViewVisitedForActiveSide(planet);
   closeSystemPlanetMenu();
+  stopSystemEnvironmentMachine();
   isPlanetEntryTransitioning = true;
   const transitionToken = ++planetEntryTransitionToken;
   const rendererPromise = loadPlanetScreenRenderer();
@@ -12630,7 +12854,7 @@ async function startPlanetEntryTransition(planet, clientX, clientY) {
   const minOverlayVisiblePromise = delay(PLANET_ENTRY_MIN_OVERLAY_MS);
 
   await nextAnimationFrame();
-  if (transitionToken !== planetEntryTransitionToken) {
+  if (transitionToken !== planetEntryTransitionToken || screenToken !== screenTransitionToken) {
     return;
   }
 
@@ -12639,7 +12863,7 @@ async function startPlanetEntryTransition(planet, clientX, clientY) {
   planetEntryOverlay.style.setProperty("--planet-entry-alpha", "1");
 
   await delay(PLANET_ENTRY_ZOOM_MS);
-  if (transitionToken !== planetEntryTransitionToken) {
+  if (transitionToken !== planetEntryTransitionToken || screenToken !== screenTransitionToken) {
     return;
   }
 
@@ -12653,24 +12877,24 @@ async function startPlanetEntryTransition(planet, clientX, clientY) {
   planetScreen.style.removeProperty("transition");
   planetScreenController.open(planet);
   await nextAnimationFrame();
-  if (transitionToken !== planetEntryTransitionToken) {
+  if (transitionToken !== planetEntryTransitionToken || screenToken !== screenTransitionToken) {
     return;
   }
 
   await nextAnimationFrame();
-  if (transitionToken !== planetEntryTransitionToken) {
+  if (transitionToken !== planetEntryTransitionToken || screenToken !== screenTransitionToken) {
     return;
   }
 
   await minOverlayVisiblePromise;
-  if (transitionToken !== planetEntryTransitionToken) {
+  if (transitionToken !== planetEntryTransitionToken || screenToken !== screenTransitionToken) {
     return;
   }
 
   planetEntryOverlay.classList.add("leaving");
   planetEntryOverlay.style.setProperty("--planet-entry-alpha", "0");
   await delay(PLANET_ENTRY_FADE_MS);
-  if (transitionToken !== planetEntryTransitionToken) {
+  if (transitionToken !== planetEntryTransitionToken || screenToken !== screenTransitionToken) {
     return;
   }
 
@@ -12701,15 +12925,20 @@ function getPlanetEntryTypeLabel(body) {
 }
 
 function showPlanetEntryLoadingOverlay(body) {
+  const loadingToken = ++planetEntryLoadingOverlayToken;
   setPlanetEntryOverlayContent(body);
   starWindow.classList.remove("planet-entry-moving");
   starWindow.style.setProperty("--planet-entry-scale", "1");
   planetEntryOverlay.classList.remove("leaving");
   planetEntryOverlay.classList.add("active");
   planetEntryOverlay.style.setProperty("--planet-entry-alpha", "1");
+  return loadingToken;
 }
 
-async function hidePlanetEntryLoadingOverlay() {
+async function hidePlanetEntryLoadingOverlay(loadingToken = null) {
+  if (loadingToken !== null && loadingToken !== planetEntryLoadingOverlayToken) {
+    return;
+  }
   if (!planetEntryOverlay.classList.contains("active")) {
     return;
   }
@@ -16156,7 +16385,11 @@ async function openSystemPlanetDetailFromMenu(planet, detailKey, clientX, client
   }
 
   closeSystemPlanetMenu();
-  showPlanetEntryLoadingOverlay(entryTarget);
+  stopSystemEnvironmentMachine();
+  const loadingToken = showPlanetEntryLoadingOverlay(entryTarget);
+  const minOverlayVisiblePromise = delay(PLANET_ENTRY_MIN_OVERLAY_MS);
+  await nextAnimationFrame();
+  await nextAnimationFrame();
   markPlanetViewVisitedForActiveSide(planet);
   await restorePlanetScreenFromSession(planet, {
     persist: false,
@@ -16165,13 +16398,16 @@ async function openSystemPlanetDetailFromMenu(planet, detailKey, clientX, client
   await nextAnimationFrame();
   const detail = findRenderedPlanetDetailByKey(detailKey);
   if (!detail) {
-    await hidePlanetEntryLoadingOverlay();
+    await minOverlayVisiblePromise;
+    await hidePlanetEntryLoadingOverlay(loadingToken);
     persistRuntimeSession("planet");
     return;
   }
   await openObjectDetailFromPlanetView(detail, clientX, clientY, {
-    keepPlanetEntryOverlayUntilZoom: true,
+    keepPlanetEntryOverlayUntilReady: true,
   });
+  await minOverlayVisiblePromise;
+  await hidePlanetEntryLoadingOverlay(loadingToken);
 }
 
 function positionHoverElements(clientX, clientY, nameElement, panelElement, verticalOffset = 0) {
@@ -16286,6 +16522,7 @@ function animate() {
   const deltaSeconds = Math.min(0.05, (now - lastFrameTime) / 1000);
   lastFrameTime = now;
   updateGameNavigationUi();
+  updateSystemEnvironmentMachineState();
 
   if (isGameDialogOpen()) {
     pauseGameInteractions();

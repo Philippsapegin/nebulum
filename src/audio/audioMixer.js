@@ -165,6 +165,7 @@ export function createAudioMixer({
         channel: track.channel ?? channel,
         volume: track.volume ?? volume,
         pan: track.pan ?? 0,
+        enabled: track.enabled ?? null,
         initialDelayMs: track.initialDelayMs ?? initialDelayMs,
         intervalMs: track.intervalMs ?? intervalMs,
         random,
@@ -212,6 +213,10 @@ export function createAudioMixer({
 
       const timer = window.setTimeout(() => {
         timers.delete(timer);
+        if (!isAmbientTrackEnabled(track)) {
+          scheduleNext(track, getRandomInterval(track.intervalMs, random));
+          return;
+        }
         const clip = getNextAmbientTrackClip(track);
         if (!clip) {
           scheduleNext(track, getRandomInterval(track.intervalMs, random));
@@ -358,6 +363,13 @@ function clampVolume(value) {
 }
 
 function getRandomInterval(intervalMs, random) {
+  if (typeof intervalMs === "function") {
+    try {
+      return getRandomInterval(intervalMs(), random);
+    } catch {
+      return 0;
+    }
+  }
   if (Array.isArray(intervalMs)) {
     const min = Number(intervalMs[0]) || 0;
     const max = Number(intervalMs[1]) || min;
@@ -371,6 +383,7 @@ function createAmbientTrackState({
   channel,
   volume,
   pan,
+  enabled,
   initialDelayMs,
   intervalMs,
   random,
@@ -380,12 +393,24 @@ function createAmbientTrackState({
     channel,
     volume,
     pan,
+    enabled,
     initialDelayMs,
     intervalMs,
     random,
     playlist: [],
     panIndex: 0,
   };
+}
+
+function isAmbientTrackEnabled(track) {
+  if (typeof track.enabled !== "function") {
+    return track.enabled !== false;
+  }
+  try {
+    return track.enabled() !== false;
+  } catch {
+    return false;
+  }
 }
 
 function getNextAmbientTrackClip(track) {
