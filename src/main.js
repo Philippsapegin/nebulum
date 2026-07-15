@@ -5962,6 +5962,13 @@ function pingSelectedFleet() {
 }
 
 function getVisibleFleetMarkerElement(fleetId) {
+  if (!systemScreenController.isOpen()) {
+    const starmapMarker = getStarmapFleetMarkerElement(fleetId);
+    if (starmapMarker?.isConnected && !starmapMarker.classList.contains("hidden")) {
+      return starmapMarker;
+    }
+  }
+
   const systemMarker = getSystemFleetMarkerElement(fleetId);
   if (systemMarker?.isConnected && !systemMarker.classList.contains("hidden")) {
     return systemMarker;

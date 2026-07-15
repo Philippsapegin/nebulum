@@ -1713,6 +1713,7 @@ body.graph-entry-moving .hover-panel {
 
 .starmap-fleet-marker {
   position: fixed;
+  z-index: 1;
   width: 30px;
   height: 11px;
   padding: 0;
@@ -1722,7 +1723,9 @@ body.graph-entry-moving .hover-panel {
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.36);
   color: inherit;
   cursor: pointer;
+  isolation: isolate;
   opacity: 1;
+  overflow: visible;
   translate: 0 0;
   transform: translate(-100%, -50%);
   transition: opacity 160ms ease;
@@ -1738,6 +1741,7 @@ body.graph-entry-moving .hover-panel {
 
 .starmap-fleet-marker__stripe {
   position: absolute;
+  z-index: 1;
   left: 0;
   top: 0;
   width: 3px;
@@ -1748,6 +1752,7 @@ body.graph-entry-moving .hover-panel {
 
 .starmap-fleet-marker__icon {
   position: absolute;
+  z-index: 1;
   left: 5px;
   top: 2px;
   width: 11px;
@@ -1759,6 +1764,7 @@ body.graph-entry-moving .hover-panel {
 
 .starmap-fleet-marker__number {
   position: absolute;
+  z-index: 1;
   left: 19px;
   top: 2px;
   color: rgba(255, 255, 255, 0.92);
@@ -2836,6 +2842,13 @@ body.editor-mode .music-player {
   animation-delay: 300ms;
 }
 
+.starmap-fleet-marker .fleet-marker-ping-ring {
+  z-index: 0;
+  width: 10px;
+  height: 10px;
+  animation-name: starmap-fleet-marker-ping-ring;
+}
+
 @keyframes fleet-marker-ping-ring {
   0% {
     opacity: 0.92;
@@ -2845,6 +2858,18 @@ body.editor-mode .music-player {
   100% {
     opacity: 0;
     transform: translate(-50%, -50%) scale(12.4);
+  }
+}
+
+@keyframes starmap-fleet-marker-ping-ring {
+  0% {
+    opacity: 0.92;
+    transform: translate(-50%, -50%) scale(0.25);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(10.5);
   }
 }
 
