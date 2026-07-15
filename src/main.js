@@ -4386,6 +4386,7 @@ function startGameFromMenu({ editorMode = false, gameState = null } = {}) {
   }
 
   const runtimeSessionToRestore = pendingRuntimeSession;
+  shouldStartGameAfterInit = false;
   pendingRuntimeSession = null;
   isEditorMode = runtimeSessionToRestore?.editorMode ?? editorMode;
   currentGameState = normalizeGameState(gameState ?? pendingStartGameState ?? runtimeSessionToRestore?.gameState);
