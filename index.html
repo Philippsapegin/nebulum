@@ -553,7 +553,19 @@
           <div class="object-detail-screen__layout">
             <aside class="object-detail-screen__side-panel object-detail-screen__side-panel--left" aria-hidden="true"></aside>
             <div id="object-detail-texture" class="object-detail-screen__texture" aria-hidden="true"></div>
-            <aside class="object-detail-screen__side-panel object-detail-screen__side-panel--right" aria-hidden="true"></aside>
+            <div id="object-detail-stage-control" class="object-detail-stage-control" hidden>
+              <span class="object-detail-stage-control__label">STATE</span>
+              <input id="object-detail-stage-input" class="object-detail-stage-control__input" type="range" min="1" max="10" value="1" step="1" />
+            </div>
+            <aside class="object-detail-screen__side-panel object-detail-screen__side-panel--right" aria-hidden="true">
+              <div class="object-detail-screen__governor">
+                <div class="object-detail-screen__governor-portrait"></div>
+                <div class="object-detail-screen__governor-text">
+                  <div id="object-detail-governor-name" class="object-detail-screen__governor-name">Unassigned</div>
+                  <div class="object-detail-screen__governor-role">GOVERNOR</div>
+                </div>
+              </div>
+            </aside>
           </div>
         </section>
       </section>
