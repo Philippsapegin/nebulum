@@ -469,6 +469,11 @@ let systemDecorTrailRandom = null;
 let systemDecorTrailSerial = 0;
 let systemDecorTrails = [];
 let systemDecorTrailSchedules = new Map();
+let objectDetailCityTrailLayer = null;
+let objectDetailCityTrails = [];
+let objectDetailCityTrailSchedules = new Map();
+let objectDetailCityTrailActivePairs = new Set();
+let objectDetailSpaceportTrailSchedules = new Map();
 let shouldStartGameAfterInit = false;
 let isRuntimeSessionRedirecting = false;
 let runtimeLoadingHideTimer = null;
@@ -717,6 +722,8 @@ const OBJECT_DETAIL_CITY_NIGHT_DAY_RADIUS_SCALE = 1.03;
 const OBJECT_DETAIL_RADAR_SWEEP_SECONDS = 4.8;
 const OBJECT_DETAIL_FACILITY_EFFECT_MAX = 96;
 const OBJECT_DETAIL_FACILITY_EFFECT_SURFACE_OFFSET = OBJECT_DETAIL_CITY_NIGHT_SURFACE_OFFSET + 0.0015;
+const OBJECT_DETAIL_CITY_CLUSTER_TRAIL_MAX_ACTIVE = 18;
+const OBJECT_DETAIL_SPACEPORT_TRAIL_MAX_ACTIVE = 8;
 const OBJECT_DETAIL_CITY_SEED_HASH = hashObjectDetailSeedString(SEED);
 let activeSystemStar = null;
 let activeSystemStarSurface = null;
@@ -10605,11 +10612,12 @@ function createObjectDetailFacilityEffectMaterial(heightMap, hasDisplacement) {
         vec2 local = worldPosition - effect.xy;
         float radius = effect.w;
         float distanceFromCenter = length(local);
-        if (radius <= 0.0 || distanceFromCenter > radius * 1.08) {
+        float typeValue = effect.z;
+        float cutoff = typeValue < 1.5 ? radius * 1.08 : radius * 1.92;
+        if (radius <= 0.0 || distanceFromCenter > cutoff) {
           return vec3(0.0);
         }
 
-        float typeValue = effect.z;
         float phase = detailFacilityHash(indexValue * 31.17 + effect.x * 17.0 + effect.y * 41.0) * 6.2831853;
         float speed = mix(0.55, 1.22, detailFacilityHash(indexValue * 11.0 + 4.0));
         float baseAngle = detailFacilityTime * speed + phase;
@@ -10618,24 +10626,61 @@ function createObjectDetailFacilityEffectMaterial(heightMap, hasDisplacement) {
 
         if (typeValue < 0.5) {
           float sweep = 0.0;
-          for (int ray = 0; ray < 4; ray += 1) {
-            float rayFade = 1.0 - float(ray) * 0.18;
-            sweep += detailFacilityLine(local, baseAngle - float(ray) * 0.16, radius, lineWidth) * rayFade;
-          }
-          float core = 1.0 - smoothstep(radius * 0.025, radius * 0.09, distanceFromCenter);
-          color += vec3(0.42, 1.0, 0.82) * (sweep * 0.44 + core * 0.16);
-        } else {
-          float sweep = 0.0;
           for (int ray = 0; ray < 5; ray += 1) {
-            float angle = baseAngle * 0.74 + float(ray) * 1.2566371;
-            sweep += detailFacilityLine(local, angle, radius * 0.82, lineWidth * 0.82) * (0.68 - float(ray) * 0.055);
+            float rayFade = 1.0 - float(ray) * 0.13;
+            sweep += detailFacilityLine(local, baseAngle - float(ray) * 0.13, radius, lineWidth * 1.65) * rayFade;
           }
-          float counter = detailFacilityLine(local, -baseAngle * 0.48 + phase * 0.31, radius * 0.68, lineWidth * 0.72);
-          float core = 1.0 - smoothstep(radius * 0.018, radius * 0.07, distanceFromCenter);
-          color += vec3(0.32, 0.68, 1.0) * (sweep * 0.32 + counter * 0.22 + core * 0.18);
+          float ringPhaseA = fract(detailFacilityTime * 0.34 + phase);
+          float ringPhaseB = fract(ringPhaseA + 0.46);
+          float ringRadiusA = mix(radius * 0.1, radius * 0.92, ringPhaseA);
+          float ringRadiusB = mix(radius * 0.1, radius * 0.92, ringPhaseB);
+          float ringA = 1.0 - smoothstep(lineWidth * 4.2, lineWidth * 9.8, abs(distanceFromCenter - ringRadiusA));
+          float ringB = 1.0 - smoothstep(lineWidth * 3.2, lineWidth * 8.2, abs(distanceFromCenter - ringRadiusB));
+          ringA *= smoothstep(0.0, 0.12, ringPhaseA) * (1.0 - smoothstep(0.6, 1.0, ringPhaseA));
+          ringB *= smoothstep(0.0, 0.12, ringPhaseB) * (1.0 - smoothstep(0.6, 1.0, ringPhaseB));
+          float core = 1.0 - smoothstep(radius * 0.02, radius * 0.1, distanceFromCenter);
+          color += vec3(0.54, 1.0, 0.86) * (sweep * 1.35 + ringA * 0.9 + ringB * 0.48 + core * 0.32);
+        } else if (typeValue < 1.5) {
+          float cycleSeconds = mix(1.35, 3.25, detailFacilityHash(indexValue * 29.0 + effect.x * 9.0));
+          float cycleTime = detailFacilityTime / cycleSeconds + phase;
+          float cycle = floor(cycleTime);
+          float localTime = fract(cycleTime);
+          float active = smoothstep(0.08, 0.16, localTime) * (1.0 - smoothstep(0.52, 0.82, localTime));
+          float weldAngle = detailFacilityHash(cycle * 47.0 + indexValue * 71.0 + effect.x * 19.0) * 6.2831853;
+          float weldDistance = radius * mix(0.08, 0.58, detailFacilityHash(cycle * 53.0 + indexValue * 13.0 + effect.y * 23.0));
+          vec2 weldCenter = vec2(cos(weldAngle), sin(weldAngle) * 0.72) * weldDistance;
+          float weldLength = length(local - weldCenter);
+          float spark = 0.55 + 0.45 * sin(detailFacilityTime * mix(21.0, 37.0, detailFacilityHash(cycle + indexValue * 17.0)) + phase * 3.0);
+          spark *= mix(0.54, 1.22, detailFacilityHash(floor(detailFacilityTime * 18.0) + cycle * 11.0 + indexValue * 5.0));
+          float core = 1.0 - smoothstep(radius * 0.01, radius * 0.026, weldLength);
+          float halo = 1.0 - smoothstep(radius * 0.035, radius * 0.16, weldLength);
+          color += vec3(0.42, 0.78, 1.0) * (halo * 0.38 + core * 1.25) * active * spark;
+        } else {
+          float smoke = 0.0;
+          for (int stack = 0; stack < 5; stack += 1) {
+            float stackPhase = detailFacilityHash(indexValue * 43.0 + float(stack) * 19.0 + effect.x * 23.0);
+            vec2 origin = vec2(
+              (stackPhase - 0.5) * radius * 0.56,
+              (detailFacilityHash(indexValue * 17.0 + float(stack) * 29.0 + effect.y * 31.0) - 0.5) * radius * 0.34
+            );
+            for (int puff = 0; puff < 7; puff += 1) {
+              float puffPhase = fract(detailFacilityTime * (0.038 + stackPhase * 0.026) + float(puff) * 0.143 + stackPhase);
+              float drift = puffPhase * radius * 1.62;
+              float wobble = sin(puffPhase * 6.2831853 + stackPhase * 12.5663706) * radius * 0.18;
+              vec2 puffCenter = origin + vec2(-drift, radius * 0.02 + puffPhase * radius * 0.5 + wobble);
+              float puffRadius = radius * (0.08 + puffPhase * 0.14);
+              float puffShape = 1.0 - smoothstep(puffRadius * 0.42, puffRadius, length(local - puffCenter));
+              float puffFade = (1.0 - puffPhase * 0.72) * smoothstep(0.0, 0.15, puffPhase);
+              smoke += puffShape * puffFade * 0.42;
+            }
+          }
+          float heat = 1.0 - smoothstep(radius * 0.035, radius * 0.18, distanceFromCenter);
+          color += vec3(0.8, 0.82, 0.83) * smoke + vec3(1.0, 0.72, 0.34) * heat * 0.14;
         }
 
-        float edgeFade = 1.0 - smoothstep(radius * 0.84, radius * 1.08, distanceFromCenter);
+        float edgeFade = typeValue < 1.5
+          ? 1.0 - smoothstep(radius * 0.84, radius * 1.08, distanceFromCenter)
+          : 1.0 - smoothstep(radius * 1.2, radius * 1.92, distanceFromCenter);
         return color * edgeFade;
       }
 
@@ -10657,7 +10702,7 @@ function createObjectDetailFacilityEffectMaterial(heightMap, hasDisplacement) {
     `,
     transparent: true,
     depthWrite: false,
-    depthTest: true,
+    depthTest: false,
     blending: THREE.AdditiveBlending,
     toneMapped: false,
   });
@@ -10770,7 +10815,7 @@ function createObjectDetailHexGrid(detail, renderer3D, surfaceOptions = {}) {
   );
   const facilityEffectMesh = new THREE.Mesh(facilityEffectGeometry, facilityEffectMaterial);
   facilityEffectMesh.position.z = OBJECT_DETAIL_FACILITY_EFFECT_SURFACE_OFFSET;
-  facilityEffectMesh.renderOrder = 1.16;
+  facilityEffectMesh.renderOrder = 1.36;
   facilityEffectMesh.visible = false;
   facilityEffectMesh.receiveShadow = false;
   const hexGrid = {
@@ -11178,7 +11223,7 @@ function drawObjectDetailOwnedHexBoundaries(context, hexGrid, ownerByAddress) {
 
 function getObjectDetailFacilityEffect(hexGrid, hex, building, drawData) {
   const type = normalizeObjectDetailBuildingType(building?.type);
-  if (type !== "radar" && type !== "laboratory") {
+  if (type !== "radar" && type !== "laboratory" && type !== "powerstation") {
     return null;
   }
   const anchor = drawData?.anchor;
@@ -11186,11 +11231,11 @@ function getObjectDetailFacilityEffect(hexGrid, hex, building, drawData) {
     return null;
   }
   const world = getObjectDetailCanvasWorldPoint(hexGrid, anchor.x, anchor.y);
-  const radiusScale = type === "radar" ? 0.56 : 0.42;
+  const radiusScale = type === "radar" ? 0.68 : type === "powerstation" ? 0.82 : 0.42;
   return {
     x: world.x,
     y: world.y,
-    type: type === "radar" ? 0 : 1,
+    type: type === "radar" ? 0 : type === "laboratory" ? 1 : 2,
     radius: getObjectDetailCanvasWorldLength(hexGrid, hex.radius * radiusScale),
   };
 }
@@ -11599,7 +11644,7 @@ function getObjectDetailBuildingUnit(hex) {
 }
 
 function getObjectDetailFixedBuildingAnchor(hexGrid, hex, sampleData, type) {
-  const centerPreferredTypes = new Set(["mining", "base", "terraforming", "radar"]);
+  const centerPreferredTypes = new Set(["base", "terraforming", "radar"]);
   if (centerPreferredTypes.has(type) && isObjectDetailDrySurfacePoint(hexGrid, sampleData, hex.px, hex.py)) {
     return { x: hex.px, y: hex.py };
   }
@@ -11791,28 +11836,27 @@ function drawObjectDetailTownPixels(context, nightContext, hex, hexGrid, drawDat
 }
 
 function drawObjectDetailFarmingFoundation(context, hex, hexGrid, drawData) {
-  const { cityHex, cityStage, maxGrowthDistance, sampleData } = drawData;
-  const minX = Math.floor(hex.px - hex.radius);
-  const maxX = Math.ceil(hex.px + hex.radius);
-  const minY = Math.floor(hex.py - hex.halfHeight);
-  const maxY = Math.ceil(hex.py + hex.halfHeight);
+  const { cityHex, cityStage, sampleData } = drawData;
+  const stageT = (THREE.MathUtils.clamp(cityStage, OBJECT_DETAIL_CITY_STAGE_MIN, OBJECT_DETAIL_CITY_STAGE_MAX) - 1)
+    / Math.max(1, OBJECT_DETAIL_CITY_STAGE_MAX - 1);
+  const radiusX = hex.radius * (0.3 + stageT * 0.92);
+  const radiusY = hex.halfHeight * (0.38 + stageT * 0.98);
+  const minX = Math.floor(cityHex.px - radiusX);
+  const maxX = Math.ceil(cityHex.px + radiusX);
+  const minY = Math.floor(cityHex.py - radiusY);
+  const maxY = Math.ceil(cityHex.py + radiusY);
   context.save();
   context.shadowBlur = 0;
   context.globalCompositeOperation = "source-over";
-  traceObjectDetailHexPath(context, hex.px, hex.py, hex.radius);
-  context.clip();
 
   for (let y = minY; y <= maxY; y += 1) {
     for (let x = minX; x <= maxX; x += 1) {
       const centerX = x + 0.5;
       const centerY = y + 0.5;
-      if (!isPointInObjectDetailHex(centerX, centerY, hex)) {
-        continue;
-      }
       if (!isObjectDetailDrySurfacePoint(hexGrid, sampleData, centerX, centerY)) {
         continue;
       }
-      const mask = getObjectDetailCityMask(cityHex, hex, centerX, centerY, maxGrowthDistance, cityStage);
+      const mask = getObjectDetailFarmingPatchMask(cityHex, hex, centerX, centerY, cityStage);
       if (mask <= 0) {
         continue;
       }
@@ -11822,6 +11866,48 @@ function drawObjectDetailFarmingFoundation(context, hex, hexGrid, drawData) {
   }
 
   context.restore();
+}
+
+function getObjectDetailFarmingPatchMask(cityHex, hex, x, y, stage) {
+  const stageT = (THREE.MathUtils.clamp(stage, OBJECT_DETAIL_CITY_STAGE_MIN, OBJECT_DETAIL_CITY_STAGE_MAX) - 1)
+    / Math.max(1, OBJECT_DETAIL_CITY_STAGE_MAX - 1);
+  const dx = x - cityHex.px;
+  const dy = y - cityHex.py;
+  const angleIndex = Math.floor(hashObjectDetailCityCell(hex.column, hex.row, 7321) * 4) % 4;
+  const angle = angleIndex * Math.PI * 0.25;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const growthX = hex.radius * (0.25 + stageT * 0.82);
+  const growthY = hex.halfHeight * (0.32 + stageT * 0.94);
+  const nx = (dx * cos + dy * sin) / Math.max(1, growthX);
+  const ny = (-dx * sin + dy * cos) / Math.max(1, growthY);
+  let shape = -Infinity;
+  for (let edgeIndex = 0; edgeIndex < 10; edgeIndex += 1) {
+    const edgeAngle = edgeIndex * (Math.PI / 5)
+      + (hashObjectDetailCityCell(hex.column, hex.row, 7341) - 0.5) * 0.22;
+    const normalX = Math.cos(edgeAngle);
+    const normalY = Math.sin(edgeAngle);
+    const projection = nx * normalX + ny * normalY;
+    const longFieldPush = hashObjectDetailCityCell(edgeIndex, hex.column, 7347) < 0.42
+      ? 0.08 + hashObjectDetailCityCell(hex.row, edgeIndex, 7351) * 0.18
+      : 0;
+    const diagonalCut = hashObjectDetailCityCell(hex.column - edgeIndex, hex.row + edgeIndex, 7357) < 0.3
+      ? 0.06 + hashObjectDetailCityCell(edgeIndex, hex.row, 7361) * 0.12
+      : 0;
+    const limit = THREE.MathUtils.clamp(
+      0.78 + hashObjectDetailCityCell(hex.column + edgeIndex, hex.row - edgeIndex, 7367) * 0.32
+        + longFieldPush - diagonalCut,
+      0.68,
+      1.14,
+    );
+    shape = Math.max(shape, projection / limit);
+  }
+
+  if (shape > 1) {
+    return 0;
+  }
+
+  return THREE.MathUtils.clamp(0.46 + (1 - shape) * 0.28 + stageT * 0.12, 0.42, 1);
 }
 
 function drawObjectDetailFarmingPixels(context, nightContext, hex, hexGrid, drawData) {
@@ -11869,8 +11955,8 @@ function drawObjectDetailFarmingPixels(context, nightContext, hex, hexGrid, draw
 function drawObjectDetailPowerstationFoundation(context, hex, hexGrid, drawData) {
   const { anchor, sampleData, unit } = drawData;
   const padSpacing = Math.max(unit * 4, hex.radius * 0.11);
-  const foundationRadiusX = padSpacing * 1.45;
-  const foundationRadiusY = padSpacing * 1.35;
+  const foundationRadiusX = padSpacing * 1.72;
+  const foundationRadiusY = padSpacing * 1.58;
   context.save();
   context.shadowBlur = 0;
   context.globalCompositeOperation = "source-over";
@@ -11894,10 +11980,10 @@ function drawObjectDetailPowerstationFoundation(context, hex, hexGrid, drawData)
       if (distance + radialNoise > 1) {
         return;
       }
-      if (hashObjectDetailCityCell(cellX, cellY, 8147) < 0.11) {
+      if (hashObjectDetailCityCell(cellX, cellY, 8147) < 0.045) {
         return;
       }
-      const tone = Math.floor(25 + hashObjectDetailCityCell(cellX, cellY, 8151) * 34);
+      const tone = Math.floor(38 + hashObjectDetailCityCell(cellX, cellY, 8151) * 42);
       context.fillStyle = `rgb(${tone}, ${tone}, ${Math.min(78, tone + 4)})`;
       context.fillRect(Math.round(x), Math.round(y), Math.max(1, Math.round(unit)), Math.max(1, Math.round(unit)));
     },
@@ -11925,32 +12011,45 @@ function drawObjectDetailPowerstationFoundation(context, hex, hexGrid, drawData)
 
 function drawObjectDetailPowerstationPixels(context, nightContext, hex, hexGrid, drawData) {
   const { anchor, sampleData, unit } = drawData;
-  const columns = 3;
-  const rows = 3;
   const spacing = Math.max(unit * 4, hex.radius * 0.11);
   const padRadius = Math.max(unit * 1.45, hex.radius * 0.032);
+  const padSlots = getObjectDetailPowerstationPadSlots(hex);
   let hasNightLights = false;
   context.save();
   context.shadowBlur = 0;
   context.globalCompositeOperation = "source-over";
 
-  for (let row = 0; row < rows; row += 1) {
-    for (let column = 0; column < columns; column += 1) {
-      const x = anchor.x + (column - (columns - 1) / 2) * spacing;
-      const y = anchor.y + (row - (rows - 1) / 2) * spacing;
-      if (!isPointInObjectDetailHex(x, y, hex) || !isObjectDetailDrySurfacePoint(hexGrid, sampleData, x, y)) {
-        continue;
-      }
-      drawObjectDetailPixelCircle(context, hexGrid, sampleData, hex, x, y, padRadius, unit, "rgb(96, 98, 98)");
-      if (nightContext && hashObjectDetailCityCell(row, column, 8211) < 0.82) {
-        drawObjectDetailNightPixel(nightContext, x, y, unit, 255, 210, 108, 0.76, 1);
-        hasNightLights = true;
-      }
+  for (const slot of padSlots) {
+    const x = anchor.x + slot.column * spacing;
+    const y = anchor.y + slot.row * spacing;
+    if (!isPointInObjectDetailHex(x, y, hex) || !isObjectDetailDrySurfacePoint(hexGrid, sampleData, x, y)) {
+      continue;
+    }
+    drawObjectDetailPixelCircle(context, hexGrid, sampleData, hex, x, y, padRadius, unit, "rgb(96, 98, 98)");
+    if (nightContext && hashObjectDetailCityCell(slot.row, slot.column, 8211) < 0.82) {
+      drawObjectDetailNightPixel(nightContext, x, y, unit, 255, 210, 108, 0.76, 1);
+      hasNightLights = true;
     }
   }
 
   context.restore();
   return hasNightLights;
+}
+
+function getObjectDetailPowerstationPadSlots(hex) {
+  const slots = [];
+  for (let row = -1; row <= 1; row += 1) {
+    for (let column = -1; column <= 1; column += 1) {
+      slots.push({
+        row,
+        column,
+        order: hashObjectDetailCityCell(hex.column + column, hex.row + row, 8231),
+      });
+    }
+  }
+  slots.sort((a, b) => a.order - b.order);
+  const count = 4 + Math.floor(hashObjectDetailCityCell(hex.column, hex.row, 8237) * 5);
+  return slots.slice(0, count);
 }
 
 function drawObjectDetailPowerstationSmoke(context, lightX, lightY, unit, plumeIndex) {
@@ -11965,87 +12064,110 @@ function drawObjectDetailPowerstationSmoke(context, lightX, lightY, unit, plumeI
 
 function drawObjectDetailMiningPixels(context, nightContext, hex, hexGrid, drawData) {
   const { anchor, sampleData, unit } = drawData;
-  const outerRadius = hex.radius * 0.34;
-  const innerRadius = hex.radius * 0.13;
+  const holeRadius = hex.radius * (0.115 + hashObjectDetailCityCell(hex.column, hex.row, 8301) * 0.04);
+  const clusterCount = 4 + Math.floor(hashObjectDetailCityCell(hex.row, hex.column, 8303) * 3);
   let hasNightLights = false;
   context.save();
   context.shadowBlur = 0;
   context.globalCompositeOperation = "source-over";
 
-  forEachObjectDetailRectPixel(anchor.x - outerRadius, anchor.y - outerRadius, outerRadius * 2, outerRadius * 2, unit, (x, y, centerX, centerY, cellX, cellY) => {
-    if (!isPointInObjectDetailHex(centerX, centerY, hex) || !isObjectDetailDrySurfacePoint(hexGrid, sampleData, centerX, centerY)) {
-      return;
+  for (let clusterIndex = 0; clusterIndex < clusterCount; clusterIndex += 1) {
+    const angle = hashObjectDetailCityCell(hex.column, clusterIndex, 8311) * Math.PI * 2;
+    const distance = hex.radius * (0.18 + hashObjectDetailCityCell(hex.row, clusterIndex, 8313) * 0.23);
+    const clusterX = anchor.x + Math.cos(angle) * distance;
+    const clusterY = anchor.y + Math.sin(angle) * distance * 0.82;
+    if (!isPointInObjectDetailHex(clusterX, clusterY, hex) || !isObjectDetailDrySurfacePoint(hexGrid, sampleData, clusterX, clusterY)) {
+      continue;
     }
-    const distance = Math.hypot(centerX - anchor.x, centerY - anchor.y);
-    const noise = (hashObjectDetailCityCell(cellX, cellY, 8311) - 0.5) * hex.radius * 0.08;
-    if (distance + noise < innerRadius || distance + noise > outerRadius) {
-      return;
+    drawObjectDetailPixelLine(
+      context,
+      hexGrid,
+      sampleData,
+      hex,
+      anchor.x + Math.cos(angle) * holeRadius * 0.86,
+      anchor.y + Math.sin(angle) * holeRadius * 0.64,
+      clusterX,
+      clusterY,
+      unit,
+      `rgba(42, 42, 44, ${0.22 + hashObjectDetailCityCell(clusterIndex, hex.column, 8317) * 0.12})`,
+      Math.max(1, Math.round(unit * 0.42)),
+    );
+    drawObjectDetailMiningCluster(context, hexGrid, sampleData, hex, clusterX, clusterY, unit, clusterIndex);
+    if (nightContext && hashObjectDetailCityCell(hex.column, clusterIndex, 8321) < 0.56) {
+      const lightX = clusterX + (hashObjectDetailCityCell(clusterIndex, hex.row, 8323) - 0.5) * unit * 2.4;
+      const lightY = clusterY + (hashObjectDetailCityCell(hex.row, clusterIndex, 8327) - 0.5) * unit * 2.4;
+      if (isPointInObjectDetailHex(lightX, lightY, hex) && isObjectDetailDrySurfacePoint(hexGrid, sampleData, lightX, lightY)) {
+        drawObjectDetailNightPixel(nightContext, lightX, lightY, unit, 255, 30, 22, 0.72, 0.55);
+        hasNightLights = true;
+      }
     }
-    drawObjectDetailIndustrialPixel(context, x, y, unit, cellX, cellY, 44, 92, 8313);
-    if (nightContext && hashObjectDetailCityCell(cellX, cellY, 8317) < 0.16) {
-      drawObjectDetailNightPixel(nightContext, x, y, unit, 255, 34, 26, 0.86, 2);
-      hasNightLights = true;
-    }
-  });
+  }
 
-  const gradient = context.createRadialGradient(anchor.x, anchor.y, innerRadius * 0.16, anchor.x, anchor.y, innerRadius * 1.16);
+  const gradient = context.createRadialGradient(anchor.x, anchor.y, holeRadius * 0.12, anchor.x, anchor.y, holeRadius * 1.22);
   gradient.addColorStop(0, "rgba(0, 0, 0, 0.92)");
   gradient.addColorStop(0.68, "rgba(2, 2, 3, 0.82)");
   gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
   context.fillStyle = gradient;
   context.beginPath();
-  context.ellipse(anchor.x, anchor.y, innerRadius * 1.18, innerRadius * 0.82, 0, 0, Math.PI * 2);
+  context.ellipse(anchor.x, anchor.y, holeRadius * 1.24, holeRadius * 0.86, 0, 0, Math.PI * 2);
   context.fill();
   context.restore();
   return hasNightLights;
 }
 
+function drawObjectDetailMiningCluster(context, hexGrid, sampleData, hex, centerX, centerY, unit, clusterIndex) {
+  const blockCount = 2 + Math.floor(hashObjectDetailCityCell(hex.column + clusterIndex, hex.row, 8331) * 4);
+  const axis = hashObjectDetailCityCell(clusterIndex, hex.column, 8333) * Math.PI;
+  const tangentX = Math.cos(axis);
+  const tangentY = Math.sin(axis) * 0.72;
+  const normalX = -Math.sin(axis) * 0.72;
+  const normalY = Math.cos(axis);
+  for (let blockIndex = 0; blockIndex < blockCount; blockIndex += 1) {
+    const along = (blockIndex - (blockCount - 1) / 2) * unit * (2.1 + hashObjectDetailCityCell(clusterIndex, blockIndex, 8337) * 0.9);
+    const side = (hashObjectDetailCityCell(blockIndex, clusterIndex, 8341) - 0.5) * unit * 2.2;
+    const x = centerX + tangentX * along + normalX * side;
+    const y = centerY + tangentY * along + normalY * side;
+    const widthCells = 1 + Math.floor(hashObjectDetailCityCell(clusterIndex, blockIndex, 8343) * 3);
+    const heightCells = 1 + Math.floor(hashObjectDetailCityCell(blockIndex, clusterIndex, 8347) * 2);
+    drawObjectDetailSmallBlock(context, hexGrid, sampleData, hex, x, y, unit, widthCells, heightCells, 50, 98, 8351 + blockIndex);
+  }
+}
+
 function drawObjectDetailLaboratoryFoundation(context, hex, hexGrid, drawData) {
   const { anchor, sampleData, unit } = drawData;
+  const foundationRadius = hex.radius * 0.18;
   context.save();
   context.shadowBlur = 0;
-  for (let pathIndex = 0; pathIndex < 7; pathIndex += 1) {
-    let x = anchor.x;
-    let y = anchor.y;
-    let angle = hashObjectDetailCityCell(hex.column, pathIndex, 8411) * Math.PI * 2;
-    const segmentCount = 2 + Math.floor(hashObjectDetailCityCell(hex.row, pathIndex, 8413) * 3);
-    for (let segment = 0; segment < segmentCount; segment += 1) {
-      const length = hex.radius * (0.12 + hashObjectDetailCityCell(pathIndex, segment, 8417) * 0.18);
-      const nextX = x + Math.cos(angle) * length;
-      const nextY = y + Math.sin(angle) * length;
-      drawObjectDetailPixelLine(context, hexGrid, sampleData, hex, x, y, nextX, nextY, unit, "rgba(72, 76, 82, 0.52)", Math.max(1, Math.round(unit * 0.45)));
-      x = nextX;
-      y = nextY;
-      angle += (hashObjectDetailCityCell(pathIndex, segment, 8419) - 0.5) * Math.PI * 0.9;
+  context.globalCompositeOperation = "source-over";
+  forEachObjectDetailRectPixel(anchor.x - foundationRadius, anchor.y - foundationRadius, foundationRadius * 2, foundationRadius * 2, unit, (x, y, centerX, centerY, cellX, cellY) => {
+    if (!isPointInObjectDetailHex(centerX, centerY, hex) || !isObjectDetailDrySurfacePoint(hexGrid, sampleData, centerX, centerY)) {
+      return;
     }
-  }
+    const distance = Math.hypot(centerX - anchor.x, centerY - anchor.y);
+    const noise = (hashObjectDetailCityCell(cellX, cellY, 8411) - 0.5) * foundationRadius * 0.34;
+    if (distance + noise > foundationRadius) {
+      return;
+    }
+    const tone = Math.floor(46 + hashObjectDetailCityCell(cellX, cellY, 8413) * 34);
+    context.fillStyle = `rgb(${tone}, ${tone + 2}, ${Math.min(112, tone + 18)})`;
+    context.fillRect(Math.round(x), Math.round(y), Math.max(1, Math.round(unit)), Math.max(1, Math.round(unit)));
+  });
   context.restore();
 }
 
 function drawObjectDetailLaboratoryPixels(context, nightContext, hex, hexGrid, drawData) {
   const { anchor, sampleData, unit } = drawData;
-  const radiusX = hex.radius * 0.15;
-  const radiusY = hex.halfHeight * 0.18;
-  let hasNightLights = false;
   context.save();
   context.shadowBlur = 0;
-  forEachObjectDetailRectPixel(anchor.x - radiusX, anchor.y - radiusY, radiusX * 2, radiusY * 2, unit, (x, y, centerX, centerY, cellX, cellY) => {
-    if (!isPointInObjectDetailHex(centerX, centerY, hex) || !isObjectDetailDrySurfacePoint(hexGrid, sampleData, centerX, centerY)) {
-      return;
-    }
-    const dx = Math.abs((centerX - anchor.x) / radiusX);
-    const dy = Math.abs((centerY - anchor.y) / radiusY);
-    if (Math.max(dx * 0.82 + dy * 0.18, dy) + hashObjectDetailCityCell(cellX, cellY, 8421) * 0.18 > 1) {
-      return;
-    }
-    drawObjectDetailIndustrialPixel(context, x, y, unit, cellX, cellY, 68, 108, 8423);
-    if (nightContext && hashObjectDetailCityCell(cellX, cellY, 8427) < 0.22) {
-      drawObjectDetailNightPixel(nightContext, x, y, unit, 56, 156, 255, 0.92, 2);
-      hasNightLights = true;
-    }
-  });
+  for (let index = 0; index < 5; index += 1) {
+    const x = anchor.x + (index - 2) * unit * 1.65;
+    const y = anchor.y + (hashObjectDetailCityCell(index, hex.row, 8421) - 0.5) * unit * 3.2;
+    const widthCells = index === 2 ? 2 : 1 + (index % 2);
+    const heightCells = index === 1 || index === 3 ? 2 : 1;
+    drawObjectDetailSmallBlock(context, hexGrid, sampleData, hex, x, y, unit, widthCells, heightCells, 146, 214, 8423 + index);
+  }
   context.restore();
-  return hasNightLights;
+  return false;
 }
 
 function drawObjectDetailSpaceportFoundation(context, hex, hexGrid, drawData) {
@@ -12113,26 +12235,23 @@ function drawObjectDetailSpaceportPixels(context, nightContext, hex, hexGrid, dr
       return;
     }
     const distance = Math.hypot(pointX - centerX, pointY - centerY);
-    const edgeNoise = (hashObjectDetailCityCell(cellX, cellY, 8567) - 0.5) * radius * 0.18;
-    if (distance + edgeNoise > radius) {
+    if (distance > radius) {
       return;
     }
     const tone = Math.floor(122 + hashObjectDetailCityCell(cellX, cellY, 8571) * 58);
     context.fillStyle = `rgb(${tone}, ${tone}, ${Math.min(255, tone + 10)})`;
     context.fillRect(Math.round(x), Math.round(y), Math.max(1, Math.round(unit)), Math.max(1, Math.round(unit)));
-    if (nightContext && hashObjectDetailCityCell(cellX, cellY, 8573) < 0.2) {
-      drawObjectDetailNightPixel(nightContext, x, y, unit, 210, 236, 255, 0.76, 1);
-      hasNightLights = true;
-    }
   });
 
   if (nightContext) {
-    for (let index = 0; index < stage + 1; index += 1) {
-      const angle = offsetAngle + index * (Math.PI * 2 / Math.max(2, stage + 1));
-      const lightX = centerX + Math.cos(angle) * radius * 0.58;
-      const lightY = centerY + Math.sin(angle) * radius * 0.58;
+    const lightCount = 4 + stage * 3;
+    for (let index = 0; index < lightCount; index += 1) {
+      const angle = hashObjectDetailCityCell(hex.column, index, 8573) * Math.PI * 2;
+      const distance = radius * (1.24 + hashObjectDetailCityCell(hex.row, index, 8577) * 1.45);
+      const lightX = centerX + Math.cos(angle) * distance;
+      const lightY = centerY + Math.sin(angle) * distance * 0.82;
       if (isPointInObjectDetailHex(lightX, lightY, hex) && isObjectDetailDrySurfacePoint(hexGrid, sampleData, lightX, lightY)) {
-        drawObjectDetailNightPixel(nightContext, lightX, lightY, unit, 240, 248, 255, 0.92, 2);
+        drawObjectDetailNightPixel(nightContext, lightX, lightY, unit, 210, 236, 255, 0.74, 0.48);
         hasNightLights = true;
       }
     }
@@ -13098,6 +13217,7 @@ function updateObjectDetailCursorUniforms() {
 }
 
 function disposeObjectDetail3D() {
+  resetObjectDetailCityClusterTrails();
   if (!objectDetail3D) {
     return;
   }
@@ -14764,7 +14884,7 @@ function createSystemDecorTrailSpawnDelayMs() {
   return (1 + getSystemDecorTrailRandom() * 9) * 1000;
 }
 
-function createSystemDecorTrail(from, to) {
+function createSystemDecorTrail(from, to, options = {}) {
   const random = getSystemDecorTrailRandom;
   const dx = to.x - from.x;
   const dy = to.y - from.y;
@@ -14779,7 +14899,19 @@ function createSystemDecorTrail(from, to) {
   const bend = distance * (0.14 + random() * 0.24) * bendDirection;
   const drift = Math.min(72, distance * 0.16);
   const controlX = (from.x + to.x) / 2 + normalX * bend + (random() - 0.5) * drift;
-  const controlY = (from.y + to.y) / 2 + normalY * bend + (random() - 0.5) * drift;
+  let controlY = (from.y + to.y) / 2 + normalY * bend + (random() - 0.5) * drift;
+  if (options.alwaysAboveLine) {
+    const lineT = Math.abs(dx) > 0.001
+      ? THREE.MathUtils.clamp((controlX - from.x) / dx, 0, 1)
+      : 0.5;
+    const lineY = from.y + dy * lineT;
+    controlY = lineY - distance * (0.1 + random() * 0.2);
+  } else if (options.upwardBias) {
+    const upwardPull = random() < 0.76
+      ? distance * (0.08 + random() * 0.16)
+      : -distance * (0.035 + random() * 0.09);
+    controlY -= upwardPull;
+  }
   const durationMs = Math.round((620 + distance * (0.44 + random() * 0.22)) * 4);
   const trailElement = document.createElementNS(SVG_NAMESPACE, "g");
   const gradientId = `system-decor-trail-gradient-${++systemDecorTrailSerial}`;
@@ -14894,7 +15026,7 @@ function buildSystemDecorRoutePath(trail, progress) {
 function updateSystemDecorTrailElement(trail, now) {
   const elapsedMs = now - trail.startedAt;
   const rawProgress = THREE.MathUtils.clamp(elapsedMs / trail.durationMs, 0, 1);
-  const progress = smoothstep(0, 1, rawProgress);
+  const progress = getDecorTrailProgress(rawProgress, trail.progressEasing);
   const headPoint = getSystemDecorTrailPoint(trail, progress);
   const tailPoint = getSystemDecorTrailPoint(trail, Math.max(0, progress - trail.tailLength));
   const opacity =
@@ -14925,6 +15057,17 @@ function updateSystemDecorTrailElement(trail, now) {
   return elapsedMs < trail.durationMs + trail.routeFadeMs;
 }
 
+function getDecorTrailProgress(rawProgress, easing = "smooth") {
+  switch (easing) {
+    case "launch":
+      return rawProgress * rawProgress;
+    case "landing":
+      return 1 - Math.pow(1 - rawProgress, 4);
+    default:
+      return smoothstep(0, 1, rawProgress);
+  }
+}
+
 function spawnSystemDecorTrail(from, targets) {
   if (!from || targets.length < 2) {
     return;
@@ -14937,7 +15080,7 @@ function spawnSystemDecorTrail(from, targets) {
 
   const toIndex = Math.floor(getSystemDecorTrailRandom() * availableTargets.length);
   const to = availableTargets[toIndex];
-  const trail = createSystemDecorTrail(from, to);
+  const trail = createSystemDecorTrail(from, to, { upwardBias: true });
   if (!trail) {
     return;
   }
@@ -14991,6 +15134,408 @@ function updateSystemDecorTrails(now) {
     }
     spawnSystemDecorTrail(target, targets);
     systemDecorTrailSchedules.set(target.key, now + createSystemDecorTrailSpawnDelayMs());
+  }
+}
+
+function resetObjectDetailCityClusterTrails() {
+  objectDetailCityTrailLayer?.remove();
+  objectDetailCityTrailLayer = null;
+  objectDetailCityTrails = [];
+  objectDetailCityTrailSchedules.clear();
+  objectDetailCityTrailActivePairs.clear();
+  objectDetailSpaceportTrailSchedules.clear();
+}
+
+function ensureObjectDetailCityTrailLayer() {
+  if (!isObjectDetailOpen || !objectDetailTexture) {
+    return null;
+  }
+
+  const rect = objectDetailTexture.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+
+  if (objectDetailCityTrailLayer?.isConnected && objectDetailCityTrailLayer.parentElement === objectDetailTexture) {
+    objectDetailCityTrailLayer.setAttribute("viewBox", `0 0 ${rect.width} ${rect.height}`);
+    return objectDetailCityTrailLayer;
+  }
+
+  const layer = document.createElementNS(SVG_NAMESPACE, "svg");
+  layer.classList.add("object-detail-city-trail-layer");
+  layer.setAttribute("aria-hidden", "true");
+  layer.setAttribute("viewBox", `0 0 ${rect.width} ${rect.height}`);
+  objectDetailCityTrailLayer = layer;
+  objectDetailTexture.append(layer);
+  return layer;
+}
+
+function getObjectDetailCityClusterTrailTargets(hexGrid) {
+  const rect = objectDetailTexture.getBoundingClientRect();
+  if (!hexGrid?.state?.buildings || rect.width <= 0 || rect.height <= 0) {
+    return [];
+  }
+
+  return getObjectDetailTownClusters(hexGrid).map((cluster) => {
+    let totalX = 0;
+    let totalY = 0;
+    let radius = 0;
+    for (const hex of cluster.hexes) {
+      const placement = hexGrid.state.cityPlacements.get(hex.address) ?? { x: hex.px, y: hex.py };
+      totalX += placement.x;
+      totalY += placement.y;
+      radius = Math.max(radius, hex.radius);
+    }
+    const count = Math.max(1, cluster.hexes.length);
+    return {
+      ...getObjectDetailCanvasOverlayPoint(hexGrid, totalX / count, totalY / count, rect),
+      key: `city:${cluster.addresses.join("+")}`,
+      addresses: cluster.addresses,
+      radius: radius / hexGrid.canvas.width * rect.width * Math.sqrt(count),
+    };
+  });
+}
+
+function getObjectDetailTownClusters(hexGrid) {
+  const townAddresses = new Set();
+  const hexByAddress = new Map();
+  for (const [address, building] of hexGrid.state.buildings) {
+    if (normalizeObjectDetailBuildingType(building?.type) !== "town") {
+      continue;
+    }
+    const hex = getObjectDetailHexByAddress(hexGrid, address);
+    if (!hex) {
+      continue;
+    }
+    townAddresses.add(address);
+    hexByAddress.set(address, hex);
+  }
+
+  const visited = new Set();
+  const clusters = [];
+  for (const address of townAddresses) {
+    if (visited.has(address)) {
+      continue;
+    }
+    const queue = [address];
+    const clusterAddresses = [];
+    const clusterHexes = [];
+    visited.add(address);
+
+    while (queue.length > 0) {
+      const currentAddress = queue.shift();
+      const currentHex = hexByAddress.get(currentAddress);
+      if (!currentHex) {
+        continue;
+      }
+      clusterAddresses.push(currentAddress);
+      clusterHexes.push(currentHex);
+
+      for (let edgeIndex = 0; edgeIndex < 6; edgeIndex += 1) {
+        const neighborAddress = getObjectDetailNeighborAddress(currentHex, edgeIndex);
+        if (!townAddresses.has(neighborAddress) || visited.has(neighborAddress)) {
+          continue;
+        }
+        visited.add(neighborAddress);
+        queue.push(neighborAddress);
+      }
+    }
+
+    clusterAddresses.sort();
+    clusters.push({
+      addresses: clusterAddresses,
+      hexes: clusterHexes,
+    });
+  }
+
+  return clusters;
+}
+
+function getObjectDetailSpaceportTrailTargets(hexGrid) {
+  const rect = objectDetailTexture.getBoundingClientRect();
+  if (!hexGrid?.state?.buildings || rect.width <= 0 || rect.height <= 0) {
+    return [];
+  }
+
+  const targets = [];
+  for (const [address, building] of hexGrid.state.buildings) {
+    if (normalizeObjectDetailBuildingType(building?.type) !== "spaceport") {
+      continue;
+    }
+    const hex = getObjectDetailHexByAddress(hexGrid, address);
+    if (!hex) {
+      continue;
+    }
+    targets.push({
+      ...getObjectDetailCanvasOverlayPoint(hexGrid, hex.px, hex.py, rect),
+      key: `spaceport:${address}`,
+      address,
+      radius: hex.radius / hexGrid.canvas.width * rect.width,
+    });
+  }
+  return targets;
+}
+
+function getObjectDetailCanvasOverlayPoint(hexGrid, canvasX, canvasY, rect = objectDetailTexture.getBoundingClientRect()) {
+  return {
+    x: canvasX / hexGrid.canvas.width * rect.width,
+    y: canvasY / hexGrid.canvas.height * rect.height,
+  };
+}
+
+function createObjectDetailCityTrailSpawnDelayMs() {
+  return (1.8 + getSystemDecorTrailRandom() * 5.6) * 1000;
+}
+
+function getObjectDetailCityTrailPairKey(from, to) {
+  return [from.key, to.key].sort().join("|");
+}
+
+function getObjectDetailCityTrailCandidates(from, targets) {
+  const maxDistance = Math.max(42, from.radius * 3.35);
+  const minDistance = Math.max(18, from.radius * 0.62);
+  return targets.filter((to) => {
+    if (to.key === from.key) {
+      return false;
+    }
+    const distance = Math.hypot(to.x - from.x, to.y - from.y);
+    if (distance < minDistance || distance > maxDistance) {
+      return false;
+    }
+    return !objectDetailCityTrailActivePairs.has(getObjectDetailCityTrailPairKey(from, to));
+  });
+}
+
+function spawnObjectDetailCityClusterTrail(from, targets) {
+  if (!from || objectDetailCityTrails.length >= OBJECT_DETAIL_CITY_CLUSTER_TRAIL_MAX_ACTIVE) {
+    return;
+  }
+
+  const availableTargets = getObjectDetailCityTrailCandidates(from, targets);
+  if (availableTargets.length === 0) {
+    return;
+  }
+
+  const to = availableTargets[Math.floor(getSystemDecorTrailRandom() * availableTargets.length)];
+  const pairKey = getObjectDetailCityTrailPairKey(from, to);
+  const trail = createSystemDecorTrail(from, to, { alwaysAboveLine: true });
+  if (!trail) {
+    return;
+  }
+
+  trail.pairKey = pairKey;
+  objectDetailCityTrailActivePairs.add(pairKey);
+  const layer = ensureObjectDetailCityTrailLayer();
+  if (!layer) {
+    objectDetailCityTrailActivePairs.delete(pairKey);
+    trail.element.remove();
+    return;
+  }
+
+  objectDetailCityTrails.push(trail);
+  layer.append(trail.element);
+}
+
+function createObjectDetailVerticalDecorTrail(target, isLanding = false) {
+  const random = getSystemDecorTrailRandom;
+  const distance = THREE.MathUtils.clamp(target.radius * (3.2 + random() * 1.2), 72, 180);
+  const ground = getObjectDetailSpaceportTrailGroundPoint(target);
+  const start = isLanding
+    ? { x: ground.x, y: ground.y - distance }
+    : ground;
+  const end = isLanding
+    ? ground
+    : { x: ground.x, y: ground.y - distance };
+  const control = {
+    x: ground.x,
+    y: (start.y + end.y) / 2,
+  };
+  const trailElement = document.createElementNS(SVG_NAMESPACE, "g");
+  const gradientId = `object-detail-spaceport-trail-gradient-${++systemDecorTrailSerial}`;
+  const routeGradientId = `object-detail-spaceport-route-gradient-${systemDecorTrailSerial}`;
+  const defs = document.createElementNS(SVG_NAMESPACE, "defs");
+  const gradient = document.createElementNS(SVG_NAMESPACE, "linearGradient");
+  gradient.setAttribute("id", gradientId);
+  gradient.setAttribute("gradientUnits", "userSpaceOnUse");
+  [
+    ["0%", "0"],
+    ["28%", "0.1"],
+    ["74%", "0.48"],
+    ["100%", "0.92"],
+  ].forEach(([offset, opacity]) => {
+    const stop = document.createElementNS(SVG_NAMESPACE, "stop");
+    stop.setAttribute("offset", offset);
+    stop.setAttribute("stop-color", "#ffffff");
+    stop.setAttribute("stop-opacity", opacity);
+    gradient.append(stop);
+  });
+  defs.append(gradient);
+
+  const routeGradient = document.createElementNS(SVG_NAMESPACE, "linearGradient");
+  routeGradient.setAttribute("id", routeGradientId);
+  routeGradient.setAttribute("gradientUnits", "userSpaceOnUse");
+  [
+    ["0%", "0"],
+    ["12%", "1"],
+    ["88%", "1"],
+    ["100%", "0"],
+  ].forEach(([offset, opacity]) => {
+    const stop = document.createElementNS(SVG_NAMESPACE, "stop");
+    stop.setAttribute("offset", offset);
+    stop.setAttribute("stop-color", "#ffffff");
+    stop.setAttribute("stop-opacity", opacity);
+    routeGradient.append(stop);
+  });
+  defs.append(routeGradient);
+
+  const routePath = document.createElementNS(SVG_NAMESPACE, "path");
+  routePath.classList.add("system-decor-trail__route");
+  routePath.style.stroke = `url(#${routeGradientId})`;
+
+  const path = document.createElementNS(SVG_NAMESPACE, "path");
+  path.classList.add("system-decor-trail__trace");
+  path.style.stroke = `url(#${gradientId})`;
+
+  const head = document.createElementNS(SVG_NAMESPACE, "circle");
+  head.classList.add("system-decor-trail__head");
+  head.setAttribute("r", (1.2 + random() * 0.35).toFixed(2));
+
+  trailElement.classList.add("system-decor-trail");
+  trailElement.append(defs, routePath, path, head);
+  const trail = {
+    element: trailElement,
+    routePath,
+    path,
+    head,
+    gradient,
+    routeGradient,
+    start,
+    control,
+    end,
+    startedAt: performance.now(),
+    durationMs: Math.round((isLanding ? 1900 : 1650) + distance * (isLanding ? 7.8 : 6.6)),
+    tailLength: 0.22,
+    routeFadeMs: 760,
+    progressEasing: isLanding ? "landing" : "launch",
+    spaceportKey: target.key,
+  };
+  updateSystemDecorTrailElement(trail, trail.startedAt);
+  return trail;
+}
+
+function getObjectDetailSpaceportTrailGroundPoint(target) {
+  const random = getSystemDecorTrailRandom;
+  const angle = random() * Math.PI * 2;
+  const distance = target.radius * random() * 0.07;
+  return {
+    x: target.x + Math.cos(angle) * distance,
+    y: target.y + Math.sin(angle) * distance * 0.82,
+  };
+}
+
+function createObjectDetailSpaceportTrailSpawnDelayMs() {
+  return (2.8 + getSystemDecorTrailRandom() * 7.2) * 1000;
+}
+
+function spawnObjectDetailSpaceportTrail(target) {
+  const activeSpaceportTrails = objectDetailCityTrails.filter((trail) => trail.spaceportKey).length;
+  if (!target || activeSpaceportTrails >= OBJECT_DETAIL_SPACEPORT_TRAIL_MAX_ACTIVE) {
+    return;
+  }
+
+  const isLanding = getSystemDecorTrailRandom() < 0.46;
+  const trail = createObjectDetailVerticalDecorTrail(target, isLanding);
+  const layer = ensureObjectDetailCityTrailLayer();
+  if (!trail || !layer) {
+    trail?.element.remove();
+    return;
+  }
+  objectDetailCityTrails.push(trail);
+  layer.append(trail.element);
+}
+
+function syncObjectDetailCityTrailSchedules(targets, now) {
+  const visibleKeys = new Set(targets.map((target) => target.key));
+  for (const key of Array.from(objectDetailCityTrailSchedules.keys())) {
+    if (!visibleKeys.has(key)) {
+      objectDetailCityTrailSchedules.delete(key);
+    }
+  }
+
+  for (const target of targets) {
+    if (objectDetailCityTrailSchedules.has(target.key)) {
+      continue;
+    }
+    objectDetailCityTrailSchedules.set(target.key, now + createObjectDetailCityTrailSpawnDelayMs());
+  }
+}
+
+function syncObjectDetailSpaceportTrailSchedules(targets, now) {
+  const visibleKeys = new Set(targets.map((target) => target.key));
+  for (const key of Array.from(objectDetailSpaceportTrailSchedules.keys())) {
+    if (!visibleKeys.has(key)) {
+      objectDetailSpaceportTrailSchedules.delete(key);
+    }
+  }
+
+  for (const target of targets) {
+    if (objectDetailSpaceportTrailSchedules.has(target.key)) {
+      continue;
+    }
+    objectDetailSpaceportTrailSchedules.set(target.key, now + createObjectDetailSpaceportTrailSpawnDelayMs());
+  }
+}
+
+function updateObjectDetailCityClusterTrails(now) {
+  if (!isObjectDetailOpen || !objectDetail3D?.hexGrid) {
+    if (
+      objectDetailCityTrailLayer ||
+      objectDetailCityTrails.length ||
+      objectDetailCityTrailSchedules.size ||
+      objectDetailSpaceportTrailSchedules.size
+    ) {
+      resetObjectDetailCityClusterTrails();
+    }
+    return;
+  }
+
+  ensureObjectDetailCityTrailLayer();
+  for (let index = objectDetailCityTrails.length - 1; index >= 0; index -= 1) {
+    const trail = objectDetailCityTrails[index];
+    if (updateSystemDecorTrailElement(trail, now)) {
+      continue;
+    }
+    trail.element.remove();
+    if (trail.pairKey) {
+      objectDetailCityTrailActivePairs.delete(trail.pairKey);
+    }
+    objectDetailCityTrails.splice(index, 1);
+  }
+
+  const targets = getObjectDetailCityClusterTrailTargets(objectDetail3D.hexGrid);
+  if (targets.length >= 2) {
+    syncObjectDetailCityTrailSchedules(targets, now);
+    for (const target of targets) {
+      const nextSpawnAt = objectDetailCityTrailSchedules.get(target.key);
+      if (!Number.isFinite(nextSpawnAt) || now < nextSpawnAt) {
+        continue;
+      }
+      spawnObjectDetailCityClusterTrail(target, targets);
+      objectDetailCityTrailSchedules.set(target.key, now + createObjectDetailCityTrailSpawnDelayMs());
+    }
+  } else {
+    objectDetailCityTrailSchedules.clear();
+  }
+
+  const spaceportTargets = getObjectDetailSpaceportTrailTargets(objectDetail3D.hexGrid);
+  syncObjectDetailSpaceportTrailSchedules(spaceportTargets, now);
+  for (const target of spaceportTargets) {
+    const nextSpawnAt = objectDetailSpaceportTrailSchedules.get(target.key);
+    if (!Number.isFinite(nextSpawnAt) || now < nextSpawnAt) {
+      continue;
+    }
+    spawnObjectDetailSpaceportTrail(target);
+    objectDetailSpaceportTrailSchedules.set(target.key, now + createObjectDetailSpaceportTrailSpawnDelayMs());
   }
 }
 
@@ -17809,6 +18354,7 @@ function animate() {
   if (updateObjectDetailLightMotion(now)) {
     renderObjectDetail3D();
   }
+  updateObjectDetailCityClusterTrails(now);
 
   if (!planetScreenController.isOpen() && !isObjectDetailOpen) {
     updateSystemPlanetRotationLayers(deltaSeconds, now);
