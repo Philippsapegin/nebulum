@@ -2275,6 +2275,51 @@ body.editor-mode .music-player {
     drop-shadow(0 0 12px rgba(255, 255, 255, 0.42));
 }
 
+.object-detail-radar-sonar {
+  pointer-events: none;
+  mix-blend-mode: screen;
+  opacity: 0.96;
+}
+
+.object-detail-radar-sonar__ring {
+  fill: none;
+  stroke: rgba(116, 255, 214, 0.5);
+  stroke-width: 1px;
+  filter:
+    drop-shadow(0 0 2px rgba(116, 255, 214, 0.74))
+    drop-shadow(0 0 7px rgba(116, 255, 214, 0.32));
+}
+
+.object-detail-radar-sonar__ring--inner {
+  stroke-opacity: 0.36;
+}
+
+.object-detail-radar-sonar__pulse {
+  fill: none;
+  stroke: rgba(172, 255, 232, 0.62);
+  stroke-width: 1px;
+  filter: drop-shadow(0 0 6px rgba(116, 255, 214, 0.42));
+}
+
+.object-detail-radar-sonar__wedge {
+  fill: rgba(116, 255, 214, 0.16);
+  stroke: none;
+}
+
+.object-detail-radar-sonar__sweep {
+  stroke: rgba(206, 255, 242, 0.9);
+  stroke-width: 1px;
+  stroke-linecap: round;
+  filter:
+    drop-shadow(0 0 3px rgba(206, 255, 242, 0.88))
+    drop-shadow(0 0 9px rgba(116, 255, 214, 0.52));
+}
+
+.object-detail-radar-sonar__core {
+  fill: rgba(232, 255, 248, 0.94);
+  filter: drop-shadow(0 0 5px rgba(116, 255, 214, 0.72));
+}
+
 .star-window.system-transitioning {
   cursor: default;
 }

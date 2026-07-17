@@ -474,6 +474,7 @@ let objectDetailCityTrails = [];
 let objectDetailCityTrailSchedules = new Map();
 let objectDetailCityTrailActivePairs = new Set();
 let objectDetailSpaceportTrailSchedules = new Map();
+let objectDetailRadarSonars = new Map();
 let shouldStartGameAfterInit = false;
 let isRuntimeSessionRedirecting = false;
 let runtimeLoadingHideTimer = null;
@@ -15144,6 +15145,7 @@ function resetObjectDetailCityClusterTrails() {
   objectDetailCityTrailSchedules.clear();
   objectDetailCityTrailActivePairs.clear();
   objectDetailSpaceportTrailSchedules.clear();
+  objectDetailRadarSonars.clear();
 }
 
 function ensureObjectDetailCityTrailLayer() {
@@ -15269,6 +15271,31 @@ function getObjectDetailSpaceportTrailTargets(hexGrid) {
     targets.push({
       ...getObjectDetailCanvasOverlayPoint(hexGrid, hex.px, hex.py, rect),
       key: `spaceport:${address}`,
+      address,
+      radius: hex.radius / hexGrid.canvas.width * rect.width,
+    });
+  }
+  return targets;
+}
+
+function getObjectDetailRadarSonarTargets(hexGrid) {
+  const rect = objectDetailTexture.getBoundingClientRect();
+  if (!hexGrid?.state?.buildings || rect.width <= 0 || rect.height <= 0) {
+    return [];
+  }
+
+  const targets = [];
+  for (const [address, building] of hexGrid.state.buildings) {
+    if (normalizeObjectDetailBuildingType(building?.type) !== "radar") {
+      continue;
+    }
+    const hex = getObjectDetailHexByAddress(hexGrid, address);
+    if (!hex) {
+      continue;
+    }
+    targets.push({
+      ...getObjectDetailCanvasOverlayPoint(hexGrid, hex.px, hex.py, rect),
+      key: `radar:${address}`,
       address,
       radius: hex.radius / hexGrid.canvas.width * rect.width,
     });
@@ -15486,13 +15513,110 @@ function syncObjectDetailSpaceportTrailSchedules(targets, now) {
   }
 }
 
+function createObjectDetailRadarSonarElement(target, now) {
+  const group = document.createElementNS(SVG_NAMESPACE, "g");
+  group.classList.add("object-detail-radar-sonar");
+
+  const rotor = document.createElementNS(SVG_NAMESPACE, "g");
+  rotor.classList.add("object-detail-radar-sonar__rotor");
+
+  const outerRing = document.createElementNS(SVG_NAMESPACE, "circle");
+  outerRing.classList.add("object-detail-radar-sonar__ring", "object-detail-radar-sonar__ring--outer");
+
+  const innerRing = document.createElementNS(SVG_NAMESPACE, "circle");
+  innerRing.classList.add("object-detail-radar-sonar__ring", "object-detail-radar-sonar__ring--inner");
+
+  const pulseRing = document.createElementNS(SVG_NAMESPACE, "circle");
+  pulseRing.classList.add("object-detail-radar-sonar__pulse");
+
+  const wedge = document.createElementNS(SVG_NAMESPACE, "path");
+  wedge.classList.add("object-detail-radar-sonar__wedge");
+
+  const sweep = document.createElementNS(SVG_NAMESPACE, "line");
+  sweep.classList.add("object-detail-radar-sonar__sweep");
+  sweep.setAttribute("x1", "0");
+  sweep.setAttribute("y1", "0");
+  sweep.setAttribute("y2", "0");
+
+  const core = document.createElementNS(SVG_NAMESPACE, "circle");
+  core.classList.add("object-detail-radar-sonar__core");
+
+  rotor.append(wedge, sweep);
+  group.append(outerRing, innerRing, pulseRing, rotor, core);
+  const sonar = {
+    element: group,
+    rotor,
+    outerRing,
+    innerRing,
+    pulseRing,
+    wedge,
+    sweep,
+    core,
+    phase: getSystemDecorTrailRandom(),
+    startedAt: now,
+  };
+  updateObjectDetailRadarSonarElement(sonar, target, now);
+  return sonar;
+}
+
+function updateObjectDetailRadarSonarElement(sonar, target, now) {
+  const radius = Math.max(10, target.radius * 0.72);
+  const elapsedSeconds = now * 0.001 + sonar.phase * 8;
+  const rotation = (elapsedSeconds * 62) % 360;
+  const pulsePhase = (elapsedSeconds * 0.52) % 1;
+  const pulseRadius = radius * (0.18 + pulsePhase * 0.86);
+  const pulseOpacity = (1 - smoothstep(0.42, 1, pulsePhase)) * smoothstep(0, 0.14, pulsePhase);
+  const wedgeAngle = THREE.MathUtils.degToRad(28);
+  const wedgeRadius = radius * 0.92;
+  const wedgeX = Math.cos(wedgeAngle) * wedgeRadius;
+  const wedgeY = Math.sin(wedgeAngle) * wedgeRadius;
+
+  sonar.element.setAttribute("transform", `translate(${target.x.toFixed(1)} ${target.y.toFixed(1)})`);
+  sonar.rotor.setAttribute("transform", `rotate(${rotation.toFixed(2)})`);
+  sonar.outerRing.setAttribute("r", (radius * 0.92).toFixed(1));
+  sonar.innerRing.setAttribute("r", (radius * 0.48).toFixed(1));
+  sonar.pulseRing.setAttribute("r", pulseRadius.toFixed(1));
+  sonar.pulseRing.style.opacity = String(0.72 * pulseOpacity);
+  sonar.sweep.setAttribute("x2", (radius * 0.98).toFixed(1));
+  sonar.wedge.setAttribute("d", `M 0 0 L ${wedgeRadius.toFixed(1)} 0 L ${wedgeX.toFixed(1)} ${wedgeY.toFixed(1)} Z`);
+  sonar.core.setAttribute("r", Math.max(1.4, radius * 0.045).toFixed(1));
+}
+
+function syncObjectDetailRadarSonars(targets, now) {
+  const layer = ensureObjectDetailCityTrailLayer();
+  if (!layer) {
+    return;
+  }
+
+  const visibleKeys = new Set(targets.map((target) => target.key));
+  for (const [key, sonar] of Array.from(objectDetailRadarSonars.entries())) {
+    if (visibleKeys.has(key)) {
+      continue;
+    }
+    sonar.element.remove();
+    objectDetailRadarSonars.delete(key);
+  }
+
+  for (const target of targets) {
+    let sonar = objectDetailRadarSonars.get(target.key);
+    if (!sonar) {
+      sonar = createObjectDetailRadarSonarElement(target, now);
+      objectDetailRadarSonars.set(target.key, sonar);
+      layer.append(sonar.element);
+      continue;
+    }
+    updateObjectDetailRadarSonarElement(sonar, target, now);
+  }
+}
+
 function updateObjectDetailCityClusterTrails(now) {
   if (!isObjectDetailOpen || !objectDetail3D?.hexGrid) {
     if (
       objectDetailCityTrailLayer ||
       objectDetailCityTrails.length ||
       objectDetailCityTrailSchedules.size ||
-      objectDetailSpaceportTrailSchedules.size
+      objectDetailSpaceportTrailSchedules.size ||
+      objectDetailRadarSonars.size
     ) {
       resetObjectDetailCityClusterTrails();
     }
@@ -15537,6 +15661,8 @@ function updateObjectDetailCityClusterTrails(now) {
     spawnObjectDetailSpaceportTrail(target);
     objectDetailSpaceportTrailSchedules.set(target.key, now + createObjectDetailSpaceportTrailSpawnDelayMs());
   }
+
+  syncObjectDetailRadarSonars(getObjectDetailRadarSonarTargets(objectDetail3D.hexGrid), now);
 }
 
 function getSystemFleetMarkerTargetPosition(fleet, anchor, node, anchorSlotStates) {
