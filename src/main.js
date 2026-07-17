@@ -80,6 +80,13 @@ const FLEET_LINK_JUMP_EFFECT_MS = 620;
 const FLEET_COMMANDER_MALE_NAMES = parseNameDictionary(maleFleetCommanderNamesRaw, ["Alex"]);
 const FLEET_COMMANDER_FEMALE_NAMES = parseNameDictionary(femaleFleetCommanderNamesRaw, ["Alex"]);
 const FLEET_COMMANDER_SURNAMES = parseNameDictionary(fleetCommanderSurnamesRaw, ["Vega"]);
+const FLEET_COMMANDER_PORTRAIT_MANIFEST_URL = "/pics/portraits/commanders/commanders.json";
+const FLEET_COMMANDER_PORTRAIT_BASE_PATH = "/pics/portraits/commanders/";
+const FLEET_COMMANDER_PORTRAIT_FALLBACKS = {
+  male: `${FLEET_COMMANDER_PORTRAIT_BASE_PATH}m_3.png`,
+  female: `${FLEET_COMMANDER_PORTRAIT_BASE_PATH}f_4.png`,
+  unknown: `${FLEET_COMMANDER_PORTRAIT_BASE_PATH}m_3.png`,
+};
 const UI_HOVER_SOUND = "ui.hover.quiet";
 const UI_MENU_CLICK_SOUND = "ui.menu.click";
 const UI_BASE_CLICK_SOUND = "ui.base.click";
@@ -441,6 +448,11 @@ let isRuntimeReloadRequested = false;
 let activeUiHoverSoundElement = null;
 let fleetMoveSoundDeck = [];
 let lastFleetMoveSound = null;
+let fleetCommanderPortraitManifestPromise = null;
+let fleetCommanderPortraitPools = {
+  male: [],
+  female: [],
+};
 let selectedMenuSaveIndex = -1;
 let selectedGameSaveIndex = -1;
 let isAddingGameSave = false;
@@ -982,6 +994,7 @@ function initializeNebulumRuntime() {
 }
 
 function initStartMenu() {
+  loadFleetCommanderPortraitManifest();
   if (!startMenu) {
     isStartMenuOpen = false;
     return;
@@ -5135,6 +5148,135 @@ function getRuntimeRandomChoice(items, fallback = "") {
   return items[getRuntimeRandomInt(0, items.length - 1)] ?? fallback;
 }
 
+function loadFleetCommanderPortraitManifest() {
+  if (fleetCommanderPortraitManifestPromise) {
+    return fleetCommanderPortraitManifestPromise;
+  }
+
+  fleetCommanderPortraitManifestPromise = fetch(FLEET_COMMANDER_PORTRAIT_MANIFEST_URL)
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`Failed to load fleet commander portraits: ${response.status}`);
+      }
+      return response.json();
+    })
+    .then((manifest) => {
+      const pools = {
+        male: [],
+        female: [],
+      };
+      const commanders = Array.isArray(manifest?.commanders) ? manifest.commanders : [];
+      for (const commander of commanders) {
+        const gender = normalizeFleetCommanderGender(commander?.gender);
+        const file = String(commander?.file ?? "").trim();
+        if ((gender !== "male" && gender !== "female") || !file) {
+          continue;
+        }
+        pools[gender].push(normalizeFleetCommanderPortraitPath(file));
+      }
+      fleetCommanderPortraitPools = pools;
+      refreshFleetCommanderPortraitAssignments();
+      return pools;
+    })
+    .catch((error) => {
+      console.warn(error);
+      return fleetCommanderPortraitPools;
+    });
+
+  return fleetCommanderPortraitManifestPromise;
+}
+
+function normalizeFleetCommanderGender(value) {
+  return value === "female" || value === "male" ? value : "unknown";
+}
+
+function normalizeFleetCommanderPortraitPath(value) {
+  const path = String(value ?? "").trim();
+  if (!path) {
+    return "";
+  }
+  if (/^(?:https?:|data:|blob:)/i.test(path) || path.startsWith("/")) {
+    return path;
+  }
+  if (path.startsWith("pics/")) {
+    return `/${path}`;
+  }
+  return `${FLEET_COMMANDER_PORTRAIT_BASE_PATH}${path.replace(/^\.?\//, "")}`;
+}
+
+function getFleetCommanderPortraitFallback(gender) {
+  return FLEET_COMMANDER_PORTRAIT_FALLBACKS[gender]
+    ?? FLEET_COMMANDER_PORTRAIT_FALLBACKS.unknown;
+}
+
+function isFleetCommanderPortraitFallback(value) {
+  const normalized = normalizeFleetCommanderPortraitPath(value);
+  return Object.values(FLEET_COMMANDER_PORTRAIT_FALLBACKS).includes(normalized);
+}
+
+function createFleetCommanderPortrait(gender, name = "", { random = false } = {}) {
+  const normalizedGender = normalizeFleetCommanderGender(gender);
+  const portraitGender = normalizedGender === "unknown"
+    ? (hashFleetCommanderPortraitSeed(name) % 2 === 0 ? "female" : "male")
+    : normalizedGender;
+  const pool = fleetCommanderPortraitPools[portraitGender] ?? [];
+  if (pool.length > 0) {
+    const index = random
+      ? getRuntimeRandomInt(0, pool.length - 1)
+      : hashFleetCommanderPortraitSeed(`${portraitGender}:${name}`) % pool.length;
+    return pool[index] ?? getFleetCommanderPortraitFallback(portraitGender);
+  }
+  return getFleetCommanderPortraitFallback(portraitGender);
+}
+
+function normalizeFleetCommanderPortrait(value, gender, name = "") {
+  const portrait = normalizeFleetCommanderPortraitPath(value);
+  if (portrait && !isFleetCommanderPortraitFallback(portrait)) {
+    return portrait;
+  }
+  return createFleetCommanderPortrait(gender, name);
+}
+
+function ensureFleetCommanderPortrait(commander) {
+  const normalized = normalizeFleetCommander(commander);
+  if (commander && typeof commander === "object") {
+    commander.gender = normalized.gender;
+    commander.name = normalized.name;
+    commander.portrait = normalized.portrait;
+    return commander;
+  }
+  return normalized;
+}
+
+function refreshFleetCommanderPortraitAssignments() {
+  if (Array.isArray(currentGameState?.fleets)) {
+    for (const fleet of currentGameState.fleets) {
+      if (!fleet?.commander || typeof fleet.commander !== "object") {
+        continue;
+      }
+      const commander = fleet.commander;
+      if (!commander.portrait || isFleetCommanderPortraitFallback(commander.portrait)) {
+        commander.portrait = createFleetCommanderPortrait(commander.gender, commander.name);
+      }
+    }
+  }
+  renderFleetActionPanel();
+}
+
+function hashFleetCommanderPortraitSeed(value) {
+  const source = String(value ?? "");
+  let hash = 2166136261;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function createFleetCommanderPortraitCssUrl(value) {
+  return `url(${JSON.stringify(String(value ?? ""))})`;
+}
+
 function createFleetCommander() {
   const gender = createRuntimeRandomValue() < 0.5 ? "female" : "male";
   const givenNames = gender === "female"
@@ -5156,10 +5298,12 @@ function createFleetCommander() {
   } else {
     name = givenName();
   }
+  const normalizedName = normalizeFleetCommanderName(name);
 
   return {
     gender,
-    name: normalizeFleetCommanderName(name),
+    name: normalizedName,
+    portrait: createFleetCommanderPortrait(gender, normalizedName, { random: true }),
   };
 }
 
@@ -5168,17 +5312,20 @@ function normalizeFleetCommander(commander) {
   const source = isObjectSource ? commander : {};
   const fallbackName = isObjectSource ? "" : commander;
   const name = normalizeFleetCommanderName(source.name ?? source.fullName ?? fallbackName);
-  const gender = source.gender === "female" || source.gender === "male"
-    ? source.gender
-    : null;
+  const gender = normalizeFleetCommanderGender(source.gender);
 
   if (!name) {
     return createFleetCommander();
   }
 
   return {
-    gender: gender ?? "unknown",
+    gender,
     name,
+    portrait: normalizeFleetCommanderPortrait(
+      source.portrait ?? source.portraitUrl ?? source.image ?? source.file,
+      gender,
+      name,
+    ),
   };
 }
 
@@ -5197,6 +5344,7 @@ function getFleetCommanderSource(fleet) {
   return {
     name: fleet?.commanderName ?? fleet?.commanderFullName,
     gender: fleet?.commanderGender,
+    portrait: fleet?.commanderPortrait ?? fleet?.commanderPortraitUrl ?? fleet?.commanderImage,
   };
 }
 
@@ -6139,6 +6287,7 @@ function renderFleetActionPanel() {
 function createFleetActionInfoPanel(fleet, movement) {
   const panel = document.createElement("div");
   panel.className = "fleet-action-panel__info";
+  const fleetCommander = ensureFleetCommanderPortrait(fleet.commander ?? getFleetCommanderSource(fleet));
 
   const title = document.createElement("div");
   title.className = "fleet-action-panel__fleet-title";
@@ -6151,13 +6300,20 @@ function createFleetActionInfoPanel(fleet, movement) {
   commanderText.className = "fleet-action-panel__commander-text";
   const commanderName = document.createElement("div");
   commanderName.className = "fleet-action-panel__commander-name";
-  commanderName.textContent = fleet.commander?.name ?? "UNASSIGNED";
+  commanderName.textContent = fleetCommander.name ?? "UNASSIGNED";
   const commanderRole = document.createElement("div");
   commanderRole.className = "fleet-action-panel__commander-role";
   commanderRole.textContent = "FLEET COMMANDER";
   commanderText.append(commanderName, commanderRole);
   const portrait = document.createElement("div");
   portrait.className = "fleet-action-panel__portrait";
+  if (fleetCommander.portrait) {
+    portrait.classList.add("has-portrait");
+    portrait.style.setProperty(
+      "--fleet-commander-portrait",
+      createFleetCommanderPortraitCssUrl(fleetCommander.portrait),
+    );
+  }
   commander.append(portrait, commanderText);
 
   const limits = document.createElement("div");

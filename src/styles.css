@@ -201,9 +201,21 @@ body.editor-mode .fleet-action-panel {
   width: 41px;
   height: 41px;
   border-radius: 2px;
+  overflow: hidden;
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
     rgba(0, 0, 0, 0.18);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+}
+
+.fleet-action-panel__portrait.has-portrait {
+  background-image:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
+    var(--fleet-commander-portrait);
+  background-position: center, center;
+  background-size: 100% 100%, cover;
 }
 
 .fleet-action-panel__limits {
