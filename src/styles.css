@@ -2320,6 +2320,38 @@ body.editor-mode .music-player {
   filter: drop-shadow(0 0 5px rgba(116, 255, 214, 0.72));
 }
 
+.object-detail-powerstation-smoke-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.object-detail-powerstation-smoke {
+  position: absolute;
+  background-image: var(--object-detail-powerstation-smoke-texture);
+  background-repeat: repeat-x;
+  background-size: auto 100%;
+  opacity: 0.86;
+  mix-blend-mode: screen;
+  pointer-events: none;
+  transform-origin: 100% 50%;
+  mask-image: linear-gradient(to left, rgba(0, 0, 0, 0.94), rgba(0, 0, 0, 0.62) 54%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to left, rgba(0, 0, 0, 0.94), rgba(0, 0, 0, 0.62) 54%, transparent 100%);
+  animation: object-detail-powerstation-smoke-scroll 5s linear infinite;
+}
+
+@keyframes object-detail-powerstation-smoke-scroll {
+  from {
+    background-position: 0 0;
+  }
+
+  to {
+    background-position: -144px 0;
+  }
+}
+
 .star-window.system-transitioning {
   cursor: default;
 }

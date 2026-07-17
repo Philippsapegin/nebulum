@@ -470,11 +470,20 @@ let systemDecorTrailSerial = 0;
 let systemDecorTrails = [];
 let systemDecorTrailSchedules = new Map();
 let objectDetailCityTrailLayer = null;
+let objectDetailPowerstationSmokeLayer = null;
 let objectDetailCityTrails = [];
 let objectDetailCityTrailSchedules = new Map();
 let objectDetailCityTrailActivePairs = new Set();
+let objectDetailCityTrailBootstrapped = false;
+let objectDetailCityTrailTargetCache = null;
+let objectDetailCityTrailTargetCacheDirty = true;
 let objectDetailSpaceportTrailSchedules = new Map();
+let objectDetailSpaceportTrailTargetCache = null;
+let objectDetailRadarSonarTargetCache = null;
+let objectDetailPowerstationSmokeTargetCache = null;
 let objectDetailRadarSonars = new Map();
+let objectDetailPowerstationSmokes = new Map();
+let objectDetailPowerstationSmokeTextureUrl = "";
 let shouldStartGameAfterInit = false;
 let isRuntimeSessionRedirecting = false;
 let runtimeLoadingHideTimer = null;
@@ -724,6 +733,7 @@ const OBJECT_DETAIL_RADAR_SWEEP_SECONDS = 4.8;
 const OBJECT_DETAIL_FACILITY_EFFECT_MAX = 96;
 const OBJECT_DETAIL_FACILITY_EFFECT_SURFACE_OFFSET = OBJECT_DETAIL_CITY_NIGHT_SURFACE_OFFSET + 0.0015;
 const OBJECT_DETAIL_CITY_CLUSTER_TRAIL_MAX_ACTIVE = 18;
+const OBJECT_DETAIL_CITY_CLUSTER_TRAIL_MAX_AGENTS = 6;
 const OBJECT_DETAIL_SPACEPORT_TRAIL_MAX_ACTIVE = 8;
 const OBJECT_DETAIL_CITY_SEED_HASH = hashObjectDetailSeedString(SEED);
 let activeSystemStar = null;
@@ -10063,6 +10073,11 @@ function handleObjectDetailBuildMenuOptionClick(hexGrid, hex, option) {
 
   setObjectDetailBuilding(hexGrid, hex.address, createObjectDetailBuilding(hex.address, option.id));
   markObjectDetailCityLayerDirty(hexGrid);
+  invalidateObjectDetailOverlayEffectTargets();
+  if (option.id === "town") {
+    invalidateObjectDetailCityClusterTrailTargets();
+    restartObjectDetailCityClusterTrailTiming(hexGrid);
+  }
   syncObjectDetailBuildingsToGameState(hexGrid.detail);
   refreshOwnershipVisualsAfterGameStateChange();
   persistRuntimeSession("detail");
@@ -10077,8 +10092,14 @@ function removeObjectDetailBuilding(hexGrid, hex) {
     return;
   }
 
+  const removedType = normalizeObjectDetailBuildingType(building.type);
   deleteObjectDetailBuilding(hexGrid, hex.address);
   markObjectDetailCityLayerDirty(hexGrid);
+  invalidateObjectDetailOverlayEffectTargets();
+  if (removedType === "town") {
+    invalidateObjectDetailCityClusterTrailTargets();
+    restartObjectDetailCityClusterTrailTiming(hexGrid);
+  }
   syncObjectDetailBuildingsToGameState(hexGrid.detail);
   refreshOwnershipVisualsAfterGameStateChange();
   persistRuntimeSession("detail");
@@ -10657,31 +10678,10 @@ function createObjectDetailFacilityEffectMaterial(heightMap, hasDisplacement) {
           float halo = 1.0 - smoothstep(radius * 0.035, radius * 0.16, weldLength);
           color += vec3(0.42, 0.78, 1.0) * (halo * 0.38 + core * 1.25) * active * spark;
         } else {
-          float smoke = 0.0;
-          for (int stack = 0; stack < 5; stack += 1) {
-            float stackPhase = detailFacilityHash(indexValue * 43.0 + float(stack) * 19.0 + effect.x * 23.0);
-            vec2 origin = vec2(
-              (stackPhase - 0.5) * radius * 0.56,
-              (detailFacilityHash(indexValue * 17.0 + float(stack) * 29.0 + effect.y * 31.0) - 0.5) * radius * 0.34
-            );
-            for (int puff = 0; puff < 7; puff += 1) {
-              float puffPhase = fract(detailFacilityTime * (0.038 + stackPhase * 0.026) + float(puff) * 0.143 + stackPhase);
-              float drift = puffPhase * radius * 1.62;
-              float wobble = sin(puffPhase * 6.2831853 + stackPhase * 12.5663706) * radius * 0.18;
-              vec2 puffCenter = origin + vec2(-drift, radius * 0.02 + puffPhase * radius * 0.5 + wobble);
-              float puffRadius = radius * (0.08 + puffPhase * 0.14);
-              float puffShape = 1.0 - smoothstep(puffRadius * 0.42, puffRadius, length(local - puffCenter));
-              float puffFade = (1.0 - puffPhase * 0.72) * smoothstep(0.0, 0.15, puffPhase);
-              smoke += puffShape * puffFade * 0.42;
-            }
-          }
-          float heat = 1.0 - smoothstep(radius * 0.035, radius * 0.18, distanceFromCenter);
-          color += vec3(0.8, 0.82, 0.83) * smoke + vec3(1.0, 0.72, 0.34) * heat * 0.14;
+          return vec3(0.0);
         }
 
-        float edgeFade = typeValue < 1.5
-          ? 1.0 - smoothstep(radius * 0.84, radius * 1.08, distanceFromCenter)
-          : 1.0 - smoothstep(radius * 1.2, radius * 1.92, distanceFromCenter);
+        float edgeFade = 1.0 - smoothstep(radius * 0.84, radius * 1.08, distanceFromCenter);
         return color * edgeFade;
       }
 
@@ -11224,7 +11224,7 @@ function drawObjectDetailOwnedHexBoundaries(context, hexGrid, ownerByAddress) {
 
 function getObjectDetailFacilityEffect(hexGrid, hex, building, drawData) {
   const type = normalizeObjectDetailBuildingType(building?.type);
-  if (type !== "radar" && type !== "laboratory" && type !== "powerstation") {
+  if (type !== "radar" && type !== "laboratory") {
     return null;
   }
   const anchor = drawData?.anchor;
@@ -11232,11 +11232,11 @@ function getObjectDetailFacilityEffect(hexGrid, hex, building, drawData) {
     return null;
   }
   const world = getObjectDetailCanvasWorldPoint(hexGrid, anchor.x, anchor.y);
-  const radiusScale = type === "radar" ? 0.68 : type === "powerstation" ? 0.82 : 0.42;
+  const radiusScale = type === "radar" ? 0.68 : 0.42;
   return {
     x: world.x,
     y: world.y,
-    type: type === "radar" ? 0 : type === "laboratory" ? 1 : 2,
+    type: type === "radar" ? 0 : 1,
     radius: getObjectDetailCanvasWorldLength(hexGrid, hex.radius * radiusScale),
   };
 }
@@ -11832,8 +11832,182 @@ function drawObjectDetailTownPixels(context, nightContext, hex, hexGrid, drawDat
     }
   }
 
+  hasNightLights = drawObjectDetailTownHighRiseLayer(context, nightContext, hex, hexGrid, drawData) || hasNightLights;
   context.restore();
   return hasNightLights;
+}
+
+function drawObjectDetailTownHighRiseLayer(context, nightContext, hex, hexGrid, drawData) {
+  const { cityHex, cityStage, maxGrowthDistance, sampleData, unit } = drawData;
+  const stageT = (THREE.MathUtils.clamp(cityStage, OBJECT_DETAIL_CITY_STAGE_MIN, OBJECT_DETAIL_CITY_STAGE_MAX) - 1)
+    / Math.max(1, OBJECT_DETAIL_CITY_STAGE_MAX - 1);
+  const macroCells = Math.max(7, Math.round(10 - stageT * 3));
+  const minCellX = Math.floor((hex.px - hex.radius) / unit / macroCells) * macroCells;
+  const maxCellX = Math.ceil((hex.px + hex.radius) / unit / macroCells) * macroCells;
+  const minCellY = Math.floor((hex.py - hex.halfHeight) / unit / macroCells) * macroCells;
+  const maxCellY = Math.ceil((hex.py + hex.halfHeight) / unit / macroCells) * macroCells;
+  const highRises = [];
+  let hasNightLights = false;
+
+  for (let macroY = minCellY; macroY <= maxCellY; macroY += macroCells) {
+    for (let macroX = minCellX; macroX <= maxCellX; macroX += macroCells) {
+      const chance = 0.09 + stageT * 0.24;
+      if (hashObjectDetailCityCell(macroX, macroY, 7211) > chance) {
+        continue;
+      }
+
+      const widthCells = 1 + Math.floor(hashObjectDetailCityCell(macroX, macroY, 7213) * 3);
+      const heightCells = 1 + Math.floor(hashObjectDetailCityCell(macroY, macroX, 7217) * 3);
+      const maxOffsetX = Math.max(1, macroCells - widthCells - 3);
+      const maxOffsetY = Math.max(1, macroCells - heightCells - 3);
+      const startCellX = macroX + 2 + Math.floor(hashObjectDetailCityCell(macroX, macroY, 7223) * maxOffsetX);
+      const startCellY = macroY + 2 + Math.floor(hashObjectDetailCityCell(macroY, macroX, 7229) * maxOffsetY);
+      if (!canDrawObjectDetailTownHighRise(hex, hexGrid, drawData, startCellX, startCellY, widthCells, heightCells)) {
+        continue;
+      }
+
+      const tone = Math.floor(150 + hashObjectDetailCityCell(macroX, macroY, 7237) * 62);
+      highRises.push({
+        startCellX,
+        startCellY,
+        widthCells,
+        heightCells,
+        macroX,
+        macroY,
+        tone,
+      });
+    }
+  }
+
+  for (const highRise of highRises) {
+    drawObjectDetailTownHighRiseShadow(context, hex, hexGrid, drawData, highRise);
+  }
+
+  for (const highRise of highRises) {
+    context.fillStyle = `rgb(${highRise.tone}, ${highRise.tone}, ${highRise.tone})`;
+    for (let row = 0; row < highRise.heightCells; row += 1) {
+      for (let column = 0; column < highRise.widthCells; column += 1) {
+        const x = (highRise.startCellX + column) * unit;
+        const y = (highRise.startCellY + row) * unit;
+        context.fillRect(
+          Math.round(x),
+          Math.round(y),
+          Math.max(1, Math.round(unit)),
+          Math.max(1, Math.round(unit)),
+        );
+      }
+    }
+
+    if (nightContext && hashObjectDetailCityCell(highRise.macroX, highRise.macroY, 7241) < 0.28) {
+      const lightColumn = Math.floor(hashObjectDetailCityCell(highRise.macroX, highRise.macroY, 7243) * highRise.widthCells);
+      const lightRow = Math.floor(hashObjectDetailCityCell(highRise.macroY, highRise.macroX, 7247) * highRise.heightCells);
+      const lightX = (highRise.startCellX + lightColumn) * unit + unit * 0.5;
+      const lightY = (highRise.startCellY + lightRow) * unit + unit * 0.5;
+      drawObjectDetailNightPixel(nightContext, lightX, lightY, unit, 255, 38, 30, 0.76, 0.55);
+      hasNightLights = true;
+    }
+  }
+
+  return hasNightLights;
+}
+
+function drawObjectDetailTownHighRiseShadow(context, hex, hexGrid, drawData, highRise) {
+  const { sampleData, unit } = drawData;
+  const centerX = (highRise.startCellX + highRise.widthCells / 2) * unit;
+  const centerY = (highRise.startCellY + highRise.heightCells / 2) * unit;
+  const direction = getObjectDetailTownHighRiseShadowDirection(hexGrid, centerX, centerY);
+  const heightBias = 1 + highRise.widthCells * 0.18 + highRise.heightCells * 0.34;
+  const steps = Math.round(5 + heightBias * 5 + hashObjectDetailCityCell(highRise.macroX, highRise.macroY, 7251) * 5);
+  const stepLength = Math.max(1, unit * 0.86);
+  context.save();
+  context.globalCompositeOperation = "source-over";
+
+  for (let step = steps; step >= 1; step -= 1) {
+    const t = step / steps;
+    const alpha = (0.025 + 0.09 * t) * (0.72 + hashObjectDetailCityCell(highRise.macroX + step, highRise.macroY, 7257) * 0.34);
+    context.fillStyle = `rgba(0, 0, 0, ${alpha.toFixed(3)})`;
+    const offsetX = direction.x * step * stepLength;
+    const offsetY = direction.y * step * stepLength;
+    for (let row = 0; row < highRise.heightCells; row += 1) {
+      for (let column = 0; column < highRise.widthCells; column += 1) {
+        if (hashObjectDetailCityCell(highRise.startCellX + column + step, highRise.startCellY + row, 7261) < 0.08 * (1 - t)) {
+          continue;
+        }
+        const x = (highRise.startCellX + column) * unit + offsetX;
+        const y = (highRise.startCellY + row) * unit + offsetY;
+        const pointX = x + unit * 0.5;
+        const pointY = y + unit * 0.5;
+        if (!isPointInObjectDetailHex(pointX, pointY, hex)) {
+          continue;
+        }
+        if (sampleData && isObjectDetailWaterSample(sampleData, hexGrid, pointX, pointY)) {
+          continue;
+        }
+        context.fillRect(
+          Math.round(x),
+          Math.round(y),
+          Math.max(1, Math.round(unit)),
+          Math.max(1, Math.round(unit)),
+        );
+      }
+    }
+  }
+
+  context.restore();
+}
+
+function getObjectDetailTownHighRiseShadowDirection(hexGrid, canvasX, canvasY) {
+  const point = getObjectDetailCanvasWorldPoint(hexGrid, canvasX, canvasY);
+  let lightX = -OBJECT_DETAIL_SURFACE_WORLD_WIDTH * 0.42;
+  let lightY = 0;
+  const activeLight = objectDetail3D?.spotLights
+    ?.map((item) => item.target.position)
+    .sort((a, b) => Math.hypot(point.x - a.x, point.y - a.y) - Math.hypot(point.x - b.x, point.y - b.y))[0];
+  if (activeLight) {
+    lightX = activeLight.x;
+    lightY = activeLight.y;
+  }
+
+  const worldDx = point.x - lightX;
+  const worldDy = point.y - lightY;
+  const canvasDx = (worldDx / OBJECT_DETAIL_SURFACE_WORLD_WIDTH) * hexGrid.canvas.width;
+  const canvasDy = -worldDy * hexGrid.canvas.height;
+  const length = Math.hypot(canvasDx, canvasDy);
+  if (length < 0.001) {
+    return { x: 0.86, y: 0.52 };
+  }
+
+  return {
+    x: canvasDx / length,
+    y: canvasDy / length,
+  };
+}
+
+function canDrawObjectDetailTownHighRise(hex, hexGrid, drawData, startCellX, startCellY, widthCells, heightCells) {
+  const { cityHex, cityStage, maxGrowthDistance, sampleData, unit } = drawData;
+  for (let row = 0; row < heightCells; row += 1) {
+    for (let column = 0; column < widthCells; column += 1) {
+      const x = (startCellX + column) * unit;
+      const y = (startCellY + row) * unit;
+      const centerX = x + unit * 0.5;
+      const centerY = y + unit * 0.5;
+      if (!isPointInObjectDetailHex(centerX, centerY, hex)) {
+        return false;
+      }
+      if (sampleData && isObjectDetailWaterSample(sampleData, hexGrid, centerX, centerY)) {
+        return false;
+      }
+      if (getObjectDetailCityMask(cityHex, hex, centerX, centerY, maxGrowthDistance, cityStage) <= 0) {
+        return false;
+      }
+      const cellX = Math.floor(centerX / unit);
+      const cellY = Math.floor(centerY / unit);
+      if (getObjectDetailSurfaceCityRoadMask(cellX, cellY) > OBJECT_DETAIL_CITY_ROAD_CUT_THRESHOLD) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 function drawObjectDetailFarmingFoundation(context, hex, hexGrid, drawData) {
@@ -12051,16 +12225,6 @@ function getObjectDetailPowerstationPadSlots(hex) {
   slots.sort((a, b) => a.order - b.order);
   const count = 4 + Math.floor(hashObjectDetailCityCell(hex.column, hex.row, 8237) * 5);
   return slots.slice(0, count);
-}
-
-function drawObjectDetailPowerstationSmoke(context, lightX, lightY, unit, plumeIndex) {
-  for (let puff = 0; puff < 9; puff += 1) {
-    const x = lightX - unit * (1.2 + puff * (0.75 + hashObjectDetailCityCell(plumeIndex, puff, 8221) * 0.55));
-    const y = lightY - unit * (0.4 + puff * 0.18) + (hashObjectDetailCityCell(plumeIndex, puff, 8223) - 0.5) * unit * 2.6;
-    const size = Math.max(1, Math.round(unit * (0.7 + hashObjectDetailCityCell(plumeIndex, puff, 8227) * 0.9)));
-    context.fillStyle = `rgba(118, 118, 118, ${(0.16 - puff * 0.012).toFixed(3)})`;
-    context.fillRect(Math.round(x), Math.round(y), size, size);
-  }
 }
 
 function drawObjectDetailMiningPixels(context, nightContext, hex, hexGrid, drawData) {
@@ -15141,11 +15305,20 @@ function updateSystemDecorTrails(now) {
 function resetObjectDetailCityClusterTrails() {
   objectDetailCityTrailLayer?.remove();
   objectDetailCityTrailLayer = null;
+  objectDetailPowerstationSmokeLayer?.remove();
+  objectDetailPowerstationSmokeLayer = null;
   objectDetailCityTrails = [];
   objectDetailCityTrailSchedules.clear();
   objectDetailCityTrailActivePairs.clear();
+  objectDetailCityTrailBootstrapped = false;
+  objectDetailCityTrailTargetCache = null;
+  objectDetailCityTrailTargetCacheDirty = true;
   objectDetailSpaceportTrailSchedules.clear();
+  objectDetailSpaceportTrailTargetCache = null;
+  objectDetailRadarSonarTargetCache = null;
+  objectDetailPowerstationSmokeTargetCache = null;
   objectDetailRadarSonars.clear();
+  objectDetailPowerstationSmokes.clear();
 }
 
 function ensureObjectDetailCityTrailLayer() {
@@ -15172,13 +15345,92 @@ function ensureObjectDetailCityTrailLayer() {
   return layer;
 }
 
-function getObjectDetailCityClusterTrailTargets(hexGrid) {
+function ensureObjectDetailPowerstationSmokeLayer() {
+  if (!isObjectDetailOpen || !objectDetailTexture) {
+    return null;
+  }
+
+  if (objectDetailPowerstationSmokeLayer?.isConnected && objectDetailPowerstationSmokeLayer.parentElement === objectDetailTexture) {
+    return objectDetailPowerstationSmokeLayer;
+  }
+
+  const layer = document.createElement("div");
+  layer.className = "object-detail-powerstation-smoke-layer";
+  layer.style.setProperty("--object-detail-powerstation-smoke-texture", `url("${getObjectDetailPowerstationSmokeTextureUrl()}")`);
+  objectDetailPowerstationSmokeLayer = layer;
+  objectDetailTexture.append(layer);
+  return layer;
+}
+
+function getObjectDetailPowerstationSmokeTextureUrl() {
+  if (objectDetailPowerstationSmokeTextureUrl) {
+    return objectDetailPowerstationSmokeTextureUrl;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 144;
+  canvas.height = 42;
+  const context = canvas.getContext("2d");
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  const random = createRandom("powerstation-smoke-texture");
+  for (let index = 0; index < 46; index += 1) {
+    const x = random() * canvas.width;
+    const y = canvas.height * (0.32 + random() * 0.38);
+    const radiusX = 8 + random() * 20;
+    const radiusY = 5 + random() * 12;
+    const gradient = context.createRadialGradient(x, y, 0, x, y, Math.max(radiusX, radiusY));
+    const alpha = 0.035 + random() * 0.09;
+    gradient.addColorStop(0, `rgba(190, 196, 198, ${alpha.toFixed(3)})`);
+    gradient.addColorStop(0.55, `rgba(172, 178, 180, ${(alpha * 0.45).toFixed(3)})`);
+    gradient.addColorStop(1, "rgba(172, 178, 180, 0)");
+    context.fillStyle = gradient;
+    context.save();
+    context.translate(x, y);
+    context.scale(radiusX / Math.max(radiusX, radiusY), radiusY / Math.max(radiusX, radiusY));
+    context.beginPath();
+    context.arc(0, 0, Math.max(radiusX, radiusY), 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+  }
+
+  const fade = context.createLinearGradient(0, 0, canvas.width, 0);
+  fade.addColorStop(0, "rgba(255, 255, 255, 0)");
+  fade.addColorStop(0.16, "rgba(255, 255, 255, 0.82)");
+  fade.addColorStop(0.72, "rgba(255, 255, 255, 0.68)");
+  fade.addColorStop(1, "rgba(255, 255, 255, 0)");
+  context.globalCompositeOperation = "destination-in";
+  context.fillStyle = fade;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  objectDetailPowerstationSmokeTextureUrl = canvas.toDataURL("image/png");
+  return objectDetailPowerstationSmokeTextureUrl;
+}
+
+function invalidateObjectDetailOverlayEffectTargets() {
+  objectDetailSpaceportTrailTargetCache = null;
+  objectDetailRadarSonarTargetCache = null;
+  objectDetailPowerstationSmokeTargetCache = null;
+}
+
+function invalidateObjectDetailCityClusterTrailTargets() {
+  objectDetailCityTrailTargetCache = null;
+  objectDetailCityTrailTargetCacheDirty = true;
+  objectDetailCityTrailBootstrapped = false;
+}
+
+function getObjectDetailCityClusterTrailTargets(hexGrid, { force = false } = {}) {
   const rect = objectDetailTexture.getBoundingClientRect();
   if (!hexGrid?.state?.buildings || rect.width <= 0 || rect.height <= 0) {
     return [];
   }
 
-  return getObjectDetailTownClusters(hexGrid).map((cluster) => {
+  const bounds = updateObjectDetailHoverBounds(rect);
+  const overlayWidth = bounds?.width ?? rect.width;
+  const surfaceKey = getObjectDetailOverlaySurfaceKey(rect, bounds);
+  if (!force && !objectDetailCityTrailTargetCacheDirty && objectDetailCityTrailTargetCache?.surfaceKey === surfaceKey) {
+    return objectDetailCityTrailTargetCache.targets;
+  }
+
+  const targets = getObjectDetailTownClusters(hexGrid).map((cluster) => {
     let totalX = 0;
     let totalY = 0;
     let radius = 0;
@@ -15193,9 +15445,28 @@ function getObjectDetailCityClusterTrailTargets(hexGrid) {
       ...getObjectDetailCanvasOverlayPoint(hexGrid, totalX / count, totalY / count, rect),
       key: `city:${cluster.addresses.join("+")}`,
       addresses: cluster.addresses,
-      radius: radius / hexGrid.canvas.width * rect.width * Math.sqrt(count),
+      radius: radius / hexGrid.canvas.width * overlayWidth * Math.sqrt(count),
     };
   });
+  objectDetailCityTrailTargetCache = {
+    surfaceKey,
+    targets,
+    targetByKey: new Map(targets.map((target) => [target.key, target])),
+    targetKeys: new Set(targets.map((target) => target.key)),
+  };
+  objectDetailCityTrailTargetCacheDirty = false;
+  return targets;
+}
+
+function getObjectDetailOverlaySurfaceKey(rect, bounds) {
+  return bounds
+    ? [
+      bounds.left,
+      bounds.top,
+      bounds.width,
+      bounds.height,
+    ].map((value) => Math.round(value)).join(":")
+    : `${Math.round(rect.width)}:${Math.round(rect.height)}`;
 }
 
 function getObjectDetailTownClusters(hexGrid) {
@@ -15259,6 +15530,13 @@ function getObjectDetailSpaceportTrailTargets(hexGrid) {
     return [];
   }
 
+  const bounds = updateObjectDetailHoverBounds(rect);
+  const overlayWidth = bounds?.width ?? rect.width;
+  const surfaceKey = getObjectDetailOverlaySurfaceKey(rect, bounds);
+  if (objectDetailSpaceportTrailTargetCache?.surfaceKey === surfaceKey) {
+    return objectDetailSpaceportTrailTargetCache.targets;
+  }
+
   const targets = [];
   for (const [address, building] of hexGrid.state.buildings) {
     if (normalizeObjectDetailBuildingType(building?.type) !== "spaceport") {
@@ -15272,9 +15550,13 @@ function getObjectDetailSpaceportTrailTargets(hexGrid) {
       ...getObjectDetailCanvasOverlayPoint(hexGrid, hex.px, hex.py, rect),
       key: `spaceport:${address}`,
       address,
-      radius: hex.radius / hexGrid.canvas.width * rect.width,
+      radius: hex.radius / hexGrid.canvas.width * overlayWidth,
     });
   }
+  objectDetailSpaceportTrailTargetCache = {
+    surfaceKey,
+    targets,
+  };
   return targets;
 }
 
@@ -15282,6 +15564,13 @@ function getObjectDetailRadarSonarTargets(hexGrid) {
   const rect = objectDetailTexture.getBoundingClientRect();
   if (!hexGrid?.state?.buildings || rect.width <= 0 || rect.height <= 0) {
     return [];
+  }
+
+  const bounds = updateObjectDetailHoverBounds(rect);
+  const overlayWidth = bounds?.width ?? rect.width;
+  const surfaceKey = getObjectDetailOverlaySurfaceKey(rect, bounds);
+  if (objectDetailRadarSonarTargetCache?.surfaceKey === surfaceKey) {
+    return objectDetailRadarSonarTargetCache.targets;
   }
 
   const targets = [];
@@ -15297,16 +15586,85 @@ function getObjectDetailRadarSonarTargets(hexGrid) {
       ...getObjectDetailCanvasOverlayPoint(hexGrid, hex.px, hex.py, rect),
       key: `radar:${address}`,
       address,
-      radius: hex.radius / hexGrid.canvas.width * rect.width,
+      radius: hex.radius / hexGrid.canvas.width * overlayWidth,
     });
   }
+  objectDetailRadarSonarTargetCache = {
+    surfaceKey,
+    targets,
+  };
+  return targets;
+}
+
+function getObjectDetailPowerstationSmokeTargets(hexGrid) {
+  const rect = objectDetailTexture.getBoundingClientRect();
+  if (!hexGrid?.state?.buildings || rect.width <= 0 || rect.height <= 0) {
+    return [];
+  }
+
+  const bounds = updateObjectDetailHoverBounds(rect);
+  const overlayWidth = bounds?.width ?? rect.width;
+  const surfaceKey = getObjectDetailOverlaySurfaceKey(rect, bounds);
+  if (objectDetailPowerstationSmokeTargetCache?.surfaceKey === surfaceKey) {
+    return objectDetailPowerstationSmokeTargetCache.targets;
+  }
+
+  const targets = [];
+  for (const [address, building] of hexGrid.state.buildings) {
+    if (normalizeObjectDetailBuildingType(building?.type) !== "powerstation") {
+      continue;
+    }
+    const hex = getObjectDetailHexByAddress(hexGrid, address);
+    if (!hex) {
+      continue;
+    }
+    const drawData = getObjectDetailBuildingDrawData(hex, hexGrid, building);
+    const anchor = drawData?.anchor ?? { x: hex.px, y: hex.py };
+    const unit = drawData?.unit ?? getObjectDetailBuildingUnit(hex);
+    const spacing = Math.max(unit * 4, hex.radius * 0.11);
+    const radius = hex.radius / hexGrid.canvas.width * overlayWidth;
+    const sampleData = drawData?.sampleData ?? getObjectDetailWaterSampleData(hexGrid);
+    let smokeCount = 0;
+    for (const slot of getObjectDetailPowerstationPadSlots(hex)) {
+      if (smokeCount >= 3) {
+        break;
+      }
+      const x = anchor.x + slot.column * spacing;
+      const y = anchor.y + slot.row * spacing;
+      if (!isPointInObjectDetailHex(x, y, hex) || !isObjectDetailDrySurfacePoint(hexGrid, sampleData, x, y)) {
+        continue;
+      }
+      targets.push({
+        ...getObjectDetailCanvasOverlayPoint(hexGrid, x, y, rect),
+        key: `powerstation:${address}:${slot.row}:${slot.column}`,
+        address,
+        radius,
+        width: THREE.MathUtils.clamp(radius * (1.18 + hashObjectDetailCityCell(hex.column + slot.column, hex.row + slot.row, 8261) * 0.46), 34, 96),
+        height: THREE.MathUtils.clamp(radius * (0.24 + hashObjectDetailCityCell(hex.row + slot.row, hex.column + slot.column, 8263) * 0.1), 10, 24),
+        angle: -8 + hashObjectDetailCityCell(hex.column + slot.column, hex.row + slot.row, 8267) * 14,
+        speed: 3.8 + hashObjectDetailCityCell(hex.row + slot.row, hex.column + slot.column, 8271) * 3.2,
+        phase: -hashObjectDetailCityCell(hex.column + slot.column, hex.row + slot.row, 8273) * 6,
+      });
+      smokeCount += 1;
+    }
+  }
+  objectDetailPowerstationSmokeTargetCache = {
+    surfaceKey,
+    targets,
+  };
   return targets;
 }
 
 function getObjectDetailCanvasOverlayPoint(hexGrid, canvasX, canvasY, rect = objectDetailTexture.getBoundingClientRect()) {
+  const bounds = updateObjectDetailHoverBounds(rect) ?? {
+    left: 0,
+    top: 0,
+    width: rect.width,
+    height: rect.height,
+  };
   return {
-    x: canvasX / hexGrid.canvas.width * rect.width,
-    y: canvasY / hexGrid.canvas.height * rect.height,
+    x: bounds.left + canvasX / hexGrid.canvas.width * bounds.width,
+    y: bounds.top + canvasY / hexGrid.canvas.height * bounds.height,
   };
 }
 
@@ -15319,14 +15677,13 @@ function getObjectDetailCityTrailPairKey(from, to) {
 }
 
 function getObjectDetailCityTrailCandidates(from, targets) {
-  const maxDistance = Math.max(42, from.radius * 3.35);
-  const minDistance = Math.max(18, from.radius * 0.62);
+  const minDistance = Math.max(18, from.radius * 0.45);
   return targets.filter((to) => {
     if (to.key === from.key) {
       return false;
     }
     const distance = Math.hypot(to.x - from.x, to.y - from.y);
-    if (distance < minDistance || distance > maxDistance) {
+    if (distance < minDistance) {
       return false;
     }
     return !objectDetailCityTrailActivePairs.has(getObjectDetailCityTrailPairKey(from, to));
@@ -15334,7 +15691,8 @@ function getObjectDetailCityTrailCandidates(from, targets) {
 }
 
 function spawnObjectDetailCityClusterTrail(from, targets) {
-  if (!from || objectDetailCityTrails.length >= OBJECT_DETAIL_CITY_CLUSTER_TRAIL_MAX_ACTIVE) {
+  const activeCityTrails = objectDetailCityTrails.filter((trail) => trail.pairKey).length;
+  if (!from || activeCityTrails >= OBJECT_DETAIL_CITY_CLUSTER_TRAIL_MAX_ACTIVE) {
     return;
   }
 
@@ -15481,20 +15839,53 @@ function spawnObjectDetailSpaceportTrail(target) {
   layer.append(trail.element);
 }
 
-function syncObjectDetailCityTrailSchedules(targets, now) {
-  const visibleKeys = new Set(targets.map((target) => target.key));
+function getObjectDetailCityTrailAgentLimit(targets) {
+  return Math.min(targets.length, OBJECT_DETAIL_CITY_CLUSTER_TRAIL_MAX_AGENTS);
+}
+
+function syncObjectDetailCityTrailSchedules(targets, now, createDelay = createObjectDetailCityTrailSpawnDelayMs) {
+  const visibleKeys = objectDetailCityTrailTargetCache?.targetKeys ?? new Set(targets.map((target) => target.key));
   for (const key of Array.from(objectDetailCityTrailSchedules.keys())) {
     if (!visibleKeys.has(key)) {
       objectDetailCityTrailSchedules.delete(key);
     }
   }
 
-  for (const target of targets) {
-    if (objectDetailCityTrailSchedules.has(target.key)) {
-      continue;
+  const agentLimit = getObjectDetailCityTrailAgentLimit(targets);
+  while (objectDetailCityTrailSchedules.size > agentLimit) {
+    const key = Array.from(objectDetailCityTrailSchedules.keys()).at(-1);
+    if (!key) {
+      break;
     }
-    objectDetailCityTrailSchedules.set(target.key, now + createObjectDetailCityTrailSpawnDelayMs());
+    objectDetailCityTrailSchedules.delete(key);
   }
+
+  if (objectDetailCityTrailSchedules.size < agentLimit) {
+    const unscheduledTargets = targets.filter((target) => !objectDetailCityTrailSchedules.has(target.key));
+    while (objectDetailCityTrailSchedules.size < agentLimit && unscheduledTargets.length > 0) {
+      const index = Math.floor(getSystemDecorTrailRandom() * unscheduledTargets.length);
+      const [target] = unscheduledTargets.splice(index, 1);
+      objectDetailCityTrailSchedules.set(target.key, now + createDelay());
+    }
+  }
+}
+
+function restartObjectDetailCityClusterTrailTiming(hexGrid, now = performance.now()) {
+  if (!isObjectDetailOpen || !hexGrid) {
+    return;
+  }
+
+  objectDetailCityTrailSchedules.clear();
+  objectDetailCityTrailBootstrapped = false;
+  const targets = getObjectDetailCityClusterTrailTargets(hexGrid, { force: true });
+  if (targets.length < 2) {
+    return;
+  }
+
+  syncObjectDetailCityTrailSchedules(targets, now, () => 180 + getSystemDecorTrailRandom() * 620);
+  const from = targets[Math.floor(getSystemDecorTrailRandom() * targets.length)];
+  spawnObjectDetailCityClusterTrail(from, targets);
+  objectDetailCityTrailBootstrapped = true;
 }
 
 function syncObjectDetailSpaceportTrailSchedules(targets, now) {
@@ -15609,6 +16000,71 @@ function syncObjectDetailRadarSonars(targets, now) {
   }
 }
 
+function createObjectDetailPowerstationSmokeElement(target, now) {
+  const element = document.createElement("div");
+  element.className = "object-detail-powerstation-smoke";
+  const smoke = {
+    element,
+    startedAt: now,
+  };
+  updateObjectDetailPowerstationSmokeElement(smoke, target, now);
+  return smoke;
+}
+
+function updateObjectDetailPowerstationSmokeElement(smoke, target, now) {
+  const layoutKey = [
+    Math.round(target.x),
+    Math.round(target.y),
+    Math.round(target.width),
+    Math.round(target.height),
+    Math.round(target.angle * 10),
+  ].join(":");
+  if (smoke.element.dataset.layoutKey === layoutKey) {
+    return;
+  }
+  smoke.element.dataset.layoutKey = layoutKey;
+  smoke.element.style.left = `${target.x.toFixed(1)}px`;
+  smoke.element.style.top = `${target.y.toFixed(1)}px`;
+  smoke.element.style.width = `${target.width.toFixed(1)}px`;
+  smoke.element.style.height = `${target.height.toFixed(1)}px`;
+  smoke.element.style.transform = `translate(-96%, -50%) rotate(${target.angle.toFixed(2)}deg)`;
+  smoke.element.style.animationDuration = `${target.speed.toFixed(2)}s`;
+  smoke.element.style.animationDelay = `${target.phase.toFixed(2)}s`;
+}
+
+function syncObjectDetailPowerstationSmokes(targets, now) {
+  if (targets.length === 0 && objectDetailPowerstationSmokes.size === 0) {
+    objectDetailPowerstationSmokeLayer?.remove();
+    objectDetailPowerstationSmokeLayer = null;
+    return;
+  }
+
+  const layer = ensureObjectDetailPowerstationSmokeLayer();
+  if (!layer) {
+    return;
+  }
+
+  const visibleKeys = new Set(targets.map((target) => target.key));
+  for (const [key, smoke] of Array.from(objectDetailPowerstationSmokes.entries())) {
+    if (visibleKeys.has(key)) {
+      continue;
+    }
+    smoke.element.remove();
+    objectDetailPowerstationSmokes.delete(key);
+  }
+
+  for (const target of targets) {
+    let smoke = objectDetailPowerstationSmokes.get(target.key);
+    if (!smoke) {
+      smoke = createObjectDetailPowerstationSmokeElement(target, now);
+      objectDetailPowerstationSmokes.set(target.key, smoke);
+      layer.append(smoke.element);
+      continue;
+    }
+    updateObjectDetailPowerstationSmokeElement(smoke, target, now);
+  }
+}
+
 function updateObjectDetailCityClusterTrails(now) {
   if (!isObjectDetailOpen || !objectDetail3D?.hexGrid) {
     if (
@@ -15616,7 +16072,8 @@ function updateObjectDetailCityClusterTrails(now) {
       objectDetailCityTrails.length ||
       objectDetailCityTrailSchedules.size ||
       objectDetailSpaceportTrailSchedules.size ||
-      objectDetailRadarSonars.size
+      objectDetailRadarSonars.size ||
+      objectDetailPowerstationSmokes.size
     ) {
       resetObjectDetailCityClusterTrails();
     }
@@ -15638,17 +16095,28 @@ function updateObjectDetailCityClusterTrails(now) {
 
   const targets = getObjectDetailCityClusterTrailTargets(objectDetail3D.hexGrid);
   if (targets.length >= 2) {
+    if (!objectDetailCityTrailBootstrapped) {
+      objectDetailCityTrailBootstrapped = true;
+      const from = targets[Math.floor(getSystemDecorTrailRandom() * targets.length)];
+      spawnObjectDetailCityClusterTrail(from, targets);
+    }
     syncObjectDetailCityTrailSchedules(targets, now);
-    for (const target of targets) {
-      const nextSpawnAt = objectDetailCityTrailSchedules.get(target.key);
+    const targetByKey = objectDetailCityTrailTargetCache?.targetByKey;
+    for (const [targetKey, nextSpawnAt] of objectDetailCityTrailSchedules) {
+      const target = targetByKey?.get(targetKey) ?? targets.find((candidate) => candidate.key === targetKey);
+      if (!target) {
+        objectDetailCityTrailSchedules.delete(targetKey);
+        continue;
+      }
       if (!Number.isFinite(nextSpawnAt) || now < nextSpawnAt) {
         continue;
       }
       spawnObjectDetailCityClusterTrail(target, targets);
-      objectDetailCityTrailSchedules.set(target.key, now + createObjectDetailCityTrailSpawnDelayMs());
+      objectDetailCityTrailSchedules.set(targetKey, now + createObjectDetailCityTrailSpawnDelayMs());
     }
   } else {
     objectDetailCityTrailSchedules.clear();
+    objectDetailCityTrailBootstrapped = false;
   }
 
   const spaceportTargets = getObjectDetailSpaceportTrailTargets(objectDetail3D.hexGrid);
@@ -15663,6 +16131,7 @@ function updateObjectDetailCityClusterTrails(now) {
   }
 
   syncObjectDetailRadarSonars(getObjectDetailRadarSonarTargets(objectDetail3D.hexGrid), now);
+  syncObjectDetailPowerstationSmokes(getObjectDetailPowerstationSmokeTargets(objectDetail3D.hexGrid), now);
 }
 
 function getSystemFleetMarkerTargetPosition(fleet, anchor, node, anchorSlotStates) {
