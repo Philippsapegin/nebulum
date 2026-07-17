@@ -1,0 +1,992 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nebulum P2P Text PoC</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4f2ee;
+        --panel: #ffffff;
+        --panel-strong: #f8f7f4;
+        --ink: #171614;
+        --muted: #68635b;
+        --line: #d8d2c7;
+        --accent: #27645f;
+        --accent-ink: #ffffff;
+        --warn: #a76023;
+        --danger: #9d332d;
+        --ok: #2f6f45;
+        --shadow: 0 14px 34px rgba(21, 18, 12, 0.12);
+        font-family:
+          "Albert Sans",
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        background:
+          linear-gradient(120deg, rgba(39, 100, 95, 0.08), transparent 34%),
+          linear-gradient(300deg, rgba(167, 96, 35, 0.1), transparent 38%),
+          var(--bg);
+        color: var(--ink);
+      }
+
+      button,
+      textarea,
+      input {
+        font: inherit;
+      }
+
+      button {
+        min-height: 38px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--panel-strong);
+        color: var(--ink);
+        cursor: pointer;
+        transition:
+          border-color 120ms ease,
+          background-color 120ms ease,
+          color 120ms ease,
+          transform 120ms ease;
+      }
+
+      button:hover:not(:disabled) {
+        border-color: var(--accent);
+        transform: translateY(-1px);
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.48;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 140px;
+        resize: vertical;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 10px 12px;
+        background: #fffdfa;
+        color: var(--ink);
+        line-height: 1.42;
+      }
+
+      textarea:focus,
+      button:focus-visible {
+        outline: 2px solid rgba(39, 100, 95, 0.24);
+        outline-offset: 2px;
+      }
+
+      .app {
+        width: min(1180px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 28px 0 36px;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 18px;
+      }
+
+      .title-block {
+        display: grid;
+        gap: 4px;
+      }
+
+      .eyebrow {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(28px, 4vw, 44px);
+        line-height: 0.96;
+        letter-spacing: 0;
+      }
+
+      .status {
+        min-width: 190px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px 12px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+      }
+
+      .status-label {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .status-value {
+        margin-top: 4px;
+        font-size: 15px;
+        font-weight: 800;
+      }
+
+      .status-value[data-state="connected"] {
+        color: var(--ok);
+      }
+
+      .status-value[data-state="connecting"] {
+        color: var(--warn);
+      }
+
+      .status-value[data-state="failed"] {
+        color: var(--danger);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(320px, 0.72fr);
+        gap: 16px;
+        align-items: start;
+      }
+
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.92);
+        box-shadow: var(--shadow);
+        overflow: hidden;
+      }
+
+      .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 54px;
+        padding: 14px 16px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel-strong);
+      }
+
+      .panel-title {
+        font-size: 16px;
+        font-weight: 900;
+      }
+
+      .panel-body {
+        display: grid;
+        gap: 14px;
+        padding: 16px;
+      }
+
+      .segmented {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .segmented button[aria-pressed="true"] {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: var(--accent-ink);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .actions button {
+        flex: 1 1 130px;
+      }
+
+      .primary {
+        border-color: var(--accent);
+        background: var(--accent);
+        color: var(--accent-ink);
+      }
+
+      .danger {
+        border-color: rgba(157, 51, 45, 0.4);
+        color: var(--danger);
+      }
+
+      .field {
+        display: grid;
+        gap: 7px;
+      }
+
+      .field-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      label,
+      .field-title {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .meta {
+        color: var(--muted);
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .compact {
+        min-height: 34px;
+        padding: 0 12px;
+        font-size: 13px;
+      }
+
+      .signal-textarea {
+        min-height: 170px;
+        font-family:
+          "Cascadia Mono",
+          "SFMono-Regular",
+          Consolas,
+          monospace;
+        font-size: 12px;
+      }
+
+      .message-input {
+        min-height: 210px;
+      }
+
+      .file-input {
+        display: none;
+      }
+
+      .message-list {
+        display: grid;
+        gap: 10px;
+        max-height: 520px;
+        overflow: auto;
+        padding-right: 2px;
+      }
+
+      .message {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fffdfa;
+        overflow: hidden;
+      }
+
+      .message-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel-strong);
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+        text-transform: uppercase;
+      }
+
+      .message pre {
+        max-height: 260px;
+        margin: 0;
+        padding: 10px;
+        overflow: auto;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font-family:
+          "Cascadia Mono",
+          "SFMono-Regular",
+          Consolas,
+          monospace;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .log {
+        min-height: 84px;
+        max-height: 160px;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px 10px;
+        background: #fffdfa;
+        color: var(--muted);
+        font-family:
+          "Cascadia Mono",
+          "SFMono-Regular",
+          Consolas,
+          monospace;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      @media (max-width: 920px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        .topbar {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .status {
+          min-width: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app">
+      <div class="topbar">
+        <div class="title-block">
+          <div class="eyebrow">Manual WebRTC DataChannel</div>
+          <h1>P2P Text PoC</h1>
+        </div>
+        <section class="status" aria-live="polite">
+          <div class="status-label">Connection</div>
+          <div id="status-value" class="status-value" data-state="idle">Idle</div>
+        </section>
+      </div>
+
+      <div class="grid">
+        <section class="panel" aria-labelledby="connection-title">
+          <div class="panel-header">
+            <div id="connection-title" class="panel-title">Connection</div>
+            <button id="reset-button" class="compact danger" type="button">Reset</button>
+          </div>
+          <div class="panel-body">
+            <div class="segmented" role="group" aria-label="Role">
+              <button id="host-role" type="button" aria-pressed="true">Host</button>
+              <button id="guest-role" type="button" aria-pressed="false">Guest</button>
+            </div>
+
+            <div class="actions">
+              <button id="create-offer-button" class="primary" type="button">Create Offer</button>
+              <button id="create-answer-button" class="primary" type="button" hidden>Create Answer</button>
+              <button id="accept-answer-button" type="button">Accept Answer</button>
+            </div>
+
+            <div class="field">
+              <div class="field-row">
+                <label for="local-signal">Local Signal</label>
+                <div class="actions">
+                  <button id="copy-local-button" class="compact" type="button">Copy</button>
+                </div>
+              </div>
+              <textarea id="local-signal" class="signal-textarea" readonly spellcheck="false"></textarea>
+            </div>
+
+            <div class="field">
+              <div class="field-row">
+                <label for="remote-signal">Remote Signal</label>
+                <div class="actions">
+                  <button id="paste-remote-button" class="compact" type="button">Paste</button>
+                  <button id="clear-remote-button" class="compact" type="button">Clear</button>
+                </div>
+              </div>
+              <textarea id="remote-signal" class="signal-textarea" spellcheck="false"></textarea>
+            </div>
+
+            <div id="event-log" class="log" aria-live="polite"></div>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="messages-title">
+          <div class="panel-header">
+            <div id="messages-title" class="panel-title">Messages</div>
+            <div id="transfer-meta" class="meta">0 sent / 0 received</div>
+          </div>
+          <div class="panel-body">
+            <div class="field">
+              <div class="field-row">
+                <div class="field-title">File</div>
+                <div id="file-meta" class="meta">No file loaded</div>
+              </div>
+              <input id="file-input" class="file-input" type="file" />
+              <div class="actions">
+                <button id="load-file-button" type="button">Load File</button>
+              </div>
+            </div>
+
+            <div class="field">
+              <div class="field-row">
+                <label for="message-input">Text</label>
+                <div id="message-size" class="meta">0 B</div>
+              </div>
+              <textarea id="message-input" class="message-input" spellcheck="false"></textarea>
+            </div>
+
+            <div class="actions">
+              <button id="send-button" class="primary" type="button" disabled>Send Text</button>
+              <button id="clear-messages-button" type="button">Clear Messages</button>
+            </div>
+
+            <div id="message-list" class="message-list" aria-live="polite"></div>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <script type="module">
+      const SIGNAL_PREFIX = "NEBULUM-P2P-SIGNAL-v1.";
+      const CHUNK_SIZE = 16 * 1024;
+      const MAX_BUFFERED_AMOUNT = 1024 * 1024;
+      const RTC_CONFIG = {
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" },
+        ],
+      };
+
+      const elements = {
+        statusValue: document.querySelector("#status-value"),
+        hostRole: document.querySelector("#host-role"),
+        guestRole: document.querySelector("#guest-role"),
+        createOffer: document.querySelector("#create-offer-button"),
+        createAnswer: document.querySelector("#create-answer-button"),
+        acceptAnswer: document.querySelector("#accept-answer-button"),
+        reset: document.querySelector("#reset-button"),
+        localSignal: document.querySelector("#local-signal"),
+        remoteSignal: document.querySelector("#remote-signal"),
+        copyLocal: document.querySelector("#copy-local-button"),
+        pasteRemote: document.querySelector("#paste-remote-button"),
+        clearRemote: document.querySelector("#clear-remote-button"),
+        eventLog: document.querySelector("#event-log"),
+        fileInput: document.querySelector("#file-input"),
+        loadFile: document.querySelector("#load-file-button"),
+        fileMeta: document.querySelector("#file-meta"),
+        messageInput: document.querySelector("#message-input"),
+        messageSize: document.querySelector("#message-size"),
+        send: document.querySelector("#send-button"),
+        clearMessages: document.querySelector("#clear-messages-button"),
+        messageList: document.querySelector("#message-list"),
+        transferMeta: document.querySelector("#transfer-meta"),
+      };
+
+      const state = {
+        role: "host",
+        peer: null,
+        channel: null,
+        incoming: new Map(),
+        sent: 0,
+        received: 0,
+      };
+
+      wireEvents();
+      refreshUi();
+      logEvent("Ready");
+
+      function wireEvents() {
+        elements.hostRole.addEventListener("click", () => setRole("host"));
+        elements.guestRole.addEventListener("click", () => setRole("guest"));
+        elements.createOffer.addEventListener("click", createOffer);
+        elements.createAnswer.addEventListener("click", createAnswer);
+        elements.acceptAnswer.addEventListener("click", acceptAnswer);
+        elements.reset.addEventListener("click", resetConnection);
+        elements.copyLocal.addEventListener("click", copyLocalSignal);
+        elements.pasteRemote.addEventListener("click", pasteRemoteSignal);
+        elements.clearRemote.addEventListener("click", () => {
+          elements.remoteSignal.value = "";
+          logEvent("Remote signal cleared");
+        });
+        elements.loadFile.addEventListener("click", () => elements.fileInput.click());
+        elements.fileInput.addEventListener("change", loadSelectedFile);
+        elements.messageInput.addEventListener("input", refreshMessageSize);
+        elements.send.addEventListener("click", sendText);
+        elements.clearMessages.addEventListener("click", () => {
+          elements.messageList.replaceChildren();
+          state.sent = 0;
+          state.received = 0;
+          refreshTransferMeta();
+        });
+      }
+
+      async function loadSelectedFile() {
+        const file = elements.fileInput.files?.[0];
+        if (!file) {
+          return;
+        }
+
+        try {
+          const text = await file.text();
+          elements.messageInput.value = text;
+          elements.fileMeta.textContent = `${file.name} / ${formatBytes(file.size)}`;
+          refreshMessageSize();
+          logEvent(`Loaded ${file.name} (${formatBytes(file.size)})`);
+        } catch (error) {
+          fail(error);
+        } finally {
+          elements.fileInput.value = "";
+        }
+      }
+
+      function setRole(role) {
+        state.role = role;
+        resetConnection({ keepRole: true, quiet: true });
+        logEvent(`Role set to ${role}`);
+        refreshUi();
+      }
+
+      async function createOffer() {
+        try {
+          resetConnection({ keepRole: true, quiet: true });
+          createPeer();
+          attachChannel(state.peer.createDataChannel("nebulum-text", { ordered: true }));
+          updateStatus("connecting", "Creating offer");
+
+          const offer = await state.peer.createOffer();
+          await state.peer.setLocalDescription(offer);
+          await waitForIceGathering(state.peer);
+          elements.localSignal.value = encodeSignal(state.peer.localDescription);
+          logEvent("Offer created");
+          refreshUi();
+        } catch (error) {
+          fail(error);
+        }
+      }
+
+      async function createAnswer() {
+        try {
+          const remote = decodeSignal(elements.remoteSignal.value);
+          if (remote.type !== "offer") {
+            throw new Error("Remote signal is not an offer");
+          }
+
+          resetConnection({ keepRole: true, quiet: true });
+          createPeer();
+          updateStatus("connecting", "Creating answer");
+
+          await state.peer.setRemoteDescription(remote);
+          const answer = await state.peer.createAnswer();
+          await state.peer.setLocalDescription(answer);
+          await waitForIceGathering(state.peer);
+          elements.localSignal.value = encodeSignal(state.peer.localDescription);
+          logEvent("Answer created");
+          refreshUi();
+        } catch (error) {
+          fail(error);
+        }
+      }
+
+      async function acceptAnswer() {
+        try {
+          if (!state.peer) {
+            throw new Error("Create an offer first");
+          }
+
+          const remote = decodeSignal(elements.remoteSignal.value);
+          if (remote.type !== "answer") {
+            throw new Error("Remote signal is not an answer");
+          }
+
+          await state.peer.setRemoteDescription(remote);
+          logEvent("Answer accepted");
+          updateStatus("connecting", "Connecting");
+          refreshUi();
+        } catch (error) {
+          fail(error);
+        }
+      }
+
+      function createPeer() {
+        state.peer = new RTCPeerConnection(RTC_CONFIG);
+
+        state.peer.addEventListener("iceconnectionstatechange", () => {
+          const iceState = state.peer?.iceConnectionState ?? "closed";
+          logEvent(`ICE ${iceState}`);
+          if (iceState === "connected" || iceState === "completed") {
+            updateStatus("connecting", "Data channel pending");
+          } else if (iceState === "failed" || iceState === "disconnected") {
+            updateStatus("failed", iceState);
+          }
+        });
+
+        state.peer.addEventListener("connectionstatechange", () => {
+          const peerState = state.peer?.connectionState ?? "closed";
+          logEvent(`Peer ${peerState}`);
+          if (peerState === "failed" || peerState === "disconnected" || peerState === "closed") {
+            updateStatus(peerState === "failed" ? "failed" : "idle", peerState);
+          }
+        });
+
+        state.peer.addEventListener("datachannel", (event) => {
+          attachChannel(event.channel);
+        });
+      }
+
+      function attachChannel(channel) {
+        state.channel = channel;
+        state.channel.binaryType = "arraybuffer";
+        state.channel.bufferedAmountLowThreshold = MAX_BUFFERED_AMOUNT / 2;
+
+        state.channel.addEventListener("open", () => {
+          updateStatus("connected", "Connected");
+          logEvent("Data channel open");
+          refreshUi();
+        });
+
+        state.channel.addEventListener("close", () => {
+          updateStatus("idle", "Closed");
+          logEvent("Data channel closed");
+          refreshUi();
+        });
+
+        state.channel.addEventListener("error", () => {
+          updateStatus("failed", "Channel error");
+          logEvent("Data channel error");
+          refreshUi();
+        });
+
+        state.channel.addEventListener("message", (event) => {
+          handleChannelMessage(String(event.data ?? ""));
+        });
+
+        refreshUi();
+      }
+
+      async function sendText() {
+        const channel = state.channel;
+        if (!channel || channel.readyState !== "open") {
+          return;
+        }
+
+        const text = elements.messageInput.value;
+        const byteLength = getUtf8ByteLength(text);
+        const startedAt = performance.now();
+        const transferId = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const totalChunks = Math.max(1, Math.ceil(text.length / CHUNK_SIZE));
+        const hash = await sha256(text);
+
+        channel.send(JSON.stringify({
+          kind: "text-start",
+          id: transferId,
+          totalChunks,
+          length: text.length,
+          byteLength,
+          hash,
+          createdAt: new Date().toISOString(),
+        }));
+
+        for (let index = 0; index < totalChunks; index += 1) {
+          await waitForChannelBuffer(channel);
+          channel.send(JSON.stringify({
+            kind: "text-chunk",
+            id: transferId,
+            index,
+            chunk: text.slice(index * CHUNK_SIZE, (index + 1) * CHUNK_SIZE),
+          }));
+        }
+
+        await waitForChannelBuffer(channel);
+        channel.send(JSON.stringify({ kind: "text-end", id: transferId }));
+        const durationMs = Math.max(1, performance.now() - startedAt);
+        state.sent += 1;
+        addMessage("sent", text, hash);
+        refreshTransferMeta();
+        logEvent(`Queued ${formatBytes(byteLength)} in ${formatDuration(durationMs)} (${formatRate(byteLength, durationMs)})`);
+      }
+
+      async function waitForChannelBuffer(channel) {
+        if (channel.bufferedAmount < MAX_BUFFERED_AMOUNT) {
+          return;
+        }
+        await new Promise((resolve) => {
+          channel.addEventListener("bufferedamountlow", resolve, { once: true });
+        });
+      }
+
+      function handleChannelMessage(raw) {
+        let message;
+        try {
+          message = JSON.parse(raw);
+        } catch {
+          logEvent("Received invalid frame");
+          return;
+        }
+
+        if (message.kind === "text-start") {
+          state.incoming.set(message.id, {
+            totalChunks: Number(message.totalChunks),
+            length: Number(message.length),
+            byteLength: Number(message.byteLength),
+            hash: String(message.hash ?? ""),
+            startedAt: performance.now(),
+            chunks: new Map(),
+          });
+          logEvent(`Receiving ${message.totalChunks} chunk(s)`);
+          return;
+        }
+
+        if (message.kind === "text-chunk") {
+          const transfer = state.incoming.get(message.id);
+          if (!transfer) {
+            logEvent("Received orphan chunk");
+            return;
+          }
+          transfer.chunks.set(Number(message.index), String(message.chunk ?? ""));
+          return;
+        }
+
+        if (message.kind === "text-end") {
+          finishIncomingTransfer(message.id);
+        }
+      }
+
+      async function finishIncomingTransfer(id) {
+        const transfer = state.incoming.get(id);
+        if (!transfer) {
+          logEvent("Received orphan end frame");
+          return;
+        }
+
+        const chunks = [];
+        for (let index = 0; index < transfer.totalChunks; index += 1) {
+          if (!transfer.chunks.has(index)) {
+            logEvent(`Missing chunk ${index + 1}/${transfer.totalChunks}`);
+            return;
+          }
+          chunks.push(transfer.chunks.get(index));
+        }
+
+        state.incoming.delete(id);
+        const text = chunks.join("");
+        const byteLength = getUtf8ByteLength(text);
+        const hash = await sha256(text);
+        const hashOk = hash === transfer.hash;
+        const durationMs = Math.max(1, performance.now() - transfer.startedAt);
+        state.received += 1;
+        addMessage("received", text, hash, hashOk, formatRate(byteLength, durationMs));
+        refreshTransferMeta();
+        logEvent(`Received ${formatBytes(byteLength)} in ${formatDuration(durationMs)} (${formatRate(byteLength, durationMs)}); hash ${hashOk ? "ok" : "mismatch"}`);
+      }
+
+      function addMessage(direction, text, hash, hashOk = true, rate = null) {
+        const item = document.createElement("article");
+        item.className = "message";
+
+        const header = document.createElement("div");
+        header.className = "message-header";
+
+        const title = document.createElement("span");
+        title.textContent = rate
+          ? `${direction} ${formatBytes(getUtf8ByteLength(text))} / ${rate}`
+          : `${direction} ${formatBytes(getUtf8ByteLength(text))}`;
+
+        const checksum = document.createElement("span");
+        checksum.textContent = hashOk ? hash.slice(0, 12) : "hash mismatch";
+        checksum.style.color = hashOk ? "var(--muted)" : "var(--danger)";
+
+        const body = document.createElement("pre");
+        body.textContent = text;
+
+        header.append(title, checksum);
+        item.append(header, body);
+        elements.messageList.prepend(item);
+      }
+
+      function encodeSignal(description) {
+        const payload = {
+          type: "nebulum-webrtc-signal",
+          version: 1,
+          description: {
+            type: description.type,
+            sdp: description.sdp,
+          },
+        };
+        return `${SIGNAL_PREFIX}${base64UrlEncode(JSON.stringify(payload))}`;
+      }
+
+      function decodeSignal(value) {
+        const text = String(value ?? "").trim();
+        if (!text) {
+          throw new Error("Remote signal is empty");
+        }
+
+        const payload = text.startsWith(SIGNAL_PREFIX)
+          ? JSON.parse(base64UrlDecode(text.slice(SIGNAL_PREFIX.length)))
+          : JSON.parse(text);
+
+        if (payload?.type === "nebulum-webrtc-signal" && payload?.description) {
+          return new RTCSessionDescription(payload.description);
+        }
+
+        if (payload?.type && payload?.sdp) {
+          return new RTCSessionDescription(payload);
+        }
+
+        throw new Error("Unsupported signal format");
+      }
+
+      async function waitForIceGathering(peer) {
+        if (peer.iceGatheringState === "complete") {
+          return;
+        }
+        await new Promise((resolve) => {
+          const onStateChange = () => {
+            if (peer.iceGatheringState === "complete") {
+              peer.removeEventListener("icegatheringstatechange", onStateChange);
+              resolve();
+            }
+          };
+          peer.addEventListener("icegatheringstatechange", onStateChange);
+          window.setTimeout(resolve, 5000);
+        });
+      }
+
+      function resetConnection(options = {}) {
+        const { keepRole = false, quiet = false } = options;
+        state.channel?.close();
+        state.peer?.close();
+        state.peer = null;
+        state.channel = null;
+        state.incoming.clear();
+        elements.localSignal.value = "";
+        elements.remoteSignal.value = "";
+        if (!keepRole) {
+          state.role = "host";
+        }
+        updateStatus("idle", "Idle");
+        if (!quiet) {
+          logEvent("Connection reset");
+        }
+        refreshUi();
+      }
+
+      async function copyLocalSignal() {
+        const signal = elements.localSignal.value;
+        if (!signal) {
+          return;
+        }
+        await navigator.clipboard.writeText(signal);
+        logEvent("Local signal copied");
+      }
+
+      async function pasteRemoteSignal() {
+        const text = await navigator.clipboard.readText();
+        elements.remoteSignal.value = text;
+        logEvent("Remote signal pasted");
+      }
+
+      function refreshUi() {
+        const isHost = state.role === "host";
+        const connected = state.channel?.readyState === "open";
+        elements.hostRole.setAttribute("aria-pressed", String(isHost));
+        elements.guestRole.setAttribute("aria-pressed", String(!isHost));
+        elements.createOffer.hidden = !isHost;
+        elements.acceptAnswer.hidden = !isHost;
+        elements.createAnswer.hidden = isHost;
+        elements.acceptAnswer.disabled = !state.peer || connected;
+        elements.send.disabled = !connected;
+        refreshMessageSize();
+        refreshTransferMeta();
+      }
+
+      function refreshMessageSize() {
+        elements.messageSize.textContent = formatBytes(getUtf8ByteLength(elements.messageInput.value));
+      }
+
+      function refreshTransferMeta() {
+        elements.transferMeta.textContent = `${state.sent} sent / ${state.received} received`;
+      }
+
+      function updateStatus(stateName, text) {
+        elements.statusValue.dataset.state = stateName;
+        elements.statusValue.textContent = text;
+      }
+
+      function fail(error) {
+        updateStatus("failed", "Failed");
+        logEvent(error?.message ?? String(error));
+        refreshUi();
+      }
+
+      function logEvent(message) {
+        const now = new Date();
+        const line = `[${now.toLocaleTimeString()}] ${message}`;
+        elements.eventLog.textContent = elements.eventLog.textContent
+          ? `${line}\n${elements.eventLog.textContent}`
+          : line;
+      }
+
+      async function sha256(text) {
+        const bytes = new TextEncoder().encode(text);
+        const digest = await crypto.subtle.digest("SHA-256", bytes);
+        return Array.from(new Uint8Array(digest))
+          .map((byte) => byte.toString(16).padStart(2, "0"))
+          .join("");
+      }
+
+      function getUtf8ByteLength(text) {
+        return new TextEncoder().encode(String(text ?? "")).byteLength;
+      }
+
+      function formatBytes(bytes) {
+        if (bytes < 1024) {
+          return `${bytes} B`;
+        }
+        if (bytes < 1024 * 1024) {
+          return `${(bytes / 1024).toFixed(1)} KB`;
+        }
+        return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+      }
+
+      function formatDuration(milliseconds) {
+        if (milliseconds < 1000) {
+          return `${milliseconds.toFixed(0)} ms`;
+        }
+        return `${(milliseconds / 1000).toFixed(2)} s`;
+      }
+
+      function formatRate(bytes, milliseconds) {
+        const seconds = Math.max(0.001, milliseconds / 1000);
+        const megabits = (bytes * 8) / 1_000_000;
+        return `${(megabits / seconds).toFixed(2)} Mbps`;
+      }
+
+      function base64UrlEncode(text) {
+        const bytes = new TextEncoder().encode(text);
+        let binary = "";
+        bytes.forEach((byte) => {
+          binary += String.fromCharCode(byte);
+        });
+        return btoa(binary)
+          .replaceAll("+", "-")
+          .replaceAll("/", "_")
+          .replaceAll("=", "");
+      }
+
+      function base64UrlDecode(value) {
+        const padded = String(value)
+          .replaceAll("-", "+")
+          .replaceAll("_", "/")
+          .padEnd(Math.ceil(value.length / 4) * 4, "=");
+        const binary = atob(padded);
+        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+        return new TextDecoder().decode(bytes);
+      }
+    </script>
+  </body>
+</html>
