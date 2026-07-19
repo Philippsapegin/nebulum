@@ -247,6 +247,18 @@
                 <div class="new-game__details-column">
                   <p id="menu-scenario-text" class="new-game__scenario-text"></p>
                   <div class="new-game__factions-panel">
+                    <div id="menu-online-connect" class="new-game__online-connect" hidden>
+                      <button id="menu-online-connect-button" class="new-game__connect-button" type="button">CONNECT</button>
+                      <label class="new-game__signal-field">
+                        <span class="new-game__signal-icon new-game__signal-icon--up" aria-hidden="true"></span>
+                        <textarea id="menu-online-invite-code" class="new-game__signal-input" spellcheck="false" aria-label="Invite code"></textarea>
+                      </label>
+                      <label class="new-game__signal-field">
+                        <span class="new-game__signal-icon new-game__signal-icon--down" aria-hidden="true"></span>
+                        <textarea id="menu-online-answer-code" class="new-game__signal-input" spellcheck="false" aria-label="Answer code"></textarea>
+                      </label>
+                      <div id="menu-online-status-dots" class="new-game__status-dots" aria-label="Online connection status"></div>
+                    </div>
                     <span class="menu-dialog__label">Sides setup</span>
                     <div id="menu-faction-grid" class="new-game__faction-grid" aria-label="Factions"></div>
                   </div>
@@ -487,7 +499,9 @@
             <span class="game-ui-panel__text">ECONOMY</span>
           </button>
           <button id="game-diplomacy-button" class="game-ui-panel__button" type="button">
-            <span class="game-ui-panel__icon-slot" aria-hidden="true"></span>
+            <span class="game-ui-panel__icon-slot" aria-hidden="true">
+              <img src="/MainUI/DIPLOMACY.svg" alt="" />
+            </span>
             <span class="game-ui-panel__text">DIPLOMACY</span>
           </button>
         </div>

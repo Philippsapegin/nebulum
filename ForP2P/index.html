@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>P2P mesh-чат — ручной сигналинг</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1c1f26;
+    --panel-2: #232732;
+    --line: #2e3340;
+    --line-strong: #3d4456;
+    --text: #e6e8ee;
+    --muted: #9aa1b2;
+    --accent: #5dcaa5;
+    --accent-strong: #1d9e75;
+    --warn: #ef9f27;
+    --bad: #e24b4a;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--sans); line-height: 1.55;
+    font-size: 15px;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 24px 18px 64px; }
+  h1 { font-size: 22px; font-weight: 600; margin: 0 0 4px; }
+  h2 { font-size: 16px; font-weight: 600; margin: 0 0 12px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  label { font-size: 13px; color: var(--muted); display: block; margin: 0 0 4px; }
+  input[type=text], textarea {
+    width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line-strong); border-radius: 8px;
+    padding: 8px 10px; font-family: var(--sans); font-size: 14px;
+  }
+  textarea { font-family: var(--mono); font-size: 12px; resize: vertical; min-height: 64px; }
+  textarea[readonly] { color: var(--muted); }
+  input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
+  button {
+    background: var(--accent-strong); color: #04140e; border: 0;
+    border-radius: 8px; padding: 8px 14px; font-size: 14px; font-weight: 600;
+    cursor: pointer; font-family: var(--sans);
+  }
+  button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line-strong); font-weight: 500; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin: 0 0 18px; }
+  .field { margin: 0 0 12px; }
+  details { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 0 18px; margin: 0 0 18px; }
+  summary { cursor: pointer; padding: 14px 0; font-weight: 600; }
+  details ol { margin: 0 0 14px; padding-left: 20px; color: var(--muted); }
+  details li { margin: 0 0 6px; }
+  .card { background: var(--panel-2); border: 1px solid var(--line-strong); border-radius: 10px; padding: 14px; margin: 0 0 12px; }
+  .card-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 0 0 10px; }
+  .card-title { font-weight: 600; font-size: 14px; }
+  .pill { font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line-strong); color: var(--muted); white-space: nowrap; }
+  .pill.ok { color: var(--accent); border-color: var(--accent-strong); }
+  .pill.wait { color: var(--warn); border-color: var(--warn); }
+  .pill.bad { color: var(--bad); border-color: var(--bad); }
+  .hint { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
+  .codebox { position: relative; }
+  .copy { position: absolute; top: 6px; right: 6px; padding: 4px 9px; font-size: 12px; }
+  .chat-log { background: var(--panel-2); border: 1px solid var(--line-strong); border-radius: 8px; padding: 10px; height: 240px; overflow-y: auto; font-size: 14px; }
+  .msg { margin: 0 0 6px; }
+  .msg .who { color: var(--accent); font-weight: 600; }
+  .msg.sys .who { color: var(--muted); }
+  .empty { color: var(--muted); font-style: italic; }
+  .chat-input { display: flex; gap: 10px; margin-top: 10px; }
+  .chat-input input { flex: 1; }
+  .file-input { display: flex; gap: 10px; margin-top: 10px; align-items: center; }
+  .file-input input[type=file] { flex: 1; font-size: 13px; color: var(--muted); }
+  .msg .file-link { color: var(--accent); text-decoration: none; font-weight: 500; }
+  .msg .file-link:hover { text-decoration: underline; }
+  .progress { background: var(--panel-2); border: 1px solid var(--line-strong); border-radius: 6px; height: 6px; margin: 4px 0 0; overflow: hidden; }
+  .progress > div { background: var(--accent-strong); height: 100%; width: 0%; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 620px) { .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>P2P mesh-чат</h1>
+  <p class="sub">Полностью децентрализованный чат на WebRTC: соединение устанавливается вручную, обмен кодами — без сервера. Сообщения идут напрямую между браузерами.</p>
+
+  <div class="panel">
+    <div class="field" style="max-width: 280px;">
+      <label for="myname">Ваше имя в чате</label>
+      <input type="text" id="myname" placeholder="например, Pavel" value="">
+    </div>
+  </div>
+
+  <details>
+    <summary>Как соединить троих (A, B, C)</summary>
+    <ol>
+      <li>Каждая пара соединяется отдельно — всего три рукопожатия: A↔B, A↔C, B↔C.</li>
+      <li>Для A↔B: A жмёт «Создать приглашение», копирует код и отправляет его B (любым каналом — мессенджер, почта).</li>
+      <li>B жмёт «Принять приглашение», вставляет код, жмёт «Сгенерировать ответ», копирует код-ответ и шлёт его обратно A.</li>
+      <li>A вставляет код-ответ в ту же карточку и жмёт «Применить ответ». Появляется статус «соединено».</li>
+      <li>Повторите шаги 2–4 для пар A↔C и B↔C. После трёх рукопожатий все соединены.</li>
+      <li>Кто кого приглашает — неважно, лишь бы каждая пара соединилась один раз. Сообщение из поля внизу уходит сразу всем подключённым.</li>
+    </ol>
+  </details>
+
+  <div class="panel">
+    <h2>Соединения</h2>
+    <div class="row" style="margin-bottom: 14px;">
+      <button id="btn-invite">Создать приглашение</button>
+      <button id="btn-accept" class="ghost">Принять приглашение</button>
+    </div>
+    <div id="connections"></div>
+    <p id="no-conn" class="hint">Пока нет соединений. Начните с одной из кнопок выше.</p>
+  </div>
+
+  <div class="panel">
+    <h2>Чат</h2>
+    <div id="log" class="chat-log"><div class="empty">Сообщения появятся здесь, когда откроется хотя бы одно соединение.</div></div>
+    <div class="chat-input">
+      <input type="text" id="msg" placeholder="Сообщение для всех подключённых…" disabled>
+      <button id="send" disabled>Отправить</button>
+    </div>
+    <div class="file-input">
+      <input type="file" id="file-input" disabled>
+      <button id="send-file" class="ghost" disabled>Отправить файл</button>
+    </div>
+    <p class="hint">Файл передаётся напрямую по тому же P2P-каналу, кусками — без сервера. Ориентир по размеру: до ~5 МБ (например, JSON ~1 МБ).</p>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// Публичный STUN-сервер Google — нужен, чтобы браузер узнал свой внешний адрес за NAT.
+// Без него соединение поднимется только на localhost / внутри одной локальной сети.
+const RTC_CONFIG = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+
+const peers = [];          // список соединений: { id, label, pc, channel, role, ui }
+let nextId = 0;
+
+const $ = (sel) => document.querySelector(sel);
+const connectionsEl = $("#connections");
+const logEl = $("#log");
+const msgInput = $("#msg");
+const sendBtn = $("#send");
+const nameInput = $("#myname");
+const fileInput = $("#file-input");
+const sendFileBtn = $("#send-file");
+
+// --- Передача файлов: base64 режется на чанки, чтобы не упереться в лимит
+// размера одного сообщения DataChannel, и шлётся с бэкпрешером по bufferedAmount.
+const FILE_CHUNK_SIZE = 16 * 1024;       // символов base64 на чанк
+const FILE_MAX_SIZE = 5 * 1024 * 1024;   // safety cap
+const BUFFERED_AMOUNT_HIGH = 1 * 1024 * 1024;
+
+// --- Кодирование SDP в одну строку (для удобного копипаста) ---
+function encode(desc) { return btoa(JSON.stringify(desc)); }
+function decode(str) { return JSON.parse(atob(str.trim())); }
+
+// --- Ждём окончания сбора ICE-кандидатов ---
+// Это "vanilla ICE": вместо того чтобы пересылать кандидаты по одному,
+// дожидаемся, пока они все соберутся, и тогда localDescription уже содержит их все —
+// получается один цельный код, который можно скопировать целиком.
+function waitForIce(pc) {
+  return new Promise((resolve) => {
+    if (pc.iceGatheringState === "complete") return resolve();
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      pc.removeEventListener("icegatheringstatechange", onChange);
+      resolve();
+    };
+    const onChange = () => { if (pc.iceGatheringState === "complete") finish(); };
+    pc.addEventListener("icegatheringstatechange", onChange);
+    // Подстраховки: событие пустого кандидата тоже означает конец сбора;
+    // плюс жёсткий таймаут, чтобы интерфейс не завис, если кандидат идёт долго.
+    pc.addEventListener("icecandidate", (e) => { if (!e.candidate) finish(); });
+    setTimeout(finish, 3000);
+  });
+}
+
+// --- Создание нового соединения ---
+function newPeer(role) {
+  const id = ++nextId;
+  const pc = new RTCPeerConnection(RTC_CONFIG);
+  const peer = { id, label: "", pc, channel: null, role, ui: null };
+  peers.push(peer);
+
+  pc.onconnectionstatechange = () => updateStatus(peer);
+
+  // Сторона, принимающая приглашение, не создаёт канал сама,
+  // а получает его через это событие. В этом и есть асимметрия установки.
+  pc.ondatachannel = (e) => attachChannel(peer, e.channel);
+
+  return peer;
+}
+
+// --- Привязка событий к каналу данных ---
+function attachChannel(peer, channel) {
+  peer.channel = channel;
+  peer.incomingFiles = {};
+  channel.onopen = () => { updateStatus(peer); refreshChat(); systemLog(`канал с «${peerName(peer)}» открыт`); };
+  channel.onclose = () => { updateStatus(peer); refreshChat(); };
+  channel.onmessage = (e) => {
+    let obj;
+    try { obj = JSON.parse(e.data); } catch (_) { addMessage(peerName(peer), e.data); return; }
+    if (obj.type === "file-meta") {
+      peer.incomingFiles[obj.id] = { name: obj.name, size: obj.size, mime: obj.mime, chunks: new Array(obj.chunks), from: obj.from };
+      systemLog(`«${obj.from || peerName(peer)}» отправляет файл: ${obj.name} (${formatSize(obj.size)})`);
+      return;
+    }
+    if (obj.type === "file-chunk") {
+      const f = peer.incomingFiles[obj.id];
+      if (f) f.chunks[obj.index] = obj.data;
+      return;
+    }
+    if (obj.type === "file-end") {
+      const f = peer.incomingFiles[obj.id];
+      delete peer.incomingFiles[obj.id];
+      if (!f) return;
+      const buf = base64ToArrayBuffer(f.chunks.join(""));
+      const url = URL.createObjectURL(new Blob([buf], { type: f.mime || "application/octet-stream" }));
+      addFileMessage(f.from || peerName(peer), f.name, f.size, url);
+      return;
+    }
+    addMessage(obj.from || peerName(peer), obj.text);
+  };
+}
+
+// --- Роль инициатора: создаём канал и offer ---
+async function createInvite(peer) {
+  // Канал создаём ДО offer, иначе в SDP не попадёт описание канала.
+  const channel = peer.pc.createDataChannel("chat");
+  attachChannel(peer, channel);
+  const offer = await peer.pc.createOffer();
+  await peer.pc.setLocalDescription(offer);
+  await waitForIce(peer.pc);
+  return encode(peer.pc.localDescription);
+}
+
+// --- Роль принимающего: на полученный offer создаём answer ---
+async function makeAnswer(peer, offerCode) {
+  await peer.pc.setRemoteDescription(decode(offerCode));
+  const answer = await peer.pc.createAnswer();
+  await peer.pc.setLocalDescription(answer);
+  await waitForIce(peer.pc);
+  return encode(peer.pc.localDescription);
+}
+
+// --- Инициатор применяет полученный ответ ---
+async function applyAnswer(peer, answerCode) {
+  await peer.pc.setRemoteDescription(decode(answerCode));
+}
+
+// --- Рассылка сообщения всем открытым каналам (mesh-broadcast) ---
+// Никакого релея: каждое сообщение уходит каждому собеседнику отдельной отправкой.
+function broadcast(text) {
+  const from = nameInput.value.trim() || "Аноним";
+  const payload = JSON.stringify({ from, text });
+  let sent = 0;
+  for (const p of peers) {
+    if (p.channel && p.channel.readyState === "open") { p.channel.send(payload); sent++; }
+  }
+  return sent;
+}
+
+// --- base64 <-> ArrayBuffer (без стека вызовов на весь буфер сразу — по кускам) ---
+function arrayBufferToBase64(buffer) {
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  const step = 0x8000;
+  for (let i = 0; i < bytes.length; i += step) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + step));
+  }
+  return btoa(binary);
+}
+function base64ToArrayBuffer(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+function formatSize(bytes) {
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} МБ`;
+}
+
+// Ждём, пока освободится буфер канала, прежде чем слать следующий чанк —
+// иначе на большом файле можно переполнить внутренний send-буфер браузера.
+function sendChunk(channel, payload) {
+  return new Promise((resolve) => {
+    if (channel.bufferedAmount <= BUFFERED_AMOUNT_HIGH) {
+      channel.send(payload);
+      resolve();
+      return;
+    }
+    channel.bufferedAmountLowThreshold = BUFFERED_AMOUNT_HIGH / 2;
+    const onLow = () => {
+      channel.removeEventListener("bufferedamountlow", onLow);
+      channel.send(payload);
+      resolve();
+    };
+    channel.addEventListener("bufferedamountlow", onLow);
+  });
+}
+
+// --- Отправка файла всем открытым соединениям (без релея, каждому отдельно) ---
+async function sendFile(file) {
+  const openPeers = peers.filter((p) => p.channel && p.channel.readyState === "open");
+  if (openPeers.length === 0) return 0;
+
+  const from = nameInput.value.trim() || "Аноним";
+  const buffer = await file.arrayBuffer();
+  const b64 = arrayBufferToBase64(buffer);
+  const totalChunks = Math.ceil(b64.length / FILE_CHUNK_SIZE) || 1;
+  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const meta = JSON.stringify({
+    type: "file-meta", id, from,
+    name: file.name, size: file.size, mime: file.type || "application/octet-stream",
+    chunks: totalChunks,
+  });
+  for (const p of openPeers) p.channel.send(meta);
+
+  for (let i = 0; i < totalChunks; i++) {
+    const chunk = b64.slice(i * FILE_CHUNK_SIZE, (i + 1) * FILE_CHUNK_SIZE);
+    const payload = JSON.stringify({ type: "file-chunk", id, index: i, data: chunk });
+    for (const p of openPeers) await sendChunk(p.channel, payload);
+  }
+
+  const end = JSON.stringify({ type: "file-end", id });
+  for (const p of openPeers) p.channel.send(end);
+
+  return openPeers.length;
+}
+
+// ---------- Интерфейс ----------
+
+function peerName(peer) { return peer.label.trim() || `соединение #${peer.id}`; }
+
+function hasOpenChannel() {
+  return peers.some((p) => p.channel && p.channel.readyState === "open");
+}
+
+function refreshChat() {
+  const ready = hasOpenChannel();
+  msgInput.disabled = !ready;
+  sendBtn.disabled = !ready;
+  fileInput.disabled = !ready;
+  sendFileBtn.disabled = !ready;
+}
+
+function updateStatus(peer) {
+  if (!peer.ui) return;
+  const open = peer.channel && peer.channel.readyState === "open";
+  const cs = peer.pc.connectionState;
+  let cls = "wait", text = "ожидание…";
+  if (open) { cls = "ok"; text = "соединено"; }
+  else if (cs === "failed" || cs === "disconnected" || cs === "closed") { cls = "bad"; text = "разрыв соединения"; }
+  else if (cs === "connecting") { text = "подключение…"; }
+  peer.ui.pill.className = "pill " + cls;
+  peer.ui.pill.textContent = text;
+}
+
+function addMessage(who, text, sys) {
+  const empty = logEl.querySelector(".empty");
+  if (empty) empty.remove();
+  const div = document.createElement("div");
+  div.className = "msg" + (sys ? " sys" : "");
+  const w = document.createElement("span");
+  w.className = "who";
+  w.textContent = who + ": ";
+  div.appendChild(w);
+  div.appendChild(document.createTextNode(text));
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function systemLog(text) { addMessage("система", text, true); }
+
+function addFileMessage(who, name, size, url) {
+  const empty = logEl.querySelector(".empty");
+  if (empty) empty.remove();
+  const div = document.createElement("div");
+  div.className = "msg";
+  const w = document.createElement("span");
+  w.className = "who";
+  w.textContent = who + ": ";
+  div.appendChild(w);
+  const a = document.createElement("a");
+  a.className = "file-link";
+  a.href = url;
+  a.download = name;
+  a.textContent = `📎 ${name} (${formatSize(size)})`;
+  div.appendChild(a);
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+async function copyText(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (_) {
+    // запасной путь для контекстов без Clipboard API
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); } catch (e) {}
+    ta.remove();
+  }
+  const old = btn.textContent;
+  btn.textContent = "скопировано";
+  setTimeout(() => { btn.textContent = old; }, 1200);
+}
+
+function nameField(peer) {
+  const wrap = document.createElement("div");
+  wrap.className = "field";
+  wrap.innerHTML = '<label>Имя собеседника (необязательно)</label>';
+  const inp = document.createElement("input");
+  inp.type = "text";
+  inp.placeholder = "например, Alice";
+  inp.addEventListener("input", () => { peer.label = inp.value; });
+  wrap.appendChild(inp);
+  return wrap;
+}
+
+function codeField(labelText, value, readonly, withCopy) {
+  const field = document.createElement("div");
+  field.className = "field";
+  const lab = document.createElement("label");
+  lab.textContent = labelText;
+  field.appendChild(lab);
+  const box = document.createElement("div");
+  box.className = "codebox";
+  const ta = document.createElement("textarea");
+  if (readonly) ta.readOnly = true;
+  if (value) ta.value = value;
+  box.appendChild(ta);
+  if (withCopy) {
+    const btn = document.createElement("button");
+    btn.className = "ghost copy";
+    btn.textContent = "копировать";
+    btn.addEventListener("click", () => copyText(ta.value, btn));
+    box.appendChild(btn);
+  }
+  field.appendChild(box);
+  return { field, textarea: ta };
+}
+
+function makeCard(peer, titleText) {
+  const card = document.createElement("div");
+  card.className = "card";
+  const head = document.createElement("div");
+  head.className = "card-head";
+  const title = document.createElement("span");
+  title.className = "card-title";
+  title.textContent = titleText;
+  const pill = document.createElement("span");
+  pill.className = "pill wait";
+  pill.textContent = "ожидание…";
+  head.appendChild(title);
+  head.appendChild(pill);
+  card.appendChild(head);
+  card.appendChild(nameField(peer));
+  $("#no-conn").style.display = "none";
+  connectionsEl.appendChild(card);
+  peer.ui = { card, pill };
+  return card;
+}
+
+// Карточка инициатора: показываем offer, ждём ответ
+async function startInvite() {
+  const peer = newPeer("initiator");
+  const card = makeCard(peer, `Соединение #${peer.id} — вы пригласили`);
+
+  const offerCode = await createInvite(peer);
+  const offer = codeField("Ваш код приглашения (отправьте собеседнику)", offerCode, true, true);
+  card.appendChild(offer.field);
+
+  const answer = codeField("Код-ответ от собеседника (вставьте сюда)", "", false, false);
+  card.appendChild(answer.field);
+
+  const btn = document.createElement("button");
+  btn.textContent = "Применить ответ";
+  btn.addEventListener("click", async () => {
+    if (!answer.textarea.value.trim()) return;
+    btn.disabled = true;
+    try {
+      await applyAnswer(peer, answer.textarea.value);
+      answer.textarea.readOnly = true;
+    } catch (err) {
+      btn.disabled = false;
+      systemLog("не удалось применить ответ: проверьте, что код скопирован целиком");
+    }
+  });
+  card.appendChild(btn);
+}
+
+// Карточка принимающего: вставляем offer, отдаём answer
+function startAccept() {
+  const peer = newPeer("joiner");
+  const card = makeCard(peer, `Соединение #${peer.id} — вы принимаете`);
+
+  const offer = codeField("Код приглашения от собеседника (вставьте сюда)", "", false, false);
+  card.appendChild(offer.field);
+
+  const genBtn = document.createElement("button");
+  genBtn.textContent = "Сгенерировать ответ";
+  card.appendChild(genBtn);
+
+  genBtn.addEventListener("click", async () => {
+    if (!offer.textarea.value.trim()) return;
+    genBtn.disabled = true;
+    try {
+      const answerCode = await makeAnswer(peer, offer.textarea.value);
+      offer.textarea.readOnly = true;
+      const answer = codeField("Ваш код-ответ (отправьте обратно)", answerCode, true, true);
+      card.insertBefore(answer.field, genBtn);
+      genBtn.remove();
+    } catch (err) {
+      genBtn.disabled = false;
+      systemLog("не удалось обработать приглашение: проверьте код");
+    }
+  });
+}
+
+$("#btn-invite").addEventListener("click", startInvite);
+$("#btn-accept").addEventListener("click", startAccept);
+
+sendBtn.addEventListener("click", () => {
+  const text = msgInput.value.trim();
+  if (!text) return;
+  const sent = broadcast(text);
+  if (sent > 0) { addMessage(nameInput.value.trim() || "Вы", text); msgInput.value = ""; }
+});
+msgInput.addEventListener("keydown", (e) => { if (e.key === "Enter") sendBtn.click(); });
+
+sendFileBtn.addEventListener("click", async () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+  if (file.size > FILE_MAX_SIZE) {
+    systemLog(`файл слишком большой (${formatSize(file.size)}), лимит — ${formatSize(FILE_MAX_SIZE)}`);
+    return;
+  }
+  sendFileBtn.disabled = true;
+  fileInput.disabled = true;
+  try {
+    const sent = await sendFile(file);
+    if (sent > 0) {
+      addFileMessage(nameInput.value.trim() || "Вы", file.name, file.size, URL.createObjectURL(file));
+      fileInput.value = "";
+    }
+  } catch (err) {
+    systemLog("не удалось отправить файл: " + err.message);
+  }
+  refreshChat();
+});
+</script>
+</body>
+</html>

@@ -250,6 +250,11 @@ const menuGovernmentDropdown = document.querySelector("#menu-government-dropdown
 const menuGovernmentList = document.querySelector("#menu-government-list");
 const menuGovernmentImage = document.querySelector("#menu-government-image");
 const menuGovernmentText = document.querySelector("#menu-government-text");
+const menuOnlineConnect = document.querySelector("#menu-online-connect");
+const menuOnlineConnectButton = document.querySelector("#menu-online-connect-button");
+const menuOnlineInviteCode = document.querySelector("#menu-online-invite-code");
+const menuOnlineAnswerCode = document.querySelector("#menu-online-answer-code");
+const menuOnlineStatusDots = document.querySelector("#menu-online-status-dots");
 const menuFactionGrid = document.querySelector("#menu-faction-grid");
 const menuNewGameApply = document.querySelector("#menu-new-game-apply");
 const loadDialog = document.querySelector("#load-dialog");
@@ -379,7 +384,13 @@ const NEW_GAME_DEFAULT_PLAYER_FACTION_NAME = "Wanderers";
 const NEW_GAME_DEFAULT_PLAYER_FACTION_COLOR = "#00e1ff";
 const NEW_GAME_MODE_HOTSEAT = "hotseat";
 const NEW_GAME_MODE_ONLINE = "online";
+const NEW_GAME_SIDE_MODE_LOCAL = "local";
+const NEW_GAME_SIDE_MODE_ONLINE = "online";
+const NEW_GAME_SIDE_MODE_AUTO = "auto";
+const NEW_GAME_SIDE_MODES = [NEW_GAME_SIDE_MODE_LOCAL, NEW_GAME_SIDE_MODE_ONLINE, NEW_GAME_SIDE_MODE_AUTO];
 const NEW_GAME_DEFAULT_GOVERNMENT_ID = "company";
+const NEW_GAME_P2P_RTC_CONFIG = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+const NEW_GAME_P2P_ICE_TIMEOUT_MS = 5000;
 const NEW_GAME_GOVERNMENTS = {
   company: {
     id: "company",
@@ -513,6 +524,9 @@ let newGameAppliedState = null;
 let isNewGameSetupDirty = true;
 let newGameSideConfigs = [];
 let newGameSideConfigSeed = "";
+let newGameP2pPeers = [];
+let newGameP2pPeerSerial = 0;
+let newGameP2pPendingPeer = null;
 let menuScene = null;
 let menuCamera = null;
 let menuSky = null;
@@ -1069,6 +1083,14 @@ function initStartMenu() {
   menuGovernmentDropdown.addEventListener("click", (event) => {
     event.stopPropagation();
     setNewGameGovernmentDropdownOpen(menuGovernmentList.hidden);
+  });
+  menuOnlineConnectButton?.addEventListener("click", connectNewGameOnlinePeer);
+  menuOnlineInviteCode?.addEventListener("input", renderNewGameOnlineConnect);
+  menuOnlineAnswerCode?.addEventListener("input", renderNewGameOnlineConnect);
+  menuOnlineAnswerCode?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      connectNewGameOnlinePeer();
+    }
   });
   menuNewGameApply.addEventListener("click", applyOnlineNewGameSetup);
   menuSeedInput.addEventListener("input", () => {
@@ -2400,6 +2422,9 @@ function openMenuDialog(dialog, focusTarget = null) {
 
 function closeMenuDialogs() {
   setNewGameScenarioDropdownOpen(false);
+  if (!seedDialog.hidden) {
+    resetNewGameP2pConnections();
+  }
   seedDialog.hidden = true;
   loadDialog.hidden = true;
   settingsDialog.hidden = true;
@@ -3392,6 +3417,7 @@ function initNewGameGovernmentDropdown() {
 }
 
 function resetNewGameDialog() {
+  resetNewGameP2pConnections();
   selectedNewGameScenarioId = NEW_GAME_BASIC_SCENARIO_ID;
   menuSeedInput.value = MENU_DEFAULT_SEED;
   newGamePlayerFactionName = NEW_GAME_DEFAULT_PLAYER_FACTION_NAME;
@@ -3423,9 +3449,15 @@ function setNewGameScenario(scenarioId) {
 }
 
 function toggleNewGameSessionMode() {
+  const wasOnline = newGameSessionMode === NEW_GAME_MODE_ONLINE;
   newGameSessionMode = newGameSessionMode === NEW_GAME_MODE_ONLINE
     ? NEW_GAME_MODE_HOTSEAT
     : NEW_GAME_MODE_ONLINE;
+  if (!wasOnline && newGameSessionMode === NEW_GAME_MODE_ONLINE) {
+    setDefaultOnlineNewGameSideModes();
+  } else if (wasOnline && newGameSessionMode === NEW_GAME_MODE_HOTSEAT) {
+    resetNewGameP2pConnections();
+  }
   markNewGameSetupDirty();
   renderNewGameDialog();
 }
@@ -3475,6 +3507,7 @@ function renderNewGameDialog() {
   menuFactionCount.value = String(newGameFactionCount);
   menuPlayerFactionName.value = newGamePlayerFactionName;
   updateNewGamePlayerFactionColor();
+  renderNewGameOnlineConnect();
   if (Number.isFinite(maxFactions)) {
     menuFactionCount.max = String(maxFactions);
     menuFactionLimit.textContent = `MAX ${maxFactions}`;
@@ -3508,6 +3541,268 @@ function renderNewGameGovernment() {
     menuGovernmentImage.classList.remove("new-game__government-image--filled");
   }
   menuGovernmentText.textContent = government.text;
+}
+
+function renderNewGameOnlineConnect() {
+  if (!menuOnlineConnect || !menuOnlineStatusDots) {
+    return;
+  }
+
+  const isOnline = newGameSessionMode === NEW_GAME_MODE_ONLINE;
+  menuOnlineConnect.hidden = !isOnline;
+  if (!isOnline) {
+    return;
+  }
+
+  const onlineSideCount = getNewGameOnlineSideCount();
+  const connectedCount = getNewGameOpenPeerCount();
+  menuOnlineStatusDots.replaceChildren();
+  for (let index = 0; index < onlineSideCount; index += 1) {
+    const dot = document.createElement("span");
+    dot.className = "new-game__status-dot";
+    dot.classList.toggle("new-game__status-dot--connected", index < connectedCount);
+    menuOnlineStatusDots.append(dot);
+  }
+
+  if (!menuOnlineConnectButton) {
+    return;
+  }
+  if (newGameP2pPendingPeer?.role === "initiator") {
+    menuOnlineConnectButton.textContent = menuOnlineAnswerCode?.value.trim() ? "APPLY" : "COPY";
+    return;
+  }
+  menuOnlineConnectButton.textContent = menuOnlineInviteCode?.value.trim() ? "ANSWER" : "CONNECT";
+}
+
+async function connectNewGameOnlinePeer() {
+  if (newGameSessionMode !== NEW_GAME_MODE_ONLINE) {
+    return;
+  }
+
+  try {
+    if (newGameP2pPendingPeer?.role === "initiator") {
+      const answerCode = menuOnlineAnswerCode.value.trim();
+      if (!answerCode) {
+        await copyTextToClipboard(menuOnlineInviteCode.value);
+        return;
+      }
+      await applyNewGameP2pAnswer(newGameP2pPendingPeer, answerCode);
+      newGameP2pPendingPeer = null;
+      menuOnlineAnswerCode.value = "";
+      renderNewGameOnlineConnect();
+      return;
+    }
+
+    const inviteCode = menuOnlineInviteCode.value.trim();
+    if (inviteCode) {
+      const description = decodeNewGameP2pDescription(inviteCode);
+      if (description.type !== "offer") {
+        throw new Error("Expected invite offer");
+      }
+      const peer = createNewGameP2pPeer("joiner");
+      const answerCode = await makeNewGameP2pAnswer(peer, description);
+      menuOnlineAnswerCode.value = answerCode;
+      await copyTextToClipboard(answerCode);
+      renderNewGameOnlineConnect();
+      return;
+    }
+
+    const peer = createNewGameP2pPeer("initiator");
+    newGameP2pPendingPeer = peer;
+    const invite = await createNewGameP2pInvite(peer);
+    menuOnlineInviteCode.value = invite;
+    menuOnlineAnswerCode.value = "";
+    renderNewGameOnlineConnect();
+  } catch (error) {
+    setMenuStatus(`P2P ${String(error?.message ?? error).slice(0, 18).toUpperCase()}`);
+    renderNewGameOnlineConnect();
+  }
+}
+
+function createNewGameP2pPeer(role) {
+  const pc = new RTCPeerConnection(NEW_GAME_P2P_RTC_CONFIG);
+  const peer = {
+    id: ++newGameP2pPeerSerial,
+    role,
+    pc,
+    channel: null,
+  };
+  newGameP2pPeers.push(peer);
+
+  pc.onconnectionstatechange = () => renderNewGameOnlineConnect();
+  pc.oniceconnectionstatechange = () => renderNewGameOnlineConnect();
+  pc.ondatachannel = (event) => attachNewGameP2pChannel(peer, event.channel);
+  return peer;
+}
+
+function attachNewGameP2pChannel(peer, channel) {
+  peer.channel = channel;
+  channel.onopen = () => {
+    renderNewGameOnlineConnect();
+    if (newGameAppliedState && !isNewGameSetupDirty) {
+      sendNewGameSetupToPeer(peer);
+    }
+  };
+  channel.onclose = () => renderNewGameOnlineConnect();
+  channel.onerror = () => renderNewGameOnlineConnect();
+  channel.onmessage = (event) => handleNewGameP2pMessage(peer, event.data);
+}
+
+async function createNewGameP2pInvite(peer) {
+  const channel = peer.pc.createDataChannel("nebulum-new-game");
+  attachNewGameP2pChannel(peer, channel);
+  const offer = await peer.pc.createOffer();
+  await peer.pc.setLocalDescription(offer);
+  await waitForNewGameP2pIce(peer.pc);
+  return encodeNewGameP2pDescription(peer.pc.localDescription);
+}
+
+async function makeNewGameP2pAnswer(peer, offerDescription) {
+  await peer.pc.setRemoteDescription(offerDescription);
+  const answer = await peer.pc.createAnswer();
+  await peer.pc.setLocalDescription(answer);
+  await waitForNewGameP2pIce(peer.pc);
+  return encodeNewGameP2pDescription(peer.pc.localDescription);
+}
+
+async function applyNewGameP2pAnswer(peer, answerCode) {
+  const answer = decodeNewGameP2pDescription(answerCode);
+  if (answer.type !== "answer") {
+    throw new Error("Expected answer");
+  }
+  await peer.pc.setRemoteDescription(answer);
+}
+
+function waitForNewGameP2pIce(pc) {
+  return new Promise((resolve) => {
+    if (pc.iceGatheringState === "complete") {
+      resolve();
+      return;
+    }
+
+    let isDone = false;
+    const finish = () => {
+      if (isDone) {
+        return;
+      }
+      isDone = true;
+      pc.removeEventListener("icegatheringstatechange", onStateChange);
+      pc.removeEventListener("icecandidate", onIceCandidate);
+      resolve();
+    };
+    const onStateChange = () => {
+      if (pc.iceGatheringState === "complete") {
+        finish();
+      }
+    };
+    const onIceCandidate = (event) => {
+      if (!event.candidate) {
+        finish();
+      }
+    };
+    pc.addEventListener("icegatheringstatechange", onStateChange);
+    pc.addEventListener("icecandidate", onIceCandidate);
+    window.setTimeout(finish, NEW_GAME_P2P_ICE_TIMEOUT_MS);
+  });
+}
+
+function encodeNewGameP2pDescription(description) {
+  return btoa(JSON.stringify({
+    type: description.type,
+    sdp: description.sdp,
+  }));
+}
+
+function decodeNewGameP2pDescription(code) {
+  const parsed = JSON.parse(atob(String(code ?? "").trim()));
+  if (!parsed?.type || !parsed?.sdp) {
+    throw new Error("Invalid signal");
+  }
+  return new RTCSessionDescription(parsed);
+}
+
+async function copyTextToClipboard(text) {
+  const value = String(text ?? "");
+  if (!value) {
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(value);
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.append(textarea);
+    textarea.focus();
+    textarea.select();
+    try {
+      document.execCommand("copy");
+    } catch {}
+    textarea.remove();
+  }
+}
+
+function handleNewGameP2pMessage(peer, rawMessage) {
+  let message;
+  try {
+    message = JSON.parse(String(rawMessage ?? ""));
+  } catch {
+    return;
+  }
+
+  if (message.type !== "nebulum-new-game-setup") {
+    return;
+  }
+  applyNewGameOnlineMenuState(message.menuState);
+  newGameAppliedState = normalizeGameState(createNewGameInitialGameState());
+  isNewGameSetupDirty = false;
+  renderNewGameDialog();
+}
+
+function broadcastNewGameSetup() {
+  const message = JSON.stringify({
+    type: "nebulum-new-game-setup",
+    menuState: collectNewGameOnlineMenuState(),
+  });
+  for (const peer of newGameP2pPeers) {
+    if (peer.channel?.readyState === "open") {
+      peer.channel.send(message);
+    }
+  }
+}
+
+function sendNewGameSetupToPeer(peer) {
+  if (peer.channel?.readyState !== "open") {
+    return;
+  }
+  peer.channel.send(JSON.stringify({
+    type: "nebulum-new-game-setup",
+    menuState: collectNewGameOnlineMenuState(),
+  }));
+}
+
+function getNewGameOpenPeerCount() {
+  return newGameP2pPeers.filter((peer) => peer.channel?.readyState === "open").length;
+}
+
+function resetNewGameP2pConnections() {
+  for (const peer of newGameP2pPeers) {
+    try {
+      peer.channel?.close();
+    } catch {}
+    try {
+      peer.pc?.close();
+    } catch {}
+  }
+  newGameP2pPeers = [];
+  newGameP2pPendingPeer = null;
+  if (menuOnlineInviteCode) {
+    menuOnlineInviteCode.value = "";
+  }
+  if (menuOnlineAnswerCode) {
+    menuOnlineAnswerCode.value = "";
+  }
 }
 
 function updateNewGameActions() {
@@ -3609,10 +3904,12 @@ function renderNewGameFactionGrid(factionCount) {
     const side = getNewGameRenderedSide(index);
     const isSelected = index === selectedNewGameSideIndex;
     const isPlayer = index === selectedNewGamePlayerSideIndex;
+    const sideMode = getNewGameSideMode(index);
     const card = document.createElement("div");
     card.className = "new-game__faction-card";
     card.classList.toggle("new-game__faction-card--player", isPlayer);
     card.classList.toggle("new-game__faction-card--selected", isSelected);
+    card.classList.toggle("new-game__faction-card--online", sideMode === NEW_GAME_SIDE_MODE_ONLINE);
     card.style.setProperty("--side-color", side.color);
     card.tabIndex = 0;
     card.setAttribute("role", "button");
@@ -3621,11 +3918,20 @@ function renderNewGameFactionGrid(factionCount) {
       ? createNewGameFactionNameInput(index, side.name)
       : createNewGameFactionTitle(side.name);
     const meta = createNewGameFactionGovernmentControl(index, side.government, { isPlayer, isSelected });
-    card.append(title, meta);
+    const modeSelector = createNewGameSideModeSelector(index, sideMode);
+    card.append(modeSelector, title, meta);
     const selectCard = () => {
       selectedNewGameSideIndex = index;
+      if (newGameSessionMode === NEW_GAME_MODE_ONLINE) {
+        if (selectedNewGamePlayerSideIndex !== index) {
+          selectedNewGamePlayerSideIndex = index;
+          markNewGameSetupDirty();
+        }
+      }
       pendingNewGameFactionNameFocusIndex = index;
       renderNewGameFactionGrid(newGameFactionCount);
+      updateNewGamePlayerFactionColor();
+      updateNewGameActions();
     };
     card.addEventListener("pointerdown", (event) => {
       if (isNewGameFactionInteractiveTarget(event.target)) {
@@ -3660,7 +3966,81 @@ function renderNewGameFactionGrid(factionCount) {
 
 function isNewGameFactionInteractiveTarget(target) {
   return target instanceof Element
-    && Boolean(target.closest(".new-game__faction-card-name-input, .new-game__faction-government"));
+    && Boolean(target.closest(".new-game__faction-card-name-input, .new-game__faction-government, .new-game__side-mode-selector"));
+}
+
+function createNewGameSideModeSelector(index, mode) {
+  const selector = document.createElement("span");
+  selector.className = "new-game__side-mode-selector";
+  selector.setAttribute("role", "group");
+  selector.setAttribute("aria-label", `Side ${index + 1} controller`);
+
+  [
+    [NEW_GAME_SIDE_MODE_LOCAL, "L", "Local"],
+    [NEW_GAME_SIDE_MODE_ONLINE, "O", "Online"],
+    [NEW_GAME_SIDE_MODE_AUTO, "A", "Auto"],
+  ].forEach(([id, label, title]) => {
+    const button = document.createElement("button");
+    button.className = "new-game__side-mode-button";
+    button.type = "button";
+    button.textContent = label;
+    button.title = title;
+    button.setAttribute("aria-label", title);
+    button.setAttribute("aria-pressed", String(mode === id));
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setNewGameSideMode(index, id);
+    });
+    button.addEventListener("click", (event) => event.stopPropagation());
+    button.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setNewGameSideMode(index, id);
+    });
+    selector.append(button);
+  });
+
+  return selector;
+}
+
+function setNewGameSideMode(index, mode) {
+  if (!NEW_GAME_SIDE_MODES.includes(mode)) {
+    return;
+  }
+  ensureNewGameSideConfig(index).connectionMode = mode;
+  markNewGameSetupDirty();
+  renderNewGameDialog();
+}
+
+function getNewGameSideMode(index) {
+  return normalizeNewGameSideMode(ensureNewGameSideConfig(index).connectionMode);
+}
+
+function normalizeNewGameSideMode(mode) {
+  return NEW_GAME_SIDE_MODES.includes(mode) ? mode : NEW_GAME_SIDE_MODE_LOCAL;
+}
+
+function getNewGameOnlineSideCount() {
+  let count = 0;
+  for (let index = 0; index < newGameFactionCount; index += 1) {
+    if (getNewGameSideMode(index) === NEW_GAME_SIDE_MODE_ONLINE) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function setDefaultOnlineNewGameSideModes() {
+  syncNewGameSideConfigs(newGameFactionCount, getNewGameSeed());
+  for (let index = 0; index < newGameFactionCount; index += 1) {
+    ensureNewGameSideConfig(index).connectionMode = index === selectedNewGamePlayerSideIndex
+      ? NEW_GAME_SIDE_MODE_LOCAL
+      : NEW_GAME_SIDE_MODE_ONLINE;
+  }
 }
 
 function createNewGameFactionTitle(name) {
@@ -3823,6 +4203,20 @@ function getNewGameRenderedSide(index) {
   };
 }
 
+function getNewGameSideConfigSnapshot(index) {
+  if (index < 0 || index >= newGameSideConfigs.length) {
+    return null;
+  }
+  const side = newGameSideConfigs[index];
+  return {
+    name: String(side?.name ?? `SIDE ${index + 1}`).trim() || `SIDE ${index + 1}`,
+    color: String(side?.color ?? createNewGameSideColor(index, getNewGameSeed())),
+    government: NEW_GAME_GOVERNMENTS[side?.government]
+      ? side.government
+      : NEW_GAME_DEFAULT_GOVERNMENT_ID,
+  };
+}
+
 function getNewGameGovernmentIds() {
   return Object.keys(NEW_GAME_GOVERNMENTS);
 }
@@ -3849,11 +4243,20 @@ function syncNewGameSideConfigs(count, seed) {
 
   for (let index = newGameSideConfigs.length; index < count; index += 1) {
     newGameSideConfigs.push(createNewGameSideConfig(index, seed));
+    if (newGameSessionMode === NEW_GAME_MODE_ONLINE && index !== selectedNewGamePlayerSideIndex) {
+      newGameSideConfigs[index].connectionMode = NEW_GAME_SIDE_MODE_ONLINE;
+    }
   }
 }
 
 function createNewGameSideConfigs(count, seed) {
-  return Array.from({ length: count }, (_, index) => createNewGameSideConfig(index, seed));
+  return Array.from({ length: count }, (_, index) => {
+    const config = createNewGameSideConfig(index, seed);
+    if (newGameSessionMode === NEW_GAME_MODE_ONLINE && index !== selectedNewGamePlayerSideIndex) {
+      config.connectionMode = NEW_GAME_SIDE_MODE_ONLINE;
+    }
+    return config;
+  });
 }
 
 function createNewGameSideConfig(index, seed) {
@@ -3861,12 +4264,18 @@ function createNewGameSideConfig(index, seed) {
     name: `SIDE ${index + 1}`,
     color: createNewGameSideColor(index, seed),
     government: createNewGameSideGovernment(index, seed),
+    connectionMode: NEW_GAME_SIDE_MODE_LOCAL,
   };
 }
 
 function ensureNewGameSideConfig(index) {
   while (newGameSideConfigs.length <= index) {
-    newGameSideConfigs.push(createNewGameSideConfig(newGameSideConfigs.length, getNewGameSeed()));
+    const nextIndex = newGameSideConfigs.length;
+    const config = createNewGameSideConfig(nextIndex, getNewGameSeed());
+    if (newGameSessionMode === NEW_GAME_MODE_ONLINE && nextIndex !== selectedNewGamePlayerSideIndex) {
+      config.connectionMode = NEW_GAME_SIDE_MODE_ONLINE;
+    }
+    newGameSideConfigs.push(config);
   }
   return newGameSideConfigs[index];
 }
@@ -3974,7 +4383,83 @@ function applyOnlineNewGameSetup() {
   upsertMenuSave(save);
   newGameAppliedState = normalizeGameState(initialState);
   isNewGameSetupDirty = false;
+  broadcastNewGameSetup();
   renderNewGameDialog();
+}
+
+function collectNewGameOnlineMenuState() {
+  const scenario = NEW_GAME_SCENARIOS[selectedNewGameScenarioId] ?? NEW_GAME_SCENARIOS[NEW_GAME_BASIC_SCENARIO_ID];
+  const sideCount = Math.min(NEW_GAME_MAX_SIDE_COUNT, newGameFactionCount);
+  const sides = Array.from({ length: sideCount }, (_, index) => {
+    const rendered = getNewGameRenderedSide(index);
+    return {
+      index,
+      name: rendered.name,
+      color: rendered.color,
+      government: rendered.government,
+      connectionMode: getNewGameSideMode(index),
+    };
+  });
+
+  return {
+    version: 1,
+    seed: getNewGameSeed(),
+    scenarioId: scenario.id,
+    factionCount: sideCount,
+    playerSideIndex: selectedNewGamePlayerSideIndex,
+    sides,
+    appliedAt: new Date().toISOString(),
+  };
+}
+
+function applyNewGameOnlineMenuState(menuState) {
+  if (!menuState || typeof menuState !== "object") {
+    return;
+  }
+
+  const scenarioId = String(menuState.scenarioId ?? selectedNewGameScenarioId);
+  if (NEW_GAME_SCENARIOS[scenarioId]) {
+    selectedNewGameScenarioId = scenarioId;
+  }
+
+  const seed = String(menuState.seed ?? getNewGameSeed()).trim() || MENU_DEFAULT_SEED;
+  menuSeedInput.value = seed;
+  newGameSessionMode = NEW_GAME_MODE_ONLINE;
+
+  const maxFactions = getNewGameScenarioMaxFactions(
+    NEW_GAME_SCENARIOS[selectedNewGameScenarioId] ?? NEW_GAME_SCENARIOS[NEW_GAME_BASIC_SCENARIO_ID],
+    seed,
+  );
+  newGameFactionCount = getClampedNewGameFactionCount(menuState.factionCount ?? newGameFactionCount, maxFactions);
+  syncNewGameSideConfigs(newGameFactionCount, seed);
+
+  const sides = Array.isArray(menuState.sides) ? menuState.sides.slice(0, newGameFactionCount) : [];
+  for (const side of sides) {
+    const index = Number.parseInt(side?.index, 10);
+    if (!Number.isFinite(index) || index < 0 || index >= newGameFactionCount) {
+      continue;
+    }
+    const config = ensureNewGameSideConfig(index);
+    config.name = String(side.name ?? config.name ?? `SIDE ${index + 1}`).trim() || `SIDE ${index + 1}`;
+    config.color = String(side.color ?? config.color ?? createNewGameSideColor(index, seed));
+    config.government = NEW_GAME_GOVERNMENTS[side.government]
+      ? side.government
+      : config.government;
+    config.connectionMode = normalizeNewGameSideMode(side.connectionMode);
+  }
+
+  selectedNewGamePlayerSideIndex = THREE.MathUtils.clamp(
+    selectedNewGamePlayerSideIndex,
+    0,
+    Math.max(0, newGameFactionCount - 1),
+  );
+  selectedNewGameSideIndex = selectedNewGamePlayerSideIndex;
+  const playerSide = getNewGameSideConfigSnapshot(selectedNewGamePlayerSideIndex);
+  if (playerSide) {
+    newGamePlayerFactionName = playerSide.name;
+    newGamePlayerFactionColor = playerSide.color;
+    selectedNewGameGovernmentId = playerSide.government;
+  }
 }
 
 function createNewGameInitialSaveName(setup) {
@@ -4006,6 +4491,7 @@ function collectNewGameSetupState() {
       name: rendered.name,
       color: rendered.color,
       government: rendered.government,
+      connectionMode: getNewGameSideMode(index),
       isPlayer: index === selectedNewGamePlayerSideIndex,
     };
   });
@@ -6782,6 +7268,7 @@ function normalizeNewGameSetupState(setup) {
     government: NEW_GAME_GOVERNMENTS[side?.government]
       ? side.government
       : NEW_GAME_DEFAULT_GOVERNMENT_ID,
+    connectionMode: normalizeNewGameSideMode(side?.connectionMode ?? side?.mode),
     isPlayer: side?.isPlayer === true,
   }));
 

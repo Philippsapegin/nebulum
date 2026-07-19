@@ -412,11 +412,22 @@ body.editor-mode .fleet-action-panel {
 }
 
 .game-ui-panel__icon-slot {
+  display: grid;
+  place-items: center;
   flex: 0 0 auto;
   width: 32px;
   height: 32px;
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.045);
+}
+
+.game-ui-panel__icon-slot img {
+  display: block;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  opacity: 0.78;
+  pointer-events: none;
 }
 
 .game-ui-panel__text {
@@ -728,7 +739,7 @@ body.start-menu-open .hover-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   width: min(1220px, calc(100vw - 44px));
-  height: min(760px, calc(100vh - 44px));
+  height: min(860px, calc(100vh - 28px));
   padding: 18px;
   overflow: hidden;
 }
@@ -1225,15 +1236,127 @@ body.start-menu-open .hover-panel {
 
 .new-game__factions-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 6px;
   min-height: 0;
+}
+
+.new-game__online-connect {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  min-height: 32px;
+  padding: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.new-game__online-connect[hidden] {
+  display: none;
+}
+
+.new-game__connect-button {
+  height: 20px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.84);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  line-height: 20px;
+  text-transform: uppercase;
+}
+
+.new-game__connect-button:hover {
+  background: rgba(255, 255, 255, 0.13);
+  color: #fff;
+}
+
+.new-game__signal-field {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+}
+
+.new-game__signal-icon {
+  position: relative;
+  display: grid;
+  width: 18px;
+  height: 20px;
+  place-items: center;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.new-game__signal-icon::before {
+  width: 7px;
+  height: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.82);
+  border-left: 1px solid rgba(255, 255, 255, 0.82);
+  content: "";
+}
+
+.new-game__signal-icon--up::before {
+  transform: translateY(2px) rotate(45deg);
+}
+
+.new-game__signal-icon--down::before {
+  transform: translateY(-2px) rotate(225deg);
+}
+
+.new-game__signal-input {
+  width: 100%;
+  height: 20px;
+  min-height: 20px;
+  max-height: 52px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(10, 10, 11, 0.36);
+  color: rgba(255, 255, 255, 0.76);
+  font-family: "Albert Sans", Inter, sans-serif;
+  font-size: 9px;
+  line-height: 12px;
+  outline: none;
+  resize: none;
+}
+
+.new-game__signal-input[readonly] {
+  color: rgba(255, 255, 255, 0.46);
+}
+
+.new-game__status-dots {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 28px;
+}
+
+.new-game__status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.new-game__status-dot--connected {
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow:
+    0 0 9px rgba(255, 255, 255, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.32);
 }
 
 .new-game__faction-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  grid-auto-rows: 72px;
+  grid-auto-rows: 82px;
   gap: 8px;
   min-height: 0;
   padding-right: 4px;
@@ -1247,7 +1370,7 @@ body.start-menu-open .hover-panel {
   align-content: start;
   gap: 7px;
   min-width: 0;
-  padding: 8px;
+  padding: 18px 8px 8px;
   border: 0;
   border-radius: 3px;
   background:
@@ -1294,6 +1417,49 @@ body.start-menu-open .hover-panel {
   z-index: 1;
 }
 
+.new-game__side-mode-selector {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(3, 12px);
+  gap: 3px;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(10, 10, 11, 0.36);
+}
+
+.new-game__side-mode-button {
+  display: grid;
+  width: 12px;
+  height: 12px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.48);
+  cursor: pointer;
+  font: inherit;
+  font-size: 7px;
+  font-weight: 600;
+  line-height: 12px;
+  text-transform: uppercase;
+}
+
+.new-game__side-mode-button:hover,
+.new-game__side-mode-button[aria-pressed="true"] {
+  background: rgba(255, 255, 255, 0.76);
+  color: rgba(10, 10, 11, 0.86);
+}
+
+.new-game__faction-card--online {
+  box-shadow:
+    inset 0 0 14px color-mix(in srgb, var(--side-color, #ffffff) 5%, transparent),
+    0 0 12px rgba(255, 255, 255, 0.12);
+}
+
 .new-game__faction-card:hover,
 .new-game__faction-card--selected {
   background:
@@ -1323,6 +1489,9 @@ body.start-menu-open .hover-panel {
 .new-game__faction-government-current:focus-visible,
 .new-game__faction-government-item:focus-visible,
 .new-game__inline-button:focus-visible,
+.new-game__connect-button:focus-visible,
+.new-game__signal-input:focus-visible,
+.new-game__side-mode-button:focus-visible,
 .new-game__mode-toggle:focus-visible,
 .new-game__government-current:focus-visible,
 .new-game__government-dropdown:focus-visible {
@@ -1650,7 +1819,7 @@ body.start-menu-open .hover-panel {
 
 @media (max-width: 920px) {
   .menu-dialog__surface--new-game {
-    height: min(780px, calc(100vh - 44px));
+    height: min(860px, calc(100vh - 28px));
   }
 
   .new-game__top,
@@ -1665,6 +1834,14 @@ body.start-menu-open .hover-panel {
 
   .new-game__faction-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .new-game__online-connect {
+    grid-template-columns: 82px minmax(0, 1fr) auto;
+  }
+
+  .new-game__signal-field:last-of-type {
+    grid-column: 2 / -1;
   }
 }
 
