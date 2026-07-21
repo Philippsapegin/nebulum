@@ -176,7 +176,8 @@
         </div>
 
         <div id="seed-dialog" class="menu-dialog" role="dialog" aria-modal="true" aria-labelledby="seed-dialog-title" hidden>
-          <div class="menu-dialog__surface menu-dialog__surface--new-game">
+          <div id="menu-new-game-layout" class="menu-dialog__layout menu-dialog__layout--new-game">
+            <div class="menu-dialog__surface menu-dialog__surface--new-game">
             <div id="seed-dialog-title" class="menu-dialog__title">NEW GAME</div>
             <div class="new-game">
               <div class="new-game__top">
@@ -221,10 +222,11 @@
                       <span id="menu-faction-limit" class="new-game__limit"></span>
                     </div>
                     <div class="new-game__your-faction">
-                      <span class="menu-dialog__label">Your faction</span>
+                      <span class="menu-dialog__label">Faction</span>
                       <div class="new-game__your-faction-row">
                         <input id="menu-player-faction-name" class="menu-dialog__input new-game__faction-name-input" type="text" autocomplete="off" value="Wanderers" />
                         <button id="menu-player-faction-color" class="swatch swatch--large new-game__faction-color" type="button" title="Pick faction border color"></button>
+                        <button id="menu-player-side-lock" class="new-game__placement-lock" type="button" title="Lock player placement" aria-label="Lock player placement" hidden></button>
                       </div>
                     </div>
                     <div class="new-game__government">
@@ -247,18 +249,6 @@
                 <div class="new-game__details-column">
                   <p id="menu-scenario-text" class="new-game__scenario-text"></p>
                   <div class="new-game__factions-panel">
-                    <div id="menu-online-connect" class="new-game__online-connect" hidden>
-                      <button id="menu-online-connect-button" class="new-game__connect-button" type="button">CONNECT</button>
-                      <label class="new-game__signal-field">
-                        <span class="new-game__signal-icon new-game__signal-icon--up" aria-hidden="true"></span>
-                        <textarea id="menu-online-invite-code" class="new-game__signal-input" spellcheck="false" aria-label="Invite code"></textarea>
-                      </label>
-                      <label class="new-game__signal-field">
-                        <span class="new-game__signal-icon new-game__signal-icon--down" aria-hidden="true"></span>
-                        <textarea id="menu-online-answer-code" class="new-game__signal-input" spellcheck="false" aria-label="Answer code"></textarea>
-                      </label>
-                      <div id="menu-online-status-dots" class="new-game__status-dots" aria-label="Online connection status"></div>
-                    </div>
                     <span class="menu-dialog__label">Sides setup</span>
                     <div id="menu-faction-grid" class="new-game__faction-grid" aria-label="Factions"></div>
                   </div>
@@ -270,6 +260,41 @@
               <button id="menu-seed-confirm" class="menu-dialog__button" type="button">START</button>
               <button id="menu-seed-cancel" class="menu-dialog__button" type="button">CANCEL</button>
             </div>
+            </div>
+
+            <aside id="menu-online-panel" class="menu-dialog__surface new-game-online-panel" aria-label="Online session" hidden>
+              <section class="new-game-online-panel__network">
+                <span class="menu-dialog__label">P2P network</span>
+                <div id="menu-online-graph" class="new-game-online-graph" aria-label="Peer connection graph">
+                  <svg id="menu-online-graph-links" class="new-game-online-graph__links" viewBox="0 0 240 240" preserveAspectRatio="none" aria-hidden="true"></svg>
+                  <div id="menu-online-graph-nodes" class="new-game-online-graph__nodes"></div>
+                </div>
+              </section>
+
+              <section id="menu-online-connect" class="new-game-online-panel__handshake">
+                <span class="menu-dialog__label">Handshake</span>
+                <div class="new-game__signal-field">
+                  <button id="menu-online-connect-button" class="new-game__connect-button" type="button">INVITE</button>
+                  <input id="menu-online-invite-code" class="new-game__signal-input" type="text" autocomplete="off" spellcheck="false" aria-label="Invite code" />
+                  <button id="menu-online-invite-copy" class="new-game__signal-copy" type="button" title="Copy invite code" aria-label="Copy invite code"></button>
+                </div>
+                <div class="new-game__signal-field">
+                  <button id="menu-online-handshake-button" class="new-game__connect-button" type="button">HANDSHAKE</button>
+                  <input id="menu-online-answer-code" class="new-game__signal-input" type="text" autocomplete="off" spellcheck="false" aria-label="Answer code" />
+                  <button id="menu-online-answer-copy" class="new-game__signal-copy" type="button" title="Copy answer code" aria-label="Copy answer code"></button>
+                </div>
+                <p id="menu-online-signal-status" class="new-game-online-panel__status" aria-live="polite"></p>
+              </section>
+
+              <section class="new-game-online-panel__chat">
+                <span class="menu-dialog__label">Session chat</span>
+                <div id="menu-online-chat-messages" class="new-game-online-chat__messages" role="log" aria-live="polite"></div>
+                <form id="menu-online-chat-form" class="new-game-online-chat__form">
+                  <input id="menu-online-chat-input" class="new-game-online-chat__input" type="text" maxlength="500" autocomplete="off" placeholder="MESSAGE" aria-label="Chat message" />
+                  <button class="new-game-online-chat__send" type="submit">SEND</button>
+                </form>
+              </section>
+            </aside>
           </div>
         </div>
 

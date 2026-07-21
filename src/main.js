@@ -61,6 +61,7 @@ const FORCE_MENU_ON_NEXT_LAUNCH_STORAGE_KEY = "nebulum:force-menu-on-next-launch
 const LEGACY_SAVE_STORAGE_KEY = "nebulum:saves";
 const SAVE_STORAGE_KEY = "nebulum:saves:v2";
 const SAVE_INDEX_STORAGE_KEY = "nebulum:saves:index:v1";
+const NEW_GAME_P2P_PLAYER_NAME_STORAGE_KEY = "nebulum:p2p-player-name:v1";
 const SAVE_FILE_STORAGE_PREFIX = "nebulum:saves:file:";
 const SAVE_FOLDER_NAME = "saves";
 const RUNTIME_SESSION_STORAGE_KEY = "nebulum:runtime-session";
@@ -156,6 +157,9 @@ const UI_HOVER_SOUND_SELECTOR = [
   ".new-game__government-dropdown",
   ".new-game__government-item",
   ".new-game__inline-button",
+  ".new-game__connect-button",
+  ".new-game__signal-copy",
+  ".new-game-online-chat__send",
   ".new-game__faction-card",
   ".new-game__faction-government-current",
   ".new-game__faction-government-item",
@@ -177,6 +181,9 @@ const UI_MENU_CLICK_SOUND_SELECTOR = [
   ".new-game__government-dropdown",
   ".new-game__government-item",
   ".new-game__inline-button",
+  ".new-game__connect-button",
+  ".new-game__signal-copy",
+  ".new-game-online-chat__send",
   ".new-game__faction-card",
   ".new-game__faction-government-current",
   ".new-game__faction-government-item",
@@ -229,6 +236,7 @@ const menuSettings = document.querySelector("#menu-settings");
 const menuExit = document.querySelector("#menu-exit");
 const menuStatus = document.querySelector("#menu-status");
 const seedDialog = document.querySelector("#seed-dialog");
+const menuNewGameLayout = document.querySelector("#menu-new-game-layout");
 const menuSeedInput = document.querySelector("#menu-seed-input");
 const menuSeedConfirm = document.querySelector("#menu-seed-confirm");
 const menuSeedCancel = document.querySelector("#menu-seed-cancel");
@@ -245,16 +253,26 @@ const menuFactionCount = document.querySelector("#menu-faction-count");
 const menuFactionLimit = document.querySelector("#menu-faction-limit");
 const menuPlayerFactionName = document.querySelector("#menu-player-faction-name");
 const menuPlayerFactionColor = document.querySelector("#menu-player-faction-color");
+const menuPlayerSideLock = document.querySelector("#menu-player-side-lock");
 const menuGovernmentCurrent = document.querySelector("#menu-government-current");
 const menuGovernmentDropdown = document.querySelector("#menu-government-dropdown");
 const menuGovernmentList = document.querySelector("#menu-government-list");
 const menuGovernmentImage = document.querySelector("#menu-government-image");
 const menuGovernmentText = document.querySelector("#menu-government-text");
+const menuOnlinePanel = document.querySelector("#menu-online-panel");
 const menuOnlineConnect = document.querySelector("#menu-online-connect");
 const menuOnlineConnectButton = document.querySelector("#menu-online-connect-button");
+const menuOnlineHandshakeButton = document.querySelector("#menu-online-handshake-button");
 const menuOnlineInviteCode = document.querySelector("#menu-online-invite-code");
 const menuOnlineAnswerCode = document.querySelector("#menu-online-answer-code");
-const menuOnlineStatusDots = document.querySelector("#menu-online-status-dots");
+const menuOnlineInviteCopy = document.querySelector("#menu-online-invite-copy");
+const menuOnlineAnswerCopy = document.querySelector("#menu-online-answer-copy");
+const menuOnlineSignalStatus = document.querySelector("#menu-online-signal-status");
+const menuOnlineGraphLinks = document.querySelector("#menu-online-graph-links");
+const menuOnlineGraphNodes = document.querySelector("#menu-online-graph-nodes");
+const menuOnlineChatMessages = document.querySelector("#menu-online-chat-messages");
+const menuOnlineChatForm = document.querySelector("#menu-online-chat-form");
+const menuOnlineChatInput = document.querySelector("#menu-online-chat-input");
 const menuFactionGrid = document.querySelector("#menu-faction-grid");
 const menuNewGameApply = document.querySelector("#menu-new-game-apply");
 const loadDialog = document.querySelector("#load-dialog");
@@ -378,10 +396,27 @@ starWindow.append(systemPlanetMenu);
 
 const NEW_GAME_BASIC_SCENARIO_ID = "basic";
 const NEW_GAME_DEFAULT_FACTION_COUNT = 4;
-const NEW_GAME_MAX_SIDE_COUNT = 16;
+const NEW_GAME_MAX_SIDE_COUNT = 15;
 const NEW_GAME_FACTION_RENDER_LIMIT = NEW_GAME_MAX_SIDE_COUNT;
 const NEW_GAME_DEFAULT_PLAYER_FACTION_NAME = "Wanderers";
-const NEW_GAME_DEFAULT_PLAYER_FACTION_COLOR = "#00e1ff";
+const NEW_GAME_FACTION_COLORS = [
+  "#FF4141",
+  "#FF6D2F",
+  "#FFC54A",
+  "#BBFF4D",
+  "#3B843D",
+  "#4DFF6E",
+  "#00FFB7",
+  "#31D2FF",
+  "#316BFF",
+  "#3700FF",
+  "#A735FF",
+  "#D525DE",
+  "#FB289C",
+  "#FF266B",
+  "#870002",
+];
+const NEW_GAME_DEFAULT_PLAYER_FACTION_COLOR = NEW_GAME_FACTION_COLORS[7];
 const NEW_GAME_MODE_HOTSEAT = "hotseat";
 const NEW_GAME_MODE_ONLINE = "online";
 const NEW_GAME_SIDE_MODE_LOCAL = "local";
@@ -391,6 +426,10 @@ const NEW_GAME_SIDE_MODES = [NEW_GAME_SIDE_MODE_LOCAL, NEW_GAME_SIDE_MODE_ONLINE
 const NEW_GAME_DEFAULT_GOVERNMENT_ID = "company";
 const NEW_GAME_P2P_RTC_CONFIG = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 const NEW_GAME_P2P_ICE_TIMEOUT_MS = 5000;
+const NEW_GAME_P2P_PARTICIPANT_NAME_MAX_LENGTH = 24;
+const NEW_GAME_P2P_CHAT_MESSAGE_MAX_LENGTH = 500;
+const NEW_GAME_P2P_GRAPH_WIDTH = 240;
+const NEW_GAME_P2P_GRAPH_HEIGHT = 240;
 const NEW_GAME_GOVERNMENTS = {
   company: {
     id: "company",
@@ -517,7 +556,7 @@ let newGamePlayerFactionName = NEW_GAME_DEFAULT_PLAYER_FACTION_NAME;
 let newGamePlayerFactionColor = NEW_GAME_DEFAULT_PLAYER_FACTION_COLOR;
 let selectedNewGamePlayerSideIndex = 0;
 let selectedNewGameSideIndex = 0;
-let pendingNewGameFactionNameFocusIndex = null;
+let newGamePlacementLockPending = false;
 let newGameSessionMode = NEW_GAME_MODE_HOTSEAT;
 let selectedNewGameGovernmentId = NEW_GAME_DEFAULT_GOVERNMENT_ID;
 let newGameAppliedState = null;
@@ -527,6 +566,19 @@ let newGameSideConfigSeed = "";
 let newGameP2pPeers = [];
 let newGameP2pPeerSerial = 0;
 let newGameP2pPendingPeer = null;
+let newGameP2pLocalParticipantId = createSaveId();
+let newGameP2pLocalParticipantName = readNewGameP2pPlayerName();
+let newGameP2pLocalParticipantUpdatedAt = Date.now();
+let newGameP2pParticipants = new Map();
+let newGameP2pEdges = new Map();
+let newGameP2pChatMessages = [];
+let newGameP2pSeenChatMessageIds = new Set();
+let newGameP2pChatMessageSerial = 0;
+let newGameP2pSignalStatusText = "";
+let newGameP2pHandshakeBusy = false;
+let newGamePlayerClaims = new Map();
+let newGameLocalClaimRevision = 0;
+let newGameP2pSeenSetupMessageIds = new Set();
 let menuScene = null;
 let menuCamera = null;
 let menuSky = null;
@@ -545,6 +597,7 @@ let menuStarLinks = null;
 let menuStarPoints = [];
 let menuStarTrailIndices = [];
 let menuStarPilots = [];
+let menuStarTraces = [];
 let menuStarPilotSerial = 0;
 let menuStarGlowTexture = null;
 let menuActiveButton = null;
@@ -563,13 +616,10 @@ const MENU_PLANE_HEIGHT = 5.1;
 const MENU_STAR_LINK_COLOR = 0xbfeaff;
 const MENU_STAR_LINK_MAX_DISTANCE = 5.8;
 const MENU_STAR_LINK_MIN_DISTANCE = 1.35;
-const MENU_STAR_LINK_SPEED_SCALE = 5;
-const MENU_STAR_LINK_TRAIL_DEPTH = 5;
-const MENU_STAR_PILOT_INITIAL_COUNT = 3;
-const MENU_STAR_PILOT_MIN_COUNT = 5;
-const MENU_STAR_PILOT_MAX_COUNT = 10;
-const MENU_STAR_PILOT_BRANCH_CHANCE = 0.32;
-const MENU_STAR_PILOT_STOP_CHANCE = 0.13;
+const MENU_STAR_PILOT_COUNT = 4;
+const MENU_STAR_TRAIL_SPRITE_COUNT = 14;
+const MENU_STAR_ROUTE_SAMPLE_COUNT = 32;
+const MENU_STAR_TRACE_FADE_SECONDS = 1.45;
 const MENU_BUTTON_BLUR_MAX_RECTS = 8;
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 
@@ -1062,20 +1112,31 @@ function initStartMenu() {
     renderNewGameDialog();
   });
   menuPlayerFactionName.addEventListener("input", () => {
+    const config = ensureNewGameSideConfig(selectedNewGameSideIndex);
+    config.name = menuPlayerFactionName.value;
     newGamePlayerFactionName = menuPlayerFactionName.value;
     markNewGameSetupDirty();
     renderNewGameFactionGrid(newGameFactionCount);
     updateNewGameActions();
   });
   menuPlayerFactionColor.addEventListener("click", () => {
+    const unavailableColors = getUnavailableNewGameFactionColors(selectedNewGameSideIndex);
     openColorPicker(menuPlayerFactionColor, newGamePlayerFactionColor, (color) => {
+      if (unavailableColors.has(normalizeNewGameFactionColor(color))) {
+        return;
+      }
+      ensureNewGameSideConfig(selectedNewGameSideIndex).color = normalizeNewGameFactionColor(color);
       newGamePlayerFactionColor = color;
       markNewGameSetupDirty();
       updateNewGamePlayerFactionColor();
       renderNewGameFactionGrid(newGameFactionCount);
       updateNewGameActions();
+    }, {
+      palette: NEW_GAME_FACTION_COLORS,
+      disabledColors: unavailableColors,
     });
   });
+  menuPlayerSideLock?.addEventListener("click", selectNewGamePlayerPlacement);
   menuGovernmentCurrent.addEventListener("click", (event) => {
     event.stopPropagation();
     setNewGameGovernmentDropdownOpen(menuGovernmentList.hidden);
@@ -1084,14 +1145,21 @@ function initStartMenu() {
     event.stopPropagation();
     setNewGameGovernmentDropdownOpen(menuGovernmentList.hidden);
   });
-  menuOnlineConnectButton?.addEventListener("click", connectNewGameOnlinePeer);
-  menuOnlineInviteCode?.addEventListener("input", renderNewGameOnlineConnect);
-  menuOnlineAnswerCode?.addEventListener("input", renderNewGameOnlineConnect);
-  menuOnlineAnswerCode?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
-      connectNewGameOnlinePeer();
-    }
+  menuOnlineConnectButton?.addEventListener("click", createNewGameOnlineInvite);
+  menuOnlineHandshakeButton?.addEventListener("click", handshakeNewGameOnlinePeer);
+  menuOnlineInviteCode?.addEventListener("input", renderNewGameOnlineHandshakeControls);
+  menuOnlineAnswerCode?.addEventListener("input", renderNewGameOnlineHandshakeControls);
+  [menuOnlineInviteCode, menuOnlineAnswerCode].forEach((input) => {
+    input?.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        handshakeNewGameOnlinePeer();
+      }
+    });
   });
+  menuOnlineInviteCopy?.addEventListener("click", () => copyNewGameSignalCode(menuOnlineInviteCode, "INVITE COPIED"));
+  menuOnlineAnswerCopy?.addEventListener("click", () => copyNewGameSignalCode(menuOnlineAnswerCode, "ANSWER COPIED"));
+  menuOnlineChatForm?.addEventListener("submit", sendNewGameP2pChatMessage);
   menuNewGameApply.addEventListener("click", applyOnlineNewGameSetup);
   menuSeedInput.addEventListener("input", () => {
     markNewGameSetupDirty();
@@ -1567,36 +1635,35 @@ function createStartMenuStarField() {
 }
 
 function resetStartMenuStarPilots() {
+  disposeStartMenuStarPilots();
   const source = getStartMenuTrailSource();
   const starts = [];
   menuStarPilotSerial = 0;
-  menuStarPilots = Array.from({ length: MENU_STAR_PILOT_INITIAL_COUNT }, (_, index) => {
+  menuStarPilots = Array.from({ length: MENU_STAR_PILOT_COUNT }, (_, index) => {
     const random = createRandom(`nebulum:start-menu-link-trail:${index}`);
     const currentIndex = chooseStartMenuPilotStart(source, random, starts);
     starts.push(currentIndex);
     return createStartMenuPilot({
       currentIndex,
       random,
-      spawnDelay: (0.12 + index * 0.22 + random() * 0.35) * MENU_STAR_LINK_SPEED_SCALE,
+      spawnDelay: 0.16 + index * 0.42 + random() * 0.36,
     });
   });
 }
 
-function createStartMenuPilot({ currentIndex, previousIndex = null, random, spawnDelay }) {
+function createStartMenuPilot({ currentIndex, random, spawnDelay }) {
   menuStarPilotSerial += 1;
-  const glow = createStartMenuPilotGlow();
-  glow.position.copy(menuStarPoints[currentIndex] ?? new THREE.Vector3());
-  menuStarLinks.add(glow);
+  const visual = createStartMenuPilotVisual();
+  visual.head.position.copy(menuStarPoints[currentIndex] ?? new THREE.Vector3());
+  menuStarLinks.add(visual.root);
   return {
-    active: true,
     currentIndex,
-    glow,
+    flight: null,
     id: menuStarPilotSerial,
-    previousIndex,
+    previousIndex: null,
     random,
-    segments: [],
-    sourceIndex: currentIndex,
     spawnDelay,
+    visual,
   };
 }
 
@@ -1626,171 +1693,123 @@ function chooseStartMenuPilotStart(source, random, starts) {
   return bestIndex;
 }
 
-function createStartMenuPilotGlow() {
-  const material = new THREE.SpriteMaterial({
+function createStartMenuPilotVisual() {
+  const root = new THREE.Group();
+  const head = new THREE.Group();
+  root.add(head);
+
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({
     map: menuStarGlowTexture,
     color: MENU_STAR_LINK_COLOR,
     transparent: true,
-    opacity: 0.52,
+    opacity: 0,
     depthWrite: false,
     depthTest: true,
     blending: THREE.AdditiveBlending,
+  }));
+  glow.scale.set(0.44, 0.44, 1);
+  glow.renderOrder = 3;
+  head.add(glow);
+
+  const core = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: menuStarGlowTexture,
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.AdditiveBlending,
+  }));
+  core.scale.set(0.15, 0.15, 1);
+  core.renderOrder = 4;
+  head.add(core);
+
+  const tail = Array.from({ length: MENU_STAR_TRAIL_SPRITE_COUNT }, (_, index) => {
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: menuStarGlowTexture,
+      color: MENU_STAR_LINK_COLOR,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      depthTest: true,
+      blending: THREE.AdditiveBlending,
+    }));
+    sprite.visible = false;
+    sprite.renderOrder = 2;
+    sprite.userData.tailStrength = 1 - index / MENU_STAR_TRAIL_SPRITE_COUNT;
+    root.add(sprite);
+    return sprite;
   });
-  const sprite = new THREE.Sprite(material);
-  sprite.scale.set(0.46, 0.46, 1);
-  sprite.renderOrder = 2;
-  return sprite;
+
+  return { core, glow, head, root, tail };
 }
 
-function updateStartMenuStarTrail(deltaSeconds) {
+function updateStartMenuStarTrail(deltaSeconds, now = performance.now()) {
   if (!menuStarLinks || menuStarPoints.length < 2) {
     return;
   }
 
-  const pilotCount = menuStarPilots.length;
-  for (let index = 0; index < pilotCount; index += 1) {
-    const pilot = menuStarPilots[index];
-    if (pilot.active) {
+  updateStartMenuTraceFades(deltaSeconds);
+  for (const pilot of menuStarPilots) {
+    if (!pilot.flight) {
       pilot.spawnDelay -= deltaSeconds;
-    }
-    if (pilot.active && pilot.spawnDelay <= 0) {
-      spawnStartMenuStarLink(pilot);
-      pilot.spawnDelay = (0.48 + pilot.random() * 0.34) * MENU_STAR_LINK_SPEED_SCALE;
-    }
-
-    updateStartMenuPilotGlow(pilot);
-    updateStartMenuPilotSegments(pilot, deltaSeconds);
-  }
-
-  for (let index = menuStarPilots.length - 1; index >= 0; index -= 1) {
-    const pilot = menuStarPilots[index];
-    if (!pilot.active && pilot.segments.length === 0) {
-      menuStarPilots.splice(index, 1);
-    }
-  }
-
-  while (
-    countActiveStartMenuPilots() < MENU_STAR_PILOT_MIN_COUNT
-    && countActiveStartMenuPilots() < MENU_STAR_PILOT_MAX_COUNT
-  ) {
-    spawnStartMenuPilotAtRandom();
-  }
-}
-
-function countActiveStartMenuPilots() {
-  return menuStarPilots.reduce((count, pilot) => count + (pilot.active ? 1 : 0), 0);
-}
-
-function spawnStartMenuPilotAtRandom() {
-  const source = getStartMenuTrailSource();
-  const random = createRandom(`nebulum:start-menu-link-trail:${menuStarPilotSerial + 1}`);
-  const starts = menuStarPilots
-    .filter((pilot) => pilot.active)
-    .map((pilot) => pilot.currentIndex);
-  const currentIndex = chooseStartMenuPilotStart(source, random, starts);
-  menuStarPilots.push(createStartMenuPilot({
-    currentIndex,
-    random,
-    spawnDelay: (0.24 + random() * 0.56) * MENU_STAR_LINK_SPEED_SCALE,
-  }));
-}
-
-function updateStartMenuPilotGlow(pilot) {
-  if (!pilot.active) {
-    return;
-  }
-
-  const glowPoint = menuStarPoints[pilot.sourceIndex ?? pilot.currentIndex];
-  if (!glowPoint || !pilot.glow) {
-    return;
-  }
-
-  pilot.glow.position.copy(glowPoint);
-  const pulse = 0.92 + Math.sin(performance.now() * 0.004 + pilot.currentIndex) * 0.08;
-  pilot.glow.scale.setScalar(0.46 * pulse);
-  pilot.glow.material.opacity = 0.48 + (pulse - 0.92) * 0.8;
-}
-
-function updateStartMenuPilotSegments(pilot, deltaSeconds) {
-  scheduleInactiveStartMenuPilotRetraction(pilot);
-
-  for (let index = pilot.segments.length - 1; index >= 0; index -= 1) {
-    const segment = pilot.segments[index];
-    segment.elapsed += deltaSeconds;
-    const position = segment.line.geometry.attributes.position;
-
-    if (segment.retracting) {
-      segment.retractElapsed += deltaSeconds;
-      const retractProgress = easeOutCubic(Math.min(1, segment.retractElapsed / segment.retractSeconds));
-      segment.scratchStart.copy(segment.retractStart).lerp(segment.retractTo, retractProgress);
-      segment.scratchEnd.copy(segment.retractEnd).lerp(segment.retractTo, retractProgress);
-      position.setXYZ(0, segment.scratchStart.x, segment.scratchStart.y, segment.scratchStart.z);
-      position.setXYZ(1, segment.scratchEnd.x, segment.scratchEnd.y, segment.scratchEnd.z);
-      segment.opacity = Math.max(0, segment.opacity - (deltaSeconds * 0.4) / MENU_STAR_LINK_SPEED_SCALE);
-      if (retractProgress >= 1) {
-        segment.opacity = 0;
+      if (pilot.spawnDelay <= 0) {
+        startStartMenuPilotFlight(pilot);
       }
-    } else {
-      const progress = easeOutCubic(Math.min(1, segment.elapsed / segment.growSeconds));
-      segment.scratchEnd.copy(segment.start).lerp(segment.end, progress);
-      position.setXYZ(0, segment.start.x, segment.start.y, segment.start.z);
-      position.setXYZ(1, segment.scratchEnd.x, segment.scratchEnd.y, segment.scratchEnd.z);
-      segment.opacity = THREE.MathUtils.lerp(segment.opacity, 0.52, 0.12);
     }
-
-    position.needsUpdate = true;
-    segment.line.material.opacity = segment.opacity;
-
-    if (segment.opacity <= 0.01) {
-      disposeStartMenuStarLink(segment);
-      pilot.segments.splice(index, 1);
+    if (pilot.flight) {
+      updateStartMenuPilotFlight(pilot, deltaSeconds, now);
     }
   }
 }
 
-function scheduleInactiveStartMenuPilotRetraction(pilot) {
-  if (pilot.active || pilot.segments.some((segment) => segment.retracting)) {
-    return;
-  }
-
-  const oldestReadySegment = pilot.segments.find((segment) => (
-    !segment.retracting
-    && segment.elapsed >= segment.growSeconds + 0.4 * MENU_STAR_LINK_SPEED_SCALE
-  ));
-  if (oldestReadySegment) {
-    retractStartMenuStarLink(oldestReadySegment, oldestReadySegment.end);
-  }
-}
-
-function spawnStartMenuStarLink(pilot) {
-  if (!pilot?.active || menuStarPoints.length < 2) {
+function startStartMenuPilotFlight(pilot) {
+  if (!pilot || menuStarPoints.length < 2) {
     return;
   }
 
   const startIndex = pilot.currentIndex;
   const start = menuStarPoints[startIndex];
-  const activeSegments = pilot.segments.filter((segment) => !segment.retracting);
-  if (activeSegments.length >= MENU_STAR_LINK_TRAIL_DEPTH) {
-    retractStartMenuStarLink(activeSegments[0], activeSegments[0].end);
-  }
-
   const endIndex = chooseStartMenuLinkTarget(pilot, startIndex);
   if (endIndex === startIndex) {
-    stopStartMenuPilot(pilot);
+    pilot.spawnDelay = 0.4 + pilot.random() * 0.8;
     return;
   }
-  const targetHasOutgoingLink = hasStartMenuOutgoingLink(endIndex);
   const end = menuStarPoints[endIndex];
-  pilot.previousIndex = startIndex;
-  pilot.currentIndex = endIndex;
-  pilot.sourceIndex = startIndex;
+  const curve = createStartMenuFlightCurve(start, end, pilot.random);
+  const trace = createStartMenuFlightTrace(curve);
+  menuStarLinks.add(trace.line);
+  pilot.flight = {
+    curve,
+    durationSeconds: 2.25 + curve.getLength() * 0.31 + pilot.random() * 0.72,
+    elapsedSeconds: 0,
+    endIndex,
+    startIndex,
+    tailLength: 0.18 + pilot.random() * 0.05,
+    trace,
+  };
+  pilot.visual.head.position.copy(start);
+}
 
-  const positions = new Float32Array([
-    start.x, start.y, start.z,
-    start.x, start.y, start.z,
-  ]);
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+function createStartMenuFlightCurve(start, end, random) {
+  const midpoint = start.clone().lerp(end, 0.5);
+  const direction = end.clone().sub(start);
+  const distance = direction.length();
+  const normal = new THREE.Vector3(-direction.y, direction.x, 0);
+  if (normal.lengthSq() < 0.0001) {
+    normal.set(1, 0, 0);
+  } else {
+    normal.normalize();
+  }
+  const bend = distance * (0.08 + random() * 0.14) * (random() < 0.5 ? -1 : 1);
+  const control = midpoint.addScaledVector(normal, bend);
+  control.z += (random() - 0.5) * Math.min(1.2, distance * 0.18);
+  return new THREE.QuadraticBezierCurve3(start.clone(), control, end.clone());
+}
+
+function createStartMenuFlightTrace(curve) {
+  const geometry = new THREE.BufferGeometry().setFromPoints(curve.getPoints(MENU_STAR_ROUTE_SAMPLE_COUNT));
+  geometry.setDrawRange(0, 1);
   const material = new THREE.LineBasicMaterial({
     color: MENU_STAR_LINK_COLOR,
     transparent: true,
@@ -1802,79 +1821,93 @@ function spawnStartMenuStarLink(pilot) {
   const line = new THREE.Line(geometry, material);
   line.frustumCulled = false;
   line.renderOrder = 1;
-  menuStarLinks.add(line);
-  pilot.segments.push({
-    elapsed: 0,
-    end,
-    endIndex,
-    growSeconds: 0.42 * MENU_STAR_LINK_SPEED_SCALE,
-    line,
-    opacity: 0,
-    retractElapsed: 0,
-    retractEnd: new THREE.Vector3(),
-    retractSeconds: 0.5 * MENU_STAR_LINK_SPEED_SCALE,
-    retractStart: new THREE.Vector3(),
-    retractTo: new THREE.Vector3(),
-    retracting: false,
-    scratchEnd: new THREE.Vector3(),
-    scratchStart: new THREE.Vector3(),
-    start,
-    startIndex,
+  return { baseOpacity: 0.052, line };
+}
+
+function updateStartMenuPilotFlight(pilot, deltaSeconds, now) {
+  const flight = pilot.flight;
+  flight.elapsedSeconds += deltaSeconds;
+  const rawProgress = THREE.MathUtils.clamp(flight.elapsedSeconds / flight.durationSeconds, 0, 1);
+  const progress = THREE.MathUtils.smoothstep(rawProgress, 0, 1);
+  const launchFade = THREE.MathUtils.smoothstep(rawProgress, 0, 0.06);
+  const arrivalFade = 1 - THREE.MathUtils.smoothstep(rawProgress, 0.9, 1);
+  const visibility = launchFade * arrivalFade;
+  const pulse = 0.94 + Math.sin(now * 0.008 + pilot.id) * 0.06;
+
+  flight.curve.getPoint(progress, pilot.visual.head.position);
+  pilot.visual.glow.scale.setScalar(0.44 * pulse);
+  pilot.visual.glow.material.opacity = 0.72 * visibility;
+  pilot.visual.core.scale.setScalar(0.15 * pulse);
+  pilot.visual.core.material.opacity = 0.98 * visibility;
+
+  for (let index = 0; index < pilot.visual.tail.length; index += 1) {
+    const sprite = pilot.visual.tail[index];
+    const strength = sprite.userData.tailStrength;
+    const tailProgress = progress - flight.tailLength * ((index + 1) / pilot.visual.tail.length);
+    if (tailProgress <= 0 || visibility <= 0.001) {
+      sprite.visible = false;
+      sprite.material.opacity = 0;
+      continue;
+    }
+    flight.curve.getPoint(tailProgress, sprite.position);
+    sprite.visible = true;
+    sprite.scale.setScalar(0.08 + strength * 0.21);
+    sprite.material.opacity = visibility * Math.pow(strength, 1.7) * 0.3;
+  }
+
+  const visiblePoints = Math.max(1, Math.ceil(progress * MENU_STAR_ROUTE_SAMPLE_COUNT) + 1);
+  flight.trace.line.geometry.setDrawRange(0, visiblePoints);
+  flight.trace.line.material.opacity = flight.trace.baseOpacity * (0.42 + visibility * 0.58);
+
+  if (rawProgress >= 1) {
+    finishStartMenuPilotFlight(pilot);
+  }
+}
+
+function finishStartMenuPilotFlight(pilot) {
+  const flight = pilot.flight;
+  flight.trace.line.geometry.setDrawRange(0, MENU_STAR_ROUTE_SAMPLE_COUNT + 1);
+  flight.trace.line.material.opacity = flight.trace.baseOpacity;
+  menuStarTraces.push({
+    ...flight.trace,
+    elapsedSeconds: 0,
+    fadeSeconds: MENU_STAR_TRACE_FADE_SECONDS * (0.82 + pilot.random() * 0.36),
   });
+  pilot.previousIndex = flight.startIndex;
+  pilot.currentIndex = flight.endIndex;
+  pilot.flight = null;
+  pilot.spawnDelay = 0.5 + pilot.random() * 1.35;
+  hideStartMenuPilotVisual(pilot.visual);
+}
 
-  if (targetHasOutgoingLink || pilot.random() < MENU_STAR_PILOT_STOP_CHANCE) {
-    stopStartMenuPilot(pilot);
-    return;
-  }
-
-  if (countActiveStartMenuPilots() < MENU_STAR_PILOT_MAX_COUNT && pilot.random() < MENU_STAR_PILOT_BRANCH_CHANCE) {
-    const branchRandom = createRandom(`nebulum:start-menu-link-trail:${menuStarPilotSerial + 1}`);
-    menuStarPilots.push(createStartMenuPilot({
-      currentIndex: endIndex,
-      previousIndex: startIndex,
-      random: branchRandom,
-      spawnDelay: (0.5 + branchRandom() * 0.38) * MENU_STAR_LINK_SPEED_SCALE,
-    }));
+function hideStartMenuPilotVisual(visual) {
+  visual.glow.material.opacity = 0;
+  visual.core.material.opacity = 0;
+  for (const sprite of visual.tail) {
+    sprite.visible = false;
+    sprite.material.opacity = 0;
   }
 }
 
-function hasStartMenuOutgoingLink(starIndex) {
-  return menuStarPilots.some((pilot) => pilot.segments.some((segment) => (
-    !segment.retracting && segment.startIndex === starIndex
-  )));
-}
-
-function stopStartMenuPilot(pilot) {
-  if (!pilot?.active) {
-    return;
+function updateStartMenuTraceFades(deltaSeconds) {
+  for (let index = menuStarTraces.length - 1; index >= 0; index -= 1) {
+    const trace = menuStarTraces[index];
+    trace.elapsedSeconds += deltaSeconds;
+    const fadeProgress = THREE.MathUtils.clamp(trace.elapsedSeconds / trace.fadeSeconds, 0, 1);
+    trace.line.material.opacity = trace.baseOpacity * (1 - THREE.MathUtils.smoothstep(fadeProgress, 0, 1));
+    if (fadeProgress < 1) {
+      continue;
+    }
+    disposeStartMenuTrace(trace);
+    menuStarTraces.splice(index, 1);
   }
-
-  pilot.active = false;
-  if (pilot.glow) {
-    menuStarLinks.remove(pilot.glow);
-    pilot.glow.material.dispose();
-    pilot.glow = null;
-  }
-}
-
-function retractStartMenuStarLink(segment, target) {
-  if (segment.retracting) {
-    return;
-  }
-
-  const position = segment.line.geometry.attributes.position;
-  segment.retractStart.set(position.getX(0), position.getY(0), position.getZ(0));
-  segment.retractEnd.set(position.getX(1), position.getY(1), position.getZ(1));
-  segment.retractTo.copy(target);
-  segment.retractElapsed = 0;
-  segment.retracting = true;
 }
 
 function chooseStartMenuLinkTarget(pilot, startIndex) {
   const random = pilot.random;
   const start = menuStarPoints[startIndex];
   const source = getStartMenuTrailSource();
-  const occupiedTargets = getStartMenuOutgoingTargets(startIndex);
+  const occupiedTargets = getStartMenuOccupiedTargets(pilot);
   let bestIndex = startIndex;
   let bestScore = Infinity;
 
@@ -1893,7 +1926,7 @@ function chooseStartMenuLinkTarget(pilot, startIndex) {
       continue;
     }
 
-    const score = Math.abs(distance - 2.8) + random() * 0.55;
+    const score = Math.abs(distance - 3.4) + random() * 0.55;
     if (score < bestScore) {
       bestScore = score;
       bestIndex = candidateIndex;
@@ -1912,22 +1945,42 @@ function chooseStartMenuLinkTarget(pilot, startIndex) {
   return fallback ?? startIndex;
 }
 
-function getStartMenuOutgoingTargets(startIndex) {
+function getStartMenuOccupiedTargets(excludedPilot) {
   const targets = new Set();
   for (const pilot of menuStarPilots) {
-    for (const segment of pilot.segments) {
-      if (!segment.retracting && segment.startIndex === startIndex) {
-        targets.add(segment.endIndex);
-      }
+    if (pilot !== excludedPilot && pilot.flight) {
+      targets.add(pilot.flight.endIndex);
     }
   }
   return targets;
 }
 
-function disposeStartMenuStarLink(segment) {
-  menuStarLinks?.remove(segment.line);
-  segment.line.geometry.dispose();
-  segment.line.material.dispose();
+function disposeStartMenuTrace(trace) {
+  menuStarLinks?.remove(trace.line);
+  trace.line.geometry.dispose();
+  trace.line.material.dispose();
+}
+
+function disposeStartMenuStarPilots() {
+  for (const pilot of menuStarPilots) {
+    if (pilot.flight) {
+      disposeStartMenuTrace(pilot.flight.trace);
+    }
+    if (pilot.visual) {
+      menuStarLinks?.remove(pilot.visual.root);
+      pilot.visual.glow.material.dispose();
+      pilot.visual.core.material.dispose();
+      for (const sprite of pilot.visual.tail) {
+        sprite.material.dispose();
+      }
+      pilot.visual.root.clear();
+    }
+  }
+  for (const trace of menuStarTraces) {
+    disposeStartMenuTrace(trace);
+  }
+  menuStarPilots = [];
+  menuStarTraces = [];
 }
 
 function updateMenuPlaneTexture() {
@@ -2046,7 +2099,7 @@ function animateStartMenu() {
     menuStarLinks.rotation.x = THREE.MathUtils.lerp(menuStarLinks.rotation.x, menuStarsRotationTargetX, 0.08);
     menuStarLinks.rotation.y = THREE.MathUtils.lerp(menuStarLinks.rotation.y, menuStarsRotationTargetY, 0.08);
   }
-  updateStartMenuStarTrail(deltaSeconds);
+  updateStartMenuStarTrail(deltaSeconds, now);
 
   renderStartMenuScene();
   menuAnimationFrameId = requestAnimationFrame(animateStartMenu);
@@ -2381,16 +2434,7 @@ function disposeStartMenuScene() {
     menuStars = null;
   }
   if (menuStarLinks) {
-    for (const pilot of menuStarPilots) {
-      for (const segment of pilot.segments) {
-        disposeStartMenuStarLink(segment);
-      }
-      if (pilot.glow) {
-        menuStarLinks.remove(pilot.glow);
-        pilot.glow.material.dispose();
-        pilot.glow = null;
-      }
-    }
+    disposeStartMenuStarPilots();
     menuStarLinks.clear();
     menuStarLinks = null;
   }
@@ -2399,6 +2443,7 @@ function disposeStartMenuScene() {
   menuStarPoints = [];
   menuStarTrailIndices = [];
   menuStarPilots = [];
+  menuStarTraces = [];
   menuStarPilotSerial = 0;
   menuScene?.clear();
   menuScene = null;
@@ -3424,7 +3469,9 @@ function resetNewGameDialog() {
   newGamePlayerFactionColor = NEW_GAME_DEFAULT_PLAYER_FACTION_COLOR;
   selectedNewGamePlayerSideIndex = 0;
   selectedNewGameSideIndex = 0;
-  pendingNewGameFactionNameFocusIndex = null;
+  newGamePlacementLockPending = false;
+  newGamePlayerClaims = new Map();
+  newGameLocalClaimRevision = 0;
   newGameSessionMode = NEW_GAME_MODE_HOTSEAT;
   selectedNewGameGovernmentId = NEW_GAME_DEFAULT_GOVERNMENT_ID;
   newGameAppliedState = null;
@@ -3435,6 +3482,7 @@ function resetNewGameDialog() {
   );
   newGameSideConfigs = createNewGameSideConfigs(newGameFactionCount, MENU_DEFAULT_SEED);
   newGameSideConfigSeed = MENU_DEFAULT_SEED;
+  syncNewGameSelectedSideEditor();
   renderNewGameDialog();
 }
 
@@ -3467,6 +3515,7 @@ function setNewGameGovernment(governmentId) {
     return;
   }
 
+  ensureNewGameSideConfig(selectedNewGameSideIndex).government = governmentId;
   selectedNewGameGovernmentId = governmentId;
   markNewGameSetupDirty();
   renderNewGameDialog();
@@ -3497,6 +3546,10 @@ function renderNewGameDialog() {
   syncNewGameSideConfigs(newGameFactionCount, seed);
   selectedNewGamePlayerSideIndex = THREE.MathUtils.clamp(selectedNewGamePlayerSideIndex, 0, Math.max(0, newGameFactionCount - 1));
   selectedNewGameSideIndex = THREE.MathUtils.clamp(selectedNewGameSideIndex, 0, Math.max(0, newGameFactionCount - 1));
+  if (newGamePlayerClaims.size > 0) {
+    resolveNewGamePlayerClaims();
+  }
+  syncNewGameSelectedSideEditor();
 
   menuScenarioCurrent.textContent = scenario.label;
   menuScenarioImage.src = scenario.image;
@@ -3507,6 +3560,7 @@ function renderNewGameDialog() {
   menuFactionCount.value = String(newGameFactionCount);
   menuPlayerFactionName.value = newGamePlayerFactionName;
   updateNewGamePlayerFactionColor();
+  updateNewGamePlacementLock();
   renderNewGameOnlineConnect();
   if (Number.isFinite(maxFactions)) {
     menuFactionCount.max = String(maxFactions);
@@ -3544,77 +3598,107 @@ function renderNewGameGovernment() {
 }
 
 function renderNewGameOnlineConnect() {
-  if (!menuOnlineConnect || !menuOnlineStatusDots) {
+  if (!menuOnlinePanel || !menuNewGameLayout) {
     return;
   }
 
   const isOnline = newGameSessionMode === NEW_GAME_MODE_ONLINE;
-  menuOnlineConnect.hidden = !isOnline;
+  menuOnlinePanel.hidden = !isOnline;
+  menuNewGameLayout.classList.toggle("menu-dialog__layout--online", isOnline);
   if (!isOnline) {
     return;
   }
 
-  const onlineSideCount = getNewGameOnlineSideCount();
-  const connectedCount = getNewGameOpenPeerCount();
-  menuOnlineStatusDots.replaceChildren();
-  for (let index = 0; index < onlineSideCount; index += 1) {
-    const dot = document.createElement("span");
-    dot.className = "new-game__status-dot";
-    dot.classList.toggle("new-game__status-dot--connected", index < connectedCount);
-    menuOnlineStatusDots.append(dot);
-  }
-
-  if (!menuOnlineConnectButton) {
-    return;
-  }
-  if (newGameP2pPendingPeer?.role === "initiator") {
-    menuOnlineConnectButton.textContent = menuOnlineAnswerCode?.value.trim() ? "APPLY" : "COPY";
-    return;
-  }
-  menuOnlineConnectButton.textContent = menuOnlineInviteCode?.value.trim() ? "ANSWER" : "CONNECT";
+  renderNewGameP2pGraph();
+  renderNewGameOnlineHandshakeControls();
+  renderNewGameP2pChat();
 }
 
-async function connectNewGameOnlinePeer() {
-  if (newGameSessionMode !== NEW_GAME_MODE_ONLINE) {
+function renderNewGameOnlineHandshakeControls() {
+  if (!menuOnlineConnectButton || !menuOnlineHandshakeButton) {
     return;
   }
 
+  const requestingPeer = newGameP2pPeers.some((peer) => peer.handshakeState === "requesting");
+  const connectionLimit = getNewGameOnlineSideCount();
+  menuOnlineConnectButton.disabled = newGameP2pHandshakeBusy
+    || requestingPeer
+    || getNewGameOpenPeerCount() >= connectionLimit;
+  menuOnlineHandshakeButton.disabled = newGameP2pHandshakeBusy;
+  menuOnlineInviteCopy.disabled = !menuOnlineInviteCode?.value.trim();
+  menuOnlineAnswerCopy.disabled = !menuOnlineAnswerCode?.value.trim();
+  menuOnlineSignalStatus.textContent = newGameP2pSignalStatusText;
+}
+
+async function createNewGameOnlineInvite() {
+  if (newGameSessionMode !== NEW_GAME_MODE_ONLINE || newGameP2pHandshakeBusy) {
+    return;
+  }
+
+  pruneUnidentifiedNewGameP2pPeers();
+  newGameP2pHandshakeBusy = true;
+  newGameP2pSignalStatusText = "GENERATING INVITE";
+  let peer = null;
   try {
-    if (newGameP2pPendingPeer?.role === "initiator") {
-      const answerCode = menuOnlineAnswerCode.value.trim();
-      if (!answerCode) {
-        await copyTextToClipboard(menuOnlineInviteCode.value);
-        return;
-      }
-      await applyNewGameP2pAnswer(newGameP2pPendingPeer, answerCode);
-      newGameP2pPendingPeer = null;
-      menuOnlineAnswerCode.value = "";
-      renderNewGameOnlineConnect();
-      return;
-    }
-
-    const inviteCode = menuOnlineInviteCode.value.trim();
-    if (inviteCode) {
-      const description = decodeNewGameP2pDescription(inviteCode);
-      if (description.type !== "offer") {
-        throw new Error("Expected invite offer");
-      }
-      const peer = createNewGameP2pPeer("joiner");
-      const answerCode = await makeNewGameP2pAnswer(peer, description);
-      menuOnlineAnswerCode.value = answerCode;
-      await copyTextToClipboard(answerCode);
-      renderNewGameOnlineConnect();
-      return;
-    }
-
-    const peer = createNewGameP2pPeer("initiator");
+    peer = createNewGameP2pPeer("initiator");
     newGameP2pPendingPeer = peer;
-    const invite = await createNewGameP2pInvite(peer);
-    menuOnlineInviteCode.value = invite;
-    menuOnlineAnswerCode.value = "";
     renderNewGameOnlineConnect();
+    const inviteCode = await createNewGameP2pInvite(peer);
+    menuOnlineInviteCode.value = inviteCode;
+    menuOnlineAnswerCode.value = "";
+    const wasCopied = await copyTextToClipboard(inviteCode);
+    newGameP2pSignalStatusText = wasCopied ? "INVITE COPIED" : "COPY INVITE MANUALLY";
   } catch (error) {
-    setMenuStatus(`P2P ${String(error?.message ?? error).slice(0, 18).toUpperCase()}`);
+    if (peer) {
+      peer.handshakeState = "disconnected";
+    }
+    newGameP2pPendingPeer = null;
+    newGameP2pSignalStatusText = formatNewGameP2pError(error);
+  } finally {
+    newGameP2pHandshakeBusy = false;
+    renderNewGameOnlineConnect();
+  }
+}
+
+async function handshakeNewGameOnlinePeer() {
+  if (newGameSessionMode !== NEW_GAME_MODE_ONLINE || newGameP2pHandshakeBusy) {
+    return;
+  }
+
+  newGameP2pHandshakeBusy = true;
+  newGameP2pSignalStatusText = "READING CLIPBOARD";
+  renderNewGameOnlineConnect();
+  try {
+    const clipboardCode = await readTextFromClipboard();
+    if (newGameP2pPendingPeer?.role === "initiator") {
+      const answerCode = getNewGameP2pSignalCode("answer", [menuOnlineAnswerCode.value, clipboardCode]);
+      if (!answerCode) {
+        throw new Error("Answer code not found");
+      }
+      menuOnlineAnswerCode.value = answerCode;
+      const peer = newGameP2pPendingPeer;
+      await applyNewGameP2pAnswer(peer, answerCode);
+      newGameP2pPendingPeer = null;
+      newGameP2pSignalStatusText = "WAITING FOR PEER";
+      return;
+    }
+
+    const inviteCode = getNewGameP2pSignalCode("offer", [menuOnlineInviteCode.value, clipboardCode]);
+    if (!inviteCode) {
+      throw new Error("Invite code not found");
+    }
+    menuOnlineInviteCode.value = inviteCode;
+    menuOnlineAnswerCode.value = "";
+    const peer = createNewGameP2pPeer("joiner");
+    const offer = decodeNewGameP2pDescription(inviteCode);
+    const answerCode = await makeNewGameP2pAnswer(peer, offer);
+    menuOnlineAnswerCode.value = answerCode;
+    const wasCopied = await copyTextToClipboard(answerCode);
+    newGameP2pSignalStatusText = wasCopied ? "ANSWER COPIED" : "COPY ANSWER MANUALLY";
+  } catch (error) {
+    newGameP2pSignalStatusText = formatNewGameP2pError(error);
+  } finally {
+    newGameP2pHandshakeBusy = false;
     renderNewGameOnlineConnect();
   }
 }
@@ -3626,11 +3710,13 @@ function createNewGameP2pPeer(role) {
     role,
     pc,
     channel: null,
+    handshakeState: "requesting",
+    remoteParticipantId: null,
   };
   newGameP2pPeers.push(peer);
 
-  pc.onconnectionstatechange = () => renderNewGameOnlineConnect();
-  pc.oniceconnectionstatechange = () => renderNewGameOnlineConnect();
+  pc.onconnectionstatechange = () => updateNewGameP2pPeerState(peer);
+  pc.oniceconnectionstatechange = () => updateNewGameP2pPeerState(peer);
   pc.ondatachannel = (event) => attachNewGameP2pChannel(peer, event.channel);
   return peer;
 }
@@ -3638,14 +3724,81 @@ function createNewGameP2pPeer(role) {
 function attachNewGameP2pChannel(peer, channel) {
   peer.channel = channel;
   channel.onopen = () => {
+    peer.handshakeState = "connected";
+    if (newGameP2pPendingPeer === peer) {
+      newGameP2pPendingPeer = null;
+    }
+    clearNewGameP2pSignalCodes();
+    newGameP2pSignalStatusText = "CONNECTED";
+    sendNewGameP2pPresence(peer);
     renderNewGameOnlineConnect();
     if (newGameAppliedState && !isNewGameSetupDirty) {
       sendNewGameSetupToPeer(peer);
     }
   };
-  channel.onclose = () => renderNewGameOnlineConnect();
-  channel.onerror = () => renderNewGameOnlineConnect();
+  channel.onclose = () => updateNewGameP2pPeerState(peer);
+  channel.onerror = () => updateNewGameP2pPeerState(peer);
   channel.onmessage = (event) => handleNewGameP2pMessage(peer, event.data);
+}
+
+function updateNewGameP2pPeerState(peer) {
+  const state = peer.channel?.readyState === "open"
+    ? "connected"
+    : peer.channel?.readyState === "closed" || ["failed", "disconnected", "closed"].includes(peer.pc?.connectionState)
+      ? "disconnected"
+      : "requesting";
+  if (peer.handshakeState === state) {
+    renderNewGameOnlineConnect();
+    return;
+  }
+
+  peer.handshakeState = state;
+  if (state === "disconnected" && newGameP2pPendingPeer === peer) {
+    newGameP2pPendingPeer = null;
+  }
+  if (peer.remoteParticipantId) {
+    const changed = setNewGameP2pEdgeState(
+      newGameP2pLocalParticipantId,
+      peer.remoteParticipantId,
+      state,
+      peer.role === "initiator" ? newGameP2pLocalParticipantId : peer.remoteParticipantId,
+      peer.role === "initiator" ? peer.remoteParticipantId : newGameP2pLocalParticipantId,
+    );
+    if (changed) {
+      broadcastNewGameP2pTopology();
+    }
+  }
+  renderNewGameOnlineConnect();
+}
+
+function clearNewGameP2pSignalCodes() {
+  menuOnlineInviteCode.value = "";
+  menuOnlineAnswerCode.value = "";
+}
+
+function pruneUnidentifiedNewGameP2pPeers() {
+  newGameP2pPeers = newGameP2pPeers.filter((peer) => (
+    peer.remoteParticipantId || peer.handshakeState !== "disconnected"
+  ));
+}
+
+function getNewGameP2pSignalCode(expectedType, candidates) {
+  for (const candidate of candidates) {
+    const code = String(candidate ?? "").trim();
+    if (!code) {
+      continue;
+    }
+    try {
+      if (decodeNewGameP2pDescription(code).type === expectedType) {
+        return code;
+      }
+    } catch {}
+  }
+  return "";
+}
+
+function formatNewGameP2pError(error) {
+  return `P2P ${String(error?.message ?? error).slice(0, 30).toUpperCase()}`;
 }
 
 async function createNewGameP2pInvite(peer) {
@@ -3724,10 +3877,11 @@ function decodeNewGameP2pDescription(code) {
 async function copyTextToClipboard(text) {
   const value = String(text ?? "");
   if (!value) {
-    return;
+    return false;
   }
   try {
     await navigator.clipboard.writeText(value);
+    return true;
   } catch {
     const textarea = document.createElement("textarea");
     textarea.value = value;
@@ -3737,9 +3891,466 @@ async function copyTextToClipboard(text) {
     textarea.focus();
     textarea.select();
     try {
-      document.execCommand("copy");
-    } catch {}
-    textarea.remove();
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    } finally {
+      textarea.remove();
+    }
+  }
+}
+
+async function readTextFromClipboard() {
+  try {
+    return await navigator.clipboard.readText();
+  } catch {
+    return "";
+  }
+}
+
+async function copyNewGameSignalCode(input, successStatus) {
+  const wasCopied = await copyTextToClipboard(input?.value);
+  newGameP2pSignalStatusText = wasCopied ? successStatus : "COPY FAILED";
+  renderNewGameOnlineHandshakeControls();
+}
+
+function renderNewGameP2pGraph() {
+  if (!menuOnlineGraphLinks || !menuOnlineGraphNodes) {
+    return;
+  }
+
+  const slots = getNewGameP2pGraphSlots();
+  const positions = getNewGameP2pGraphPositions(slots.length);
+  const definitions = document.createElementNS(SVG_NAMESPACE, "defs");
+  menuOnlineGraphLinks.replaceChildren(definitions);
+  menuOnlineGraphNodes.replaceChildren();
+
+  for (let firstIndex = 0; firstIndex < slots.length; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < slots.length; secondIndex += 1) {
+      const firstSlot = slots[firstIndex];
+      const secondSlot = slots[secondIndex];
+      const firstPosition = positions[firstIndex];
+      const secondPosition = positions[secondIndex];
+      const edgeState = getNewGameP2pGraphEdgeState(firstSlot, secondSlot);
+      const line = document.createElementNS(SVG_NAMESPACE, "line");
+      line.classList.add("new-game-online-graph__link", `new-game-online-graph__link--${edgeState.status}`);
+      line.setAttribute("x1", String(firstPosition.x));
+      line.setAttribute("y1", String(firstPosition.y));
+      line.setAttribute("x2", String(secondPosition.x));
+      line.setAttribute("y2", String(secondPosition.y));
+      if (["requesting", "disconnected"].includes(edgeState.status)) {
+        const sourceId = edgeState.status === "requesting" ? edgeState.initiatorId : edgeState.inviteeId;
+        const sourcePosition = sourceId === secondSlot.id ? secondPosition : firstPosition;
+        const targetPosition = sourceId === secondSlot.id ? firstPosition : secondPosition;
+        const gradientId = `p2p-link-${firstIndex}-${secondIndex}-${edgeState.status}`;
+        definitions.append(createNewGameP2pLinkGradient(
+          gradientId,
+          sourcePosition,
+          targetPosition,
+          edgeState.status,
+        ));
+        line.setAttribute("stroke", `url(#${gradientId})`);
+      }
+      menuOnlineGraphLinks.append(line);
+    }
+  }
+
+  slots.forEach((slot, index) => {
+    const position = positions[index];
+    const node = document.createElement("div");
+    const labelPlacement = getNewGameP2pLabelPlacement(position);
+    node.className = [
+      "new-game-online-graph__node",
+      `new-game-online-graph__node--${slot.status}`,
+      `new-game-online-graph__node--label-${labelPlacement}`,
+    ].join(" ");
+    node.style.setProperty("--p2p-node-x", `${(position.x / NEW_GAME_P2P_GRAPH_WIDTH) * 100}%`);
+    node.style.setProperty("--p2p-node-y", `${(position.y / NEW_GAME_P2P_GRAPH_HEIGHT) * 100}%`);
+    const marker = document.createElement("span");
+    marker.className = "new-game-online-graph__marker";
+    marker.title = getNewGameP2pStatusLabel(slot.status);
+    if (slot.isLocal) {
+      const input = document.createElement("input");
+      input.className = "new-game-online-graph__name new-game-online-graph__name--local";
+      input.type = "text";
+      input.maxLength = NEW_GAME_P2P_PARTICIPANT_NAME_MAX_LENGTH;
+      input.value = newGameP2pLocalParticipantName;
+      input.setAttribute("aria-label", "Your peer name");
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          input.blur();
+        } else if (event.key === "Escape") {
+          input.value = newGameP2pLocalParticipantName;
+          input.blur();
+        }
+      });
+      input.addEventListener("change", () => commitNewGameP2pLocalParticipantName(input.value));
+      node.append(marker, input);
+    } else {
+      const label = document.createElement("span");
+      label.className = "new-game-online-graph__name";
+      label.textContent = slot.name;
+      label.title = slot.name;
+      node.append(marker, label);
+    }
+    menuOnlineGraphNodes.append(node);
+  });
+}
+
+function getNewGameP2pGraphSlots() {
+  const requiredParticipantCount = Math.min(
+    NEW_GAME_MAX_SIDE_COUNT,
+    Math.max(1, getNewGameOnlineSideCount() + 1),
+  );
+  const slots = [{
+    id: newGameP2pLocalParticipantId,
+    isLocal: true,
+    name: newGameP2pLocalParticipantName,
+    status: "connected",
+  }];
+  const participants = [...newGameP2pParticipants.values()]
+    .filter((participant) => participant.id !== newGameP2pLocalParticipantId)
+    .sort((first, second) => (
+      getNewGameP2pParticipantStatusRank(second.id) - getNewGameP2pParticipantStatusRank(first.id)
+      || first.id.localeCompare(second.id)
+    ));
+  const pendingPeers = newGameP2pPeers
+    .filter((peer) => !peer.remoteParticipantId)
+    .sort((first, second) => second.id - first.id);
+
+  for (const participant of participants) {
+    if (slots.length >= requiredParticipantCount) {
+      break;
+    }
+    slots.push({
+      id: participant.id,
+      isLocal: false,
+      name: participant.name,
+      status: getNewGameP2pParticipantStatus(participant.id),
+    });
+  }
+  for (const peer of pendingPeers) {
+    if (slots.length >= requiredParticipantCount) {
+      break;
+    }
+    slots.push({
+      id: `pending:${peer.id}`,
+      isLocal: false,
+      name: `PLAYER ${slots.length + 1}`,
+      peer,
+      status: peer.handshakeState,
+    });
+  }
+  while (slots.length < requiredParticipantCount) {
+    slots.push({
+      id: `empty:${slots.length}`,
+      isLocal: false,
+      name: `PLAYER ${slots.length + 1}`,
+      status: "idle",
+    });
+  }
+  return slots;
+}
+
+function getNewGameP2pGraphPositions(count) {
+  if (count === 1) {
+    return [{ x: NEW_GAME_P2P_GRAPH_WIDTH / 2, y: NEW_GAME_P2P_GRAPH_HEIGHT / 2 }];
+  }
+  const radius = count > 10 ? 84 : count > 6 ? 78 : 70;
+  return Array.from({ length: count }, (_, index) => {
+    const angle = -Math.PI / 2 + (index / count) * Math.PI * 2;
+    return {
+      x: NEW_GAME_P2P_GRAPH_WIDTH / 2 + Math.cos(angle) * radius,
+      y: NEW_GAME_P2P_GRAPH_HEIGHT / 2 + Math.sin(angle) * radius,
+    };
+  });
+}
+
+function getNewGameP2pLabelPlacement(position) {
+  const offsetX = position.x - NEW_GAME_P2P_GRAPH_WIDTH / 2;
+  const offsetY = position.y - NEW_GAME_P2P_GRAPH_HEIGHT / 2;
+  if (Math.abs(offsetX) > Math.abs(offsetY)) {
+    return offsetX < 0 ? "left" : "right";
+  }
+  return offsetY < 0 ? "top" : "bottom";
+}
+
+function getNewGameP2pGraphEdgeState(firstSlot, secondSlot) {
+  const pendingSlot = firstSlot.peer ? firstSlot : secondSlot.peer ? secondSlot : null;
+  const localSlot = firstSlot.isLocal ? firstSlot : secondSlot.isLocal ? secondSlot : null;
+  if (pendingSlot && localSlot) {
+    const inviterId = pendingSlot.peer.role === "initiator" ? localSlot.id : pendingSlot.id;
+    return {
+      status: pendingSlot.peer.handshakeState,
+      initiatorId: inviterId,
+      inviteeId: inviterId === localSlot.id ? pendingSlot.id : localSlot.id,
+    };
+  }
+  const edge = newGameP2pEdges.get(getNewGameP2pEdgeKey(firstSlot.id, secondSlot.id));
+  return edge ?? { status: "idle", initiatorId: null, inviteeId: null };
+}
+
+function createNewGameP2pLinkGradient(id, source, target, status) {
+  const gradient = document.createElementNS(SVG_NAMESPACE, "linearGradient");
+  gradient.id = id;
+  gradient.setAttribute("gradientUnits", "userSpaceOnUse");
+  gradient.setAttribute("x1", String(source.x));
+  gradient.setAttribute("y1", String(source.y));
+  gradient.setAttribute("x2", String(target.x));
+  gradient.setAttribute("y2", String(target.y));
+  const activeColor = status === "requesting" ? "#e1bd4e" : "#da4f55";
+  [
+    ["0%", activeColor, "0.9"],
+    ["44%", activeColor, "0.7"],
+    ["54%", "#ffffff", "0.1"],
+    ["100%", "#ffffff", "0.1"],
+  ].forEach(([offset, color, opacity]) => {
+    const stop = document.createElementNS(SVG_NAMESPACE, "stop");
+    stop.setAttribute("offset", offset);
+    stop.setAttribute("stop-color", color);
+    stop.setAttribute("stop-opacity", opacity);
+    gradient.append(stop);
+  });
+  return gradient;
+}
+
+function getNewGameP2pParticipantStatus(participantId) {
+  const incidentEdges = [...newGameP2pEdges.values()].filter((edge) => (
+    edge.firstId === participantId || edge.secondId === participantId
+  ));
+  if (incidentEdges.some((edge) => edge.status === "connected")) {
+    return "connected";
+  }
+  if (incidentEdges.some((edge) => edge.status === "requesting")) {
+    return "requesting";
+  }
+  if (incidentEdges.some((edge) => edge.status === "disconnected")) {
+    return "disconnected";
+  }
+  return "idle";
+}
+
+function getNewGameP2pParticipantStatusRank(participantId) {
+  return { idle: 0, disconnected: 1, requesting: 2, connected: 3 }[getNewGameP2pParticipantStatus(participantId)] ?? 0;
+}
+
+function getNewGameP2pStatusLabel(status) {
+  return {
+    connected: "Connected",
+    disconnected: "Connection lost",
+    requesting: "Handshake requested",
+    idle: "Not connected",
+  }[status] ?? "Not connected";
+}
+
+function getNewGameP2pEdgeKey(firstId, secondId) {
+  return [String(firstId), String(secondId)].sort().join("|");
+}
+
+function setNewGameP2pEdgeState(firstId, secondId, status, initiatorId, inviteeId, updatedAt = Date.now()) {
+  if (!firstId || !secondId || firstId === secondId) {
+    return false;
+  }
+  const key = getNewGameP2pEdgeKey(firstId, secondId);
+  const current = newGameP2pEdges.get(key);
+  if (current && current.updatedAt > updatedAt) {
+    return false;
+  }
+  const [normalizedFirstId, normalizedSecondId] = [String(firstId), String(secondId)].sort();
+  const next = {
+    firstId: normalizedFirstId,
+    secondId: normalizedSecondId,
+    status: ["requesting", "connected", "disconnected"].includes(status) ? status : "idle",
+    initiatorId: String(initiatorId ?? ""),
+    inviteeId: String(inviteeId ?? ""),
+    updatedAt: Number(updatedAt) || Date.now(),
+  };
+  if (current && JSON.stringify(current) === JSON.stringify(next)) {
+    return false;
+  }
+  newGameP2pEdges.set(key, next);
+  return true;
+}
+
+function sendNewGameP2pPresence(peer) {
+  if (peer.channel?.readyState !== "open") {
+    return;
+  }
+  peer.channel.send(JSON.stringify({
+    type: "nebulum-p2p-presence",
+    participant: getNewGameP2pLocalParticipant(),
+    participants: getNewGameP2pParticipantPayload(),
+    edges: [...newGameP2pEdges.values()],
+  }));
+}
+
+function getNewGameP2pLocalParticipant() {
+  return {
+    id: newGameP2pLocalParticipantId,
+    name: newGameP2pLocalParticipantName,
+    updatedAt: newGameP2pLocalParticipantUpdatedAt,
+  };
+}
+
+function getNewGameP2pParticipantPayload() {
+  return [getNewGameP2pLocalParticipant(), ...newGameP2pParticipants.values()];
+}
+
+function mergeNewGameP2pParticipant(rawParticipant) {
+  const id = String(rawParticipant?.id ?? "").trim();
+  if (!id || id === newGameP2pLocalParticipantId) {
+    return false;
+  }
+  const name = normalizeNewGameP2pParticipantName(rawParticipant?.name, "PLAYER");
+  const updatedAt = Number(rawParticipant?.updatedAt) || 0;
+  const current = newGameP2pParticipants.get(id);
+  if (current && current.updatedAt > updatedAt) {
+    return false;
+  }
+  if (current?.name === name && current.updatedAt === updatedAt) {
+    return false;
+  }
+  newGameP2pParticipants.set(id, { id, name, updatedAt });
+  return true;
+}
+
+function mergeNewGameP2pNetwork(participants, edges) {
+  let changed = false;
+  for (const participant of Array.isArray(participants) ? participants : []) {
+    changed = mergeNewGameP2pParticipant(participant) || changed;
+  }
+  for (const edge of Array.isArray(edges) ? edges : []) {
+    changed = setNewGameP2pEdgeState(
+      edge?.firstId,
+      edge?.secondId,
+      edge?.status,
+      edge?.initiatorId,
+      edge?.inviteeId,
+      edge?.updatedAt,
+    ) || changed;
+  }
+  return changed;
+}
+
+function broadcastNewGameP2pTopology(excludedPeer = null) {
+  const message = JSON.stringify({
+    type: "nebulum-p2p-topology",
+    participants: getNewGameP2pParticipantPayload(),
+    edges: [...newGameP2pEdges.values()],
+  });
+  for (const peer of newGameP2pPeers) {
+    if (peer !== excludedPeer && peer.channel?.readyState === "open") {
+      peer.channel.send(message);
+    }
+  }
+}
+
+function commitNewGameP2pLocalParticipantName(value) {
+  const name = normalizeNewGameP2pParticipantName(value, "PLAYER 1");
+  if (name === newGameP2pLocalParticipantName) {
+    renderNewGameP2pGraph();
+    return;
+  }
+  newGameP2pLocalParticipantName = name;
+  newGameP2pLocalParticipantUpdatedAt = Date.now();
+  try {
+    localStorage.setItem(NEW_GAME_P2P_PLAYER_NAME_STORAGE_KEY, name);
+  } catch {}
+  for (const peer of newGameP2pPeers) {
+    sendNewGameP2pPresence(peer);
+  }
+  broadcastNewGameP2pTopology();
+  renderNewGameP2pGraph();
+}
+
+function readNewGameP2pPlayerName() {
+  try {
+    return normalizeNewGameP2pParticipantName(
+      localStorage.getItem(NEW_GAME_P2P_PLAYER_NAME_STORAGE_KEY),
+      "PLAYER 1",
+    );
+  } catch {
+    return "PLAYER 1";
+  }
+}
+
+function normalizeNewGameP2pParticipantName(value, fallback) {
+  return String(value ?? "").trim().slice(0, NEW_GAME_P2P_PARTICIPANT_NAME_MAX_LENGTH) || fallback;
+}
+
+function renderNewGameP2pChat() {
+  if (!menuOnlineChatMessages) {
+    return;
+  }
+  menuOnlineChatMessages.replaceChildren();
+  for (const message of newGameP2pChatMessages) {
+    const row = document.createElement("div");
+    row.className = "new-game-online-chat__message";
+    row.classList.toggle("new-game-online-chat__message--local", message.senderId === newGameP2pLocalParticipantId);
+    const header = document.createElement("div");
+    header.className = "new-game-online-chat__message-header";
+    const sender = document.createElement("span");
+    sender.className = "new-game-online-chat__sender";
+    sender.textContent = message.senderName;
+    const time = document.createElement("time");
+    time.className = "new-game-online-chat__time";
+    time.dateTime = new Date(message.sentAt).toISOString();
+    time.textContent = new Date(message.sentAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    const text = document.createElement("p");
+    text.className = "new-game-online-chat__text";
+    text.textContent = message.text;
+    header.append(sender, time);
+    row.append(header, text);
+    menuOnlineChatMessages.append(row);
+  }
+  menuOnlineChatMessages.scrollTop = menuOnlineChatMessages.scrollHeight;
+}
+
+function sendNewGameP2pChatMessage(event) {
+  event.preventDefault();
+  const text = String(menuOnlineChatInput?.value ?? "").trim().slice(0, NEW_GAME_P2P_CHAT_MESSAGE_MAX_LENGTH);
+  if (!text) {
+    return;
+  }
+  const message = {
+    id: `${newGameP2pLocalParticipantId}:${++newGameP2pChatMessageSerial}`,
+    senderId: newGameP2pLocalParticipantId,
+    senderName: newGameP2pLocalParticipantName,
+    sentAt: Date.now(),
+    text,
+  };
+  menuOnlineChatInput.value = "";
+  acceptNewGameP2pChatMessage(message);
+  broadcastNewGameP2pChatMessage(message);
+}
+
+function acceptNewGameP2pChatMessage(rawMessage) {
+  const id = String(rawMessage?.id ?? "").trim();
+  const senderId = String(rawMessage?.senderId ?? "").trim();
+  const text = String(rawMessage?.text ?? "").trim().slice(0, NEW_GAME_P2P_CHAT_MESSAGE_MAX_LENGTH);
+  if (!id || !senderId || !text || newGameP2pSeenChatMessageIds.has(id)) {
+    return false;
+  }
+  newGameP2pSeenChatMessageIds.add(id);
+  newGameP2pChatMessages.push({
+    id,
+    senderId,
+    senderName: normalizeNewGameP2pParticipantName(rawMessage?.senderName, "PLAYER"),
+    sentAt: Number(rawMessage?.sentAt) || Date.now(),
+    text,
+  });
+  newGameP2pChatMessages = newGameP2pChatMessages.slice(-200);
+  renderNewGameP2pChat();
+  return true;
+}
+
+function broadcastNewGameP2pChatMessage(message, excludedPeer = null) {
+  const payload = JSON.stringify({ type: "nebulum-p2p-chat", message });
+  for (const peer of newGameP2pPeers) {
+    if (peer !== excludedPeer && peer.channel?.readyState === "open") {
+      peer.channel.send(payload);
+    }
   }
 }
 
@@ -3751,18 +4362,71 @@ function handleNewGameP2pMessage(peer, rawMessage) {
     return;
   }
 
+  if (message.type === "nebulum-p2p-presence") {
+    const remoteParticipantId = String(message.participant?.id ?? "").trim();
+    if (!remoteParticipantId || remoteParticipantId === newGameP2pLocalParticipantId) {
+      return;
+    }
+    peer.remoteParticipantId = remoteParticipantId;
+    let changed = mergeNewGameP2pParticipant(message.participant);
+    changed = mergeNewGameP2pNetwork(message.participants, message.edges) || changed;
+    changed = setNewGameP2pEdgeState(
+      newGameP2pLocalParticipantId,
+      remoteParticipantId,
+      peer.channel?.readyState === "open" ? "connected" : peer.handshakeState,
+      peer.role === "initiator" ? newGameP2pLocalParticipantId : remoteParticipantId,
+      peer.role === "initiator" ? remoteParticipantId : newGameP2pLocalParticipantId,
+    ) || changed;
+    if (changed) {
+      broadcastNewGameP2pTopology(peer);
+    }
+    renderNewGameOnlineConnect();
+    return;
+  }
+
+  if (message.type === "nebulum-p2p-topology") {
+    if (mergeNewGameP2pNetwork(message.participants, message.edges)) {
+      broadcastNewGameP2pTopology(peer);
+      renderNewGameOnlineConnect();
+    }
+    return;
+  }
+
+  if (message.type === "nebulum-p2p-chat") {
+    if (acceptNewGameP2pChatMessage(message.message)) {
+      broadcastNewGameP2pChatMessage(message.message, peer);
+    }
+    return;
+  }
+
   if (message.type !== "nebulum-new-game-setup") {
     return;
+  }
+  const setupMessageId = String(message.id ?? "").trim();
+  if (setupMessageId && newGameP2pSeenSetupMessageIds.has(setupMessageId)) {
+    return;
+  }
+  if (setupMessageId) {
+    newGameP2pSeenSetupMessageIds.add(setupMessageId);
   }
   applyNewGameOnlineMenuState(message.menuState);
   newGameAppliedState = normalizeGameState(createNewGameInitialGameState());
   isNewGameSetupDirty = false;
+  const relayMessage = JSON.stringify(message);
+  for (const relayPeer of newGameP2pPeers) {
+    if (relayPeer !== peer && relayPeer.channel?.readyState === "open") {
+      relayPeer.channel.send(relayMessage);
+    }
+  }
   renderNewGameDialog();
 }
 
 function broadcastNewGameSetup() {
+  const id = `${newGameP2pLocalParticipantId}:setup:${Date.now()}:${newGameLocalClaimRevision}`;
+  newGameP2pSeenSetupMessageIds.add(id);
   const message = JSON.stringify({
     type: "nebulum-new-game-setup",
+    id,
     menuState: collectNewGameOnlineMenuState(),
   });
   for (const peer of newGameP2pPeers) {
@@ -3776,8 +4440,11 @@ function sendNewGameSetupToPeer(peer) {
   if (peer.channel?.readyState !== "open") {
     return;
   }
+  const id = `${newGameP2pLocalParticipantId}:setup:${Date.now()}:${newGameLocalClaimRevision}`;
+  newGameP2pSeenSetupMessageIds.add(id);
   peer.channel.send(JSON.stringify({
     type: "nebulum-new-game-setup",
+    id,
     menuState: collectNewGameOnlineMenuState(),
   }));
 }
@@ -3789,20 +4456,254 @@ function getNewGameOpenPeerCount() {
 function resetNewGameP2pConnections() {
   for (const peer of newGameP2pPeers) {
     try {
+      if (peer.channel) {
+        peer.channel.onopen = null;
+        peer.channel.onclose = null;
+        peer.channel.onerror = null;
+        peer.channel.onmessage = null;
+      }
       peer.channel?.close();
     } catch {}
     try {
+      if (peer.pc) {
+        peer.pc.onconnectionstatechange = null;
+        peer.pc.oniceconnectionstatechange = null;
+        peer.pc.ondatachannel = null;
+      }
       peer.pc?.close();
     } catch {}
   }
   newGameP2pPeers = [];
   newGameP2pPendingPeer = null;
-  if (menuOnlineInviteCode) {
-    menuOnlineInviteCode.value = "";
+  newGameP2pLocalParticipantId = createSaveId();
+  newGameP2pLocalParticipantUpdatedAt = Date.now();
+  newGameP2pParticipants = new Map();
+  newGameP2pEdges = new Map();
+  newGameP2pChatMessages = [];
+  newGameP2pSeenChatMessageIds = new Set();
+  newGameP2pChatMessageSerial = 0;
+  newGameP2pSignalStatusText = "";
+  newGameP2pHandshakeBusy = false;
+  newGamePlayerClaims = new Map();
+  newGameLocalClaimRevision = 0;
+  newGameP2pSeenSetupMessageIds = new Set();
+  newGamePlacementLockPending = false;
+  clearNewGameP2pSignalCodes();
+  if (menuOnlineChatInput) {
+    menuOnlineChatInput.value = "";
   }
-  if (menuOnlineAnswerCode) {
-    menuOnlineAnswerCode.value = "";
+  menuOnlineChatMessages?.replaceChildren();
+}
+
+function selectNewGamePlayerPlacement() {
+  if (newGameSessionMode !== NEW_GAME_MODE_ONLINE) {
+    return;
   }
+  const availableSideIndex = findAvailableNewGameSideIndex(
+    selectedNewGameSideIndex,
+    getNewGameOccupiedSideIndexes(newGameP2pLocalParticipantId),
+  );
+  if (availableSideIndex < 0) {
+    return;
+  }
+  selectedNewGameSideIndex = availableSideIndex;
+  selectedNewGamePlayerSideIndex = availableSideIndex;
+  newGamePlacementLockPending = true;
+  syncNewGameSelectedSideEditor();
+  markNewGameSetupDirty();
+  renderNewGameDialog();
+}
+
+function commitNewGameLocalPlayerClaim() {
+  if (!newGamePlacementLockPending && newGamePlayerClaims.has(newGameP2pLocalParticipantId)) {
+    const existingClaim = newGamePlayerClaims.get(newGameP2pLocalParticipantId);
+    const side = ensureNewGameSideConfig(existingClaim.resolvedSideIndex ?? selectedNewGamePlayerSideIndex);
+    newGamePlayerClaims.set(newGameP2pLocalParticipantId, {
+      ...existingClaim,
+      participantName: newGameP2pLocalParticipantName,
+      factionName: String(side.name ?? NEW_GAME_DEFAULT_PLAYER_FACTION_NAME).trim() || NEW_GAME_DEFAULT_PLAYER_FACTION_NAME,
+      preferredColor: normalizeNewGameFactionColor(side.color),
+      government: NEW_GAME_GOVERNMENTS[side.government] ? side.government : NEW_GAME_DEFAULT_GOVERNMENT_ID,
+      revision: ++newGameLocalClaimRevision,
+    });
+    resolveNewGamePlayerClaims();
+    return;
+  }
+
+  if (!newGamePlacementLockPending) {
+    return;
+  }
+  const preferredSideIndex = selectedNewGamePlayerSideIndex;
+  const side = ensureNewGameSideConfig(preferredSideIndex);
+  const previousClaim = newGamePlayerClaims.get(newGameP2pLocalParticipantId);
+  const keepsPriority = previousClaim?.preferredSideIndex === preferredSideIndex;
+  newGamePlayerClaims.set(newGameP2pLocalParticipantId, {
+    participantId: newGameP2pLocalParticipantId,
+    participantName: newGameP2pLocalParticipantName,
+    preferredSideIndex,
+    preferredColor: normalizeNewGameFactionColor(side.color),
+    factionName: String(side.name ?? NEW_GAME_DEFAULT_PLAYER_FACTION_NAME).trim() || NEW_GAME_DEFAULT_PLAYER_FACTION_NAME,
+    government: NEW_GAME_GOVERNMENTS[side.government] ? side.government : NEW_GAME_DEFAULT_GOVERNMENT_ID,
+    lockedAt: keepsPriority ? previousClaim.lockedAt : new Date().toISOString(),
+    revision: ++newGameLocalClaimRevision,
+  });
+  newGamePlacementLockPending = false;
+  resolveNewGamePlayerClaims();
+}
+
+function mergeNewGamePlayerClaims(rawClaims) {
+  let changed = false;
+  for (const rawClaim of Array.isArray(rawClaims) ? rawClaims : []) {
+    const claim = normalizeNewGamePlayerClaim(rawClaim);
+    if (!claim || claim.participantId === newGameP2pLocalParticipantId) {
+      continue;
+    }
+    const current = newGamePlayerClaims.get(claim.participantId);
+    if (current && Number(current.revision) >= claim.revision) {
+      continue;
+    }
+    newGamePlayerClaims.set(claim.participantId, claim);
+    changed = true;
+  }
+  if (changed) {
+    resolveNewGamePlayerClaims();
+  }
+  return changed;
+}
+
+function normalizeNewGamePlayerClaim(rawClaim) {
+  const participantId = String(rawClaim?.participantId ?? "").trim();
+  if (!participantId) {
+    return null;
+  }
+  return {
+    participantId,
+    participantName: normalizeNewGameP2pParticipantName(rawClaim?.participantName, "PLAYER"),
+    preferredSideIndex: Math.max(0, Number.parseInt(rawClaim?.preferredSideIndex, 10) || 0),
+    preferredColor: normalizeNewGameFactionColor(rawClaim?.preferredColor),
+    factionName: String(rawClaim?.factionName ?? NEW_GAME_DEFAULT_PLAYER_FACTION_NAME).trim()
+      || NEW_GAME_DEFAULT_PLAYER_FACTION_NAME,
+    government: NEW_GAME_GOVERNMENTS[rawClaim?.government]
+      ? rawClaim.government
+      : NEW_GAME_DEFAULT_GOVERNMENT_ID,
+    lockedAt: String(rawClaim?.lockedAt ?? new Date().toISOString()),
+    revision: Math.max(1, Number.parseInt(rawClaim?.revision, 10) || 1),
+  };
+}
+
+function resolveNewGamePlayerClaims() {
+  const occupiedSideIndexes = new Set();
+  const occupiedColors = new Set();
+  const claims = [...newGamePlayerClaims.values()].sort((first, second) => (
+    String(first.lockedAt).localeCompare(String(second.lockedAt))
+    || first.participantId.localeCompare(second.participantId)
+  ));
+  for (const claim of claims) {
+    const resolvedSideIndex = findAvailableNewGameSideIndex(claim.preferredSideIndex, occupiedSideIndexes);
+    if (resolvedSideIndex < 0) {
+      claim.resolvedSideIndex = -1;
+      continue;
+    }
+    const resolvedColor = findAvailableNewGameFactionColor(claim.preferredColor, occupiedColors);
+    claim.resolvedSideIndex = resolvedSideIndex;
+    claim.resolvedColor = resolvedColor;
+    occupiedSideIndexes.add(resolvedSideIndex);
+    occupiedColors.add(resolvedColor);
+
+    const side = ensureNewGameSideConfig(resolvedSideIndex);
+    side.name = claim.factionName;
+    side.color = resolvedColor;
+    side.government = claim.government;
+    side.connectionMode = claim.participantId === newGameP2pLocalParticipantId
+      ? NEW_GAME_SIDE_MODE_LOCAL
+      : NEW_GAME_SIDE_MODE_ONLINE;
+  }
+
+  const localClaim = newGamePlayerClaims.get(newGameP2pLocalParticipantId);
+  if (localClaim?.resolvedSideIndex >= 0) {
+    selectedNewGamePlayerSideIndex = localClaim.resolvedSideIndex;
+    selectedNewGameSideIndex = localClaim.resolvedSideIndex;
+  }
+  syncNewGameSelectedSideEditor();
+}
+
+function findAvailableNewGameSideIndex(preferredIndex, occupiedIndexes) {
+  if (newGameFactionCount <= 0 || occupiedIndexes.size >= newGameFactionCount) {
+    return -1;
+  }
+  const startIndex = THREE.MathUtils.clamp(Number.parseInt(preferredIndex, 10) || 0, 0, newGameFactionCount - 1);
+  for (let offset = 0; offset < newGameFactionCount; offset += 1) {
+    const index = (startIndex + offset) % newGameFactionCount;
+    if (!occupiedIndexes.has(index)) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function findAvailableNewGameFactionColor(preferredColor, occupiedColors) {
+  const normalizedPreferredColor = normalizeNewGameFactionColor(preferredColor);
+  const startIndex = Math.max(0, NEW_GAME_FACTION_COLORS.indexOf(normalizedPreferredColor));
+  for (let offset = 0; offset < NEW_GAME_FACTION_COLORS.length; offset += 1) {
+    const color = NEW_GAME_FACTION_COLORS[(startIndex + offset) % NEW_GAME_FACTION_COLORS.length];
+    if (!occupiedColors.has(color)) {
+      return color;
+    }
+  }
+  return normalizedPreferredColor;
+}
+
+function getNewGameClaimForSide(sideIndex) {
+  return [...newGamePlayerClaims.values()].find((claim) => claim.resolvedSideIndex === sideIndex) ?? null;
+}
+
+function getNewGameOccupiedSideIndexes(excludedParticipantId = "") {
+  return new Set(
+    [...newGamePlayerClaims.values()]
+      .filter((claim) => claim.participantId !== excludedParticipantId && claim.resolvedSideIndex >= 0)
+      .map((claim) => claim.resolvedSideIndex),
+  );
+}
+
+function getUnavailableNewGameFactionColors(selectedSideIndex) {
+  const selectedClaim = getNewGameClaimForSide(selectedSideIndex);
+  return new Set(
+    [...newGamePlayerClaims.values()]
+      .filter((claim) => claim.participantId !== selectedClaim?.participantId && claim.resolvedColor)
+      .map((claim) => normalizeNewGameFactionColor(claim.resolvedColor)),
+  );
+}
+
+function isNewGameSelectedSideEditable() {
+  if (newGameSessionMode !== NEW_GAME_MODE_ONLINE) {
+    return true;
+  }
+  const claim = getNewGameClaimForSide(selectedNewGameSideIndex);
+  return !claim || claim.participantId === newGameP2pLocalParticipantId;
+}
+
+function updateNewGamePlacementLock() {
+  if (!menuPlayerSideLock) {
+    return;
+  }
+  const isOnline = newGameSessionMode === NEW_GAME_MODE_ONLINE;
+  const claim = getNewGameClaimForSide(selectedNewGameSideIndex);
+  const isLocalClaim = claim?.participantId === newGameP2pLocalParticipantId;
+  const isPending = newGamePlacementLockPending
+    && selectedNewGamePlayerSideIndex === selectedNewGameSideIndex;
+  const isEditable = isNewGameSelectedSideEditable();
+  menuPlayerSideLock.hidden = !isOnline;
+  menuPlayerSideLock.classList.toggle("new-game__placement-lock--active", isLocalClaim || isPending);
+  menuPlayerSideLock.setAttribute("aria-pressed", String(isLocalClaim || isPending));
+  menuPlayerSideLock.title = isLocalClaim
+    ? "Placement locked"
+    : isPending
+      ? "Placement pending APPLY"
+      : "Lock player placement";
+  menuPlayerFactionName.disabled = !isEditable;
+  menuPlayerFactionColor.disabled = !isEditable;
+  menuGovernmentCurrent.disabled = !isEditable;
+  menuGovernmentDropdown.disabled = !isEditable;
 }
 
 function updateNewGameActions() {
@@ -3903,34 +4804,48 @@ function renderNewGameFactionGrid(factionCount) {
   for (let index = 0; index < visibleCount; index += 1) {
     const side = getNewGameRenderedSide(index);
     const isSelected = index === selectedNewGameSideIndex;
-    const isPlayer = index === selectedNewGamePlayerSideIndex;
+    const claim = getNewGameClaimForSide(index);
+    const isPlayer = claim?.participantId === newGameP2pLocalParticipantId
+      || (newGamePlacementLockPending && index === selectedNewGamePlayerSideIndex);
+    const isLocked = Boolean(claim);
     const sideMode = getNewGameSideMode(index);
     const card = document.createElement("div");
     card.className = "new-game__faction-card";
     card.classList.toggle("new-game__faction-card--player", isPlayer);
+    card.classList.toggle("new-game__faction-card--locked", isLocked);
     card.classList.toggle("new-game__faction-card--selected", isSelected);
     card.classList.toggle("new-game__faction-card--online", sideMode === NEW_GAME_SIDE_MODE_ONLINE);
     card.style.setProperty("--side-color", side.color);
     card.tabIndex = 0;
     card.setAttribute("role", "button");
     card.setAttribute("aria-pressed", String(isSelected));
-    const title = isSelected
-      ? createNewGameFactionNameInput(index, side.name)
-      : createNewGameFactionTitle(side.name);
-    const meta = createNewGameFactionGovernmentControl(index, side.government, { isPlayer, isSelected });
+    const banner = document.createElement("span");
+    banner.className = "new-game__faction-card-banner";
+    banner.setAttribute("aria-hidden", "true");
+    const content = document.createElement("span");
+    content.className = "new-game__faction-card-content";
+    const title = createNewGameFactionTitle(side.name);
+    const meta = document.createElement("span");
+    meta.className = "new-game__faction-card-meta";
+    meta.textContent = getNewGameGovernmentLabel(side.government);
+    content.append(title, meta);
     const modeSelector = createNewGameSideModeSelector(index, sideMode);
-    card.append(modeSelector, title, meta);
+    card.append(modeSelector, banner, content);
+    if (isLocked) {
+      const lock = document.createElement("span");
+      lock.className = "new-game__faction-card-lock";
+      lock.title = claim.participantName;
+      lock.setAttribute("aria-label", `Locked by ${claim.participantName}`);
+      card.append(lock);
+    }
     const selectCard = () => {
       selectedNewGameSideIndex = index;
-      if (newGameSessionMode === NEW_GAME_MODE_ONLINE) {
-        if (selectedNewGamePlayerSideIndex !== index) {
-          selectedNewGamePlayerSideIndex = index;
-          markNewGameSetupDirty();
-        }
-      }
-      pendingNewGameFactionNameFocusIndex = index;
+      syncNewGameSelectedSideEditor();
       renderNewGameFactionGrid(newGameFactionCount);
+      renderNewGameGovernment();
+      menuPlayerFactionName.value = newGamePlayerFactionName;
       updateNewGamePlayerFactionColor();
+      updateNewGamePlacementLock();
       updateNewGameActions();
     };
     card.addEventListener("pointerdown", (event) => {
@@ -3966,7 +4881,7 @@ function renderNewGameFactionGrid(factionCount) {
 
 function isNewGameFactionInteractiveTarget(target) {
   return target instanceof Element
-    && Boolean(target.closest(".new-game__faction-card-name-input, .new-game__faction-government, .new-game__side-mode-selector"));
+    && Boolean(target.closest(".new-game__side-mode-selector"));
 }
 
 function createNewGameSideModeSelector(index, mode) {
@@ -4050,151 +4965,7 @@ function createNewGameFactionTitle(name) {
   return title;
 }
 
-function createNewGameFactionNameInput(index, name) {
-  const input = document.createElement("input");
-  input.className = "new-game__faction-card-name-input";
-  input.type = "text";
-  input.value = name;
-  input.autocomplete = "off";
-  input.spellcheck = false;
-  input.setAttribute("aria-label", "Faction name");
-  input.addEventListener("click", (event) => event.stopPropagation());
-  input.addEventListener("pointerdown", (event) => event.stopPropagation());
-  input.addEventListener("keydown", (event) => {
-    event.stopPropagation();
-    if (event.key === "Enter") {
-      input.blur();
-    }
-  });
-  input.addEventListener("input", () => {
-    setNewGameSideName(index, input.value);
-    markNewGameSetupDirty();
-    updateNewGameActions();
-  });
-  input.addEventListener("blur", () => {
-    renderNewGameFactionGrid(newGameFactionCount);
-  });
-  if (pendingNewGameFactionNameFocusIndex === index) {
-    pendingNewGameFactionNameFocusIndex = null;
-    requestAnimationFrame(() => {
-      if (selectedNewGameSideIndex === index && document.contains(input)) {
-        input.focus();
-        input.setSelectionRange(input.value.length, input.value.length);
-      }
-    });
-  }
-  return input;
-}
-
-function createNewGameFactionGovernmentControl(index, governmentId, { isPlayer, isSelected }) {
-  if (isPlayer || !isSelected) {
-    const meta = document.createElement("span");
-    meta.className = "new-game__faction-card-meta";
-    meta.textContent = getNewGameGovernmentLabel(governmentId);
-    return meta;
-  }
-
-  const wrapper = document.createElement("span");
-  wrapper.className = "new-game__faction-government";
-
-  const current = document.createElement("button");
-  current.className = "new-game__faction-government-current";
-  current.type = "button";
-  current.textContent = getNewGameGovernmentLabel(governmentId);
-  current.setAttribute("aria-expanded", "false");
-
-  const list = document.createElement("span");
-  list.className = "new-game__faction-government-list";
-  list.hidden = true;
-
-  getNewGameGovernmentIds().forEach((id) => {
-    const item = document.createElement("button");
-    item.className = "new-game__faction-government-item";
-    item.type = "button";
-    item.textContent = getNewGameGovernmentLabel(id);
-    item.classList.toggle("active", id === governmentId);
-    item.addEventListener("pointerdown", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      setNewGameSideGovernment(index, id);
-      markNewGameSetupDirty();
-      renderNewGameFactionGrid(newGameFactionCount);
-      updateNewGameActions();
-    });
-    item.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") {
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      setNewGameSideGovernment(index, id);
-      markNewGameSetupDirty();
-      renderNewGameFactionGrid(newGameFactionCount);
-      updateNewGameActions();
-    });
-    item.addEventListener("click", (event) => {
-      event.stopPropagation();
-    });
-    list.append(item);
-  });
-
-  const toggleList = () => {
-    const shouldOpen = list.hidden;
-    list.hidden = !shouldOpen;
-    current.setAttribute("aria-expanded", String(shouldOpen));
-  };
-  current.addEventListener("pointerdown", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    toggleList();
-  });
-  current.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    toggleList();
-  });
-  current.addEventListener("click", (event) => {
-    event.stopPropagation();
-  });
-  wrapper.addEventListener("click", (event) => event.stopPropagation());
-  wrapper.append(current, list);
-  return wrapper;
-}
-
-function setNewGameSideName(index, name) {
-  if (index === selectedNewGamePlayerSideIndex) {
-    newGamePlayerFactionName = name;
-    menuPlayerFactionName.value = name;
-    return;
-  }
-
-  ensureNewGameSideConfig(index).name = name;
-}
-
-function setNewGameSideGovernment(index, governmentId) {
-  if (!NEW_GAME_GOVERNMENTS[governmentId]) {
-    return;
-  }
-  if (index === selectedNewGamePlayerSideIndex) {
-    selectedNewGameGovernmentId = governmentId;
-    return;
-  }
-
-  ensureNewGameSideConfig(index).government = governmentId;
-}
-
 function getNewGameRenderedSide(index) {
-  if (index === selectedNewGamePlayerSideIndex) {
-    return {
-      name: getNewGamePlayerFactionDisplayName(),
-      color: newGamePlayerFactionColor,
-      government: selectedNewGameGovernmentId,
-    };
-  }
-
   const side = newGameSideConfigs[index] ?? createNewGameSideConfig(index, getNewGameSeed());
   return {
     name: side.name.trim() || `SIDE ${index + 1}`,
@@ -4226,8 +4997,14 @@ function getNewGameGovernmentLabel(governmentId) {
     ?? NEW_GAME_GOVERNMENTS[NEW_GAME_DEFAULT_GOVERNMENT_ID].label;
 }
 
-function getNewGamePlayerFactionDisplayName() {
-  return newGamePlayerFactionName.trim() || NEW_GAME_DEFAULT_PLAYER_FACTION_NAME;
+function syncNewGameSelectedSideEditor() {
+  const side = getNewGameSideConfigSnapshot(selectedNewGameSideIndex);
+  if (!side) {
+    return;
+  }
+  newGamePlayerFactionName = side.name;
+  newGamePlayerFactionColor = side.color;
+  selectedNewGameGovernmentId = side.government;
 }
 
 function syncNewGameSideConfigs(count, seed) {
@@ -4261,9 +5038,9 @@ function createNewGameSideConfigs(count, seed) {
 
 function createNewGameSideConfig(index, seed) {
   return {
-    name: `SIDE ${index + 1}`,
+    name: index === 0 ? NEW_GAME_DEFAULT_PLAYER_FACTION_NAME : `SIDE ${index + 1}`,
     color: createNewGameSideColor(index, seed),
-    government: createNewGameSideGovernment(index, seed),
+    government: index === 0 ? NEW_GAME_DEFAULT_GOVERNMENT_ID : createNewGameSideGovernment(index, seed),
     connectionMode: NEW_GAME_SIDE_MODE_LOCAL,
   };
 }
@@ -4287,31 +5064,23 @@ function createNewGameSideGovernment(index, seed) {
 }
 
 function createNewGameSideColor(index, seed) {
-  const random = createRandom(`${seed}:new-game-side:${index}`);
-  const hue = Math.floor(random() * 360);
-  const saturation = 58 + Math.floor(random() * 30);
-  const lightness = 48 + Math.floor(random() * 18);
-  return hslToHexColor(hue, saturation, lightness);
+  return getNewGameFactionColorOrder(seed)[index % NEW_GAME_FACTION_COLORS.length]
+    ?? NEW_GAME_DEFAULT_PLAYER_FACTION_COLOR;
 }
 
-function hslToHexColor(hue, saturation, lightness) {
-  const s = saturation / 100;
-  const l = lightness / 100;
-  const c = (1 - Math.abs(2 * l - 1)) * s;
-  const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
-  const m = l - c / 2;
-  const [r, g, b] = hue < 60
-    ? [c, x, 0]
-    : hue < 120
-      ? [x, c, 0]
-      : hue < 180
-        ? [0, c, x]
-        : hue < 240
-          ? [0, x, c]
-          : hue < 300
-            ? [x, 0, c]
-            : [c, 0, x];
-  return `#${[r, g, b].map((channel) => Math.round((channel + m) * 255).toString(16).padStart(2, "0")).join("")}`;
+function getNewGameFactionColorOrder(seed) {
+  const colors = NEW_GAME_FACTION_COLORS.slice();
+  const random = createRandom(`${seed}:new-game-faction-colors`);
+  for (let index = colors.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(random() * (index + 1));
+    [colors[index], colors[swapIndex]] = [colors[swapIndex], colors[index]];
+  }
+  return colors;
+}
+
+function normalizeNewGameFactionColor(color) {
+  const normalized = String(color ?? "").trim().toUpperCase();
+  return NEW_GAME_FACTION_COLORS.includes(normalized) ? normalized : NEW_GAME_DEFAULT_PLAYER_FACTION_COLOR;
 }
 
 function getNewGameSeed() {
@@ -4374,6 +5143,7 @@ function applyOnlineNewGameSetup() {
     return;
   }
 
+  commitNewGameLocalPlayerClaim();
   const timestamp = new Date().toISOString();
   const initialState = createNewGameInitialGameState();
   const saveName = createNewGameInitialSaveName(initialState.setup);
@@ -4402,12 +5172,22 @@ function collectNewGameOnlineMenuState() {
   });
 
   return {
-    version: 1,
+    version: 2,
     seed: getNewGameSeed(),
     scenarioId: scenario.id,
     factionCount: sideCount,
     playerSideIndex: selectedNewGamePlayerSideIndex,
     sides,
+    playerClaims: [...newGamePlayerClaims.values()].map((claim) => ({
+      participantId: claim.participantId,
+      participantName: claim.participantName,
+      preferredSideIndex: claim.preferredSideIndex,
+      preferredColor: claim.preferredColor,
+      factionName: claim.factionName,
+      government: claim.government,
+      lockedAt: claim.lockedAt,
+      revision: claim.revision,
+    })),
     appliedAt: new Date().toISOString(),
   };
 }
@@ -4441,25 +5221,18 @@ function applyNewGameOnlineMenuState(menuState) {
     }
     const config = ensureNewGameSideConfig(index);
     config.name = String(side.name ?? config.name ?? `SIDE ${index + 1}`).trim() || `SIDE ${index + 1}`;
-    config.color = String(side.color ?? config.color ?? createNewGameSideColor(index, seed));
+    config.color = normalizeNewGameFactionColor(side.color ?? config.color ?? createNewGameSideColor(index, seed));
     config.government = NEW_GAME_GOVERNMENTS[side.government]
       ? side.government
       : config.government;
     config.connectionMode = normalizeNewGameSideMode(side.connectionMode);
   }
 
-  selectedNewGamePlayerSideIndex = THREE.MathUtils.clamp(
-    selectedNewGamePlayerSideIndex,
-    0,
-    Math.max(0, newGameFactionCount - 1),
-  );
-  selectedNewGameSideIndex = selectedNewGamePlayerSideIndex;
-  const playerSide = getNewGameSideConfigSnapshot(selectedNewGamePlayerSideIndex);
-  if (playerSide) {
-    newGamePlayerFactionName = playerSide.name;
-    newGamePlayerFactionColor = playerSide.color;
-    selectedNewGameGovernmentId = playerSide.government;
-  }
+  mergeNewGamePlayerClaims(menuState.playerClaims);
+  resolveNewGamePlayerClaims();
+  selectedNewGamePlayerSideIndex = THREE.MathUtils.clamp(selectedNewGamePlayerSideIndex, 0, Math.max(0, newGameFactionCount - 1));
+  selectedNewGameSideIndex = THREE.MathUtils.clamp(selectedNewGameSideIndex, 0, Math.max(0, newGameFactionCount - 1));
+  syncNewGameSelectedSideEditor();
 }
 
 function createNewGameInitialSaveName(setup) {

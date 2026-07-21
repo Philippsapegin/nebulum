@@ -3,16 +3,17 @@ import { hexToHsv, hsvToHex, normalizeHexColor } from "../utils/color.js";
 
 let colorPicker = null;
 
-export function openColorPicker(anchor, color, onChange) {
+export function openColorPicker(anchor, color, onChange, options = {}) {
   if (!colorPicker) {
     colorPicker = createColorPicker();
   }
 
   colorPicker.anchor = anchor;
   colorPicker.onChange = onChange;
+  configureColorPickerPalette(options.palette, options.disabledColors, color);
   setColorPickerColor(color, false);
-  positionColorPicker(anchor);
   colorPicker.root.hidden = false;
+  positionColorPicker(anchor);
 }
 
 function createColorPicker() {
@@ -25,6 +26,7 @@ function createColorPicker() {
     </div>
     <input class="color-popover__hue" type="range" min="0" max="360" step="1" />
     <input class="color-popover__hex" type="text" autocomplete="off" spellcheck="false" maxlength="7" />
+    <div class="color-popover__palette" hidden></div>
   `;
   document.body.append(root);
 
@@ -34,6 +36,7 @@ function createColorPicker() {
     handle: root.querySelector(".color-popover__handle"),
     hue: root.querySelector(".color-popover__hue"),
     hex: root.querySelector(".color-popover__hex"),
+    palette: root.querySelector(".color-popover__palette"),
     hsv: { h: 0, s: 1, v: 1 },
     anchor: null,
     onChange: null,
@@ -76,11 +79,48 @@ function createColorPicker() {
   return picker;
 }
 
+function configureColorPickerPalette(rawPalette, rawDisabledColors, currentColor) {
+  const palette = Array.isArray(rawPalette) ? rawPalette.map(normalizeHexColor) : [];
+  const disabledColors = new Set(
+    rawDisabledColors instanceof Set
+      ? [...rawDisabledColors].map(normalizeHexColor)
+      : [],
+  );
+  const isPaletteMode = palette.length > 0;
+  colorPicker.root.classList.toggle("color-popover--palette", isPaletteMode);
+  colorPicker.plane.hidden = isPaletteMode;
+  colorPicker.hue.hidden = isPaletteMode;
+  colorPicker.hex.hidden = isPaletteMode;
+  colorPicker.palette.hidden = !isPaletteMode;
+  colorPicker.palette.replaceChildren();
+  if (!isPaletteMode) {
+    return;
+  }
+
+  const normalizedCurrentColor = normalizeHexColor(currentColor);
+  for (const color of palette) {
+    const button = document.createElement("button");
+    button.className = "color-popover__palette-color";
+    button.type = "button";
+    button.style.setProperty("--palette-color", color);
+    button.title = color.toUpperCase();
+    button.setAttribute("aria-label", `Faction color ${color.toUpperCase()}`);
+    button.setAttribute("aria-pressed", String(color === normalizedCurrentColor));
+    button.disabled = disabledColors.has(color);
+    button.addEventListener("click", () => {
+      colorPicker.onChange?.(color.toUpperCase());
+      colorPicker.root.hidden = true;
+    });
+    colorPicker.palette.append(button);
+  }
+}
+
 function positionColorPicker(anchor) {
   const rect = anchor.getBoundingClientRect();
-  const width = 234;
+  const width = colorPicker.root.offsetWidth || 234;
   const left = Math.min(window.innerWidth - width - 8, Math.max(8, rect.left));
-  const top = Math.min(window.innerHeight - 278, rect.bottom + 8);
+  const height = colorPicker.root.offsetHeight || 278;
+  const top = Math.min(window.innerHeight - height - 8, rect.bottom + 8);
   colorPicker.root.style.left = `${left}px`;
   colorPicker.root.style.top = `${Math.max(8, top)}px`;
 }
