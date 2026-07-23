@@ -1151,13 +1151,9 @@ body.start-menu-open .hover-panel {
 
 .new-game__your-faction {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) 22px 22px;
+  grid-template-columns: auto minmax(0, 1fr) 22px;
   gap: 6px;
   align-items: center;
-}
-
-.new-game__your-faction:has(.new-game__placement-lock[hidden]) {
-  grid-template-columns: auto minmax(0, 1fr) 22px;
 }
 
 .new-game__your-faction-row {
@@ -1481,26 +1477,34 @@ body.start-menu-open .hover-panel {
 .new-game__connect-button {
   width: 100%;
   height: 20px;
-  padding: 0 8px;
+  padding: 0 7px;
   border: 0;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.84);
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(255, 255, 255, 0.82);
   cursor: pointer;
   font: inherit;
   font-size: 10px;
   line-height: 20px;
   text-transform: uppercase;
+  transition:
+    background 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
 }
 
 .new-game__connect-button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.13);
+  background: rgba(255, 255, 255, 0.095);
   color: #fff;
 }
 
+.new-game__connect-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
 .new-game__connect-button:disabled {
-  color: rgba(255, 255, 255, 0.2);
   cursor: default;
+  opacity: 0.38;
 }
 
 .new-game__signal-field {
@@ -1516,13 +1520,13 @@ body.start-menu-open .hover-panel {
   width: 100%;
   height: 20px;
   min-height: 20px;
-  padding: 0 6px;
+  padding: 0 7px;
   border: 0;
   border-radius: 3px;
-  background: rgba(10, 10, 11, 0.36);
-  color: rgba(255, 255, 255, 0.76);
-  font-family: "Albert Sans", Inter, sans-serif;
-  font-size: 9px;
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(255, 255, 255, 0.82);
+  font: inherit;
+  font-size: 10px;
   line-height: 20px;
   outline: none;
   overflow-x: auto;
@@ -1536,9 +1540,9 @@ body.start-menu-open .hover-panel {
   height: 20px;
   padding: 0;
   border: 0;
-  border-radius: 2px;
-  background: rgba(255, 255, 255, 0.065);
-  color: rgba(255, 255, 255, 0.76);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(255, 255, 255, 0.82);
   cursor: pointer;
 }
 
@@ -1564,13 +1568,13 @@ body.start-menu-open .hover-panel {
 }
 
 .new-game__signal-copy:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.095);
   color: #fff;
 }
 
 .new-game__signal-copy:disabled {
-  color: rgba(255, 255, 255, 0.18);
   cursor: default;
+  opacity: 0.38;
 }
 
 .new-game-online-panel__status {
@@ -1687,7 +1691,7 @@ body.start-menu-open .hover-panel {
   align-items: center;
   gap: 10px;
   min-width: 0;
-  padding: 18px 9px 8px;
+  padding: 8px 9px;
   border: 0;
   border-radius: 3px;
   background:
@@ -1734,17 +1738,23 @@ body.start-menu-open .hover-panel {
   z-index: 1;
 }
 
-.new-game__side-mode-selector {
+.new-game__faction-card-controls {
   position: absolute;
   top: 5px;
   right: 5px;
   z-index: 2;
-  display: grid;
-  grid-template-columns: repeat(3, 12px);
+  display: flex;
+  align-items: center;
   gap: 3px;
   padding: 2px;
   border-radius: 999px;
   background: rgba(10, 10, 11, 0.36);
+}
+
+.new-game__side-mode-selector {
+  display: grid;
+  grid-template-columns: repeat(3, 12px);
+  gap: 3px;
 }
 
 .new-game__side-mode-button {
@@ -1795,27 +1805,34 @@ body.start-menu-open .hover-panel {
   gap: 5px;
 }
 
-.new-game__faction-card-lock {
-  position: absolute;
-  right: 7px;
-  bottom: 6px;
-  width: 9px;
-  height: 7px;
-  border: 1px solid rgba(102, 205, 127, 0.62);
-  border-radius: 1px;
-  color: rgba(102, 205, 127, 0.72);
+.new-game__faction-card-placement-lock {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
 }
 
-.new-game__faction-card-lock::before {
-  position: absolute;
-  left: 1px;
-  bottom: 5px;
-  width: 5px;
-  height: 5px;
-  border: 1px solid currentColor;
-  border-bottom: 0;
-  border-radius: 4px 4px 0 0;
-  content: "";
+.new-game__faction-card-placement-lock::before {
+  left: 4px;
+  top: 2px;
+  width: 4px;
+  height: 4px;
+  border-radius: 3px 3px 0 0;
+}
+
+.new-game__faction-card-placement-lock::after {
+  left: 3px;
+  top: 6px;
+  width: 6px;
+  height: 4px;
+  border-radius: 1px;
+}
+
+.new-game__faction-card-placement-lock:hover,
+.new-game__faction-card-placement-lock.new-game__placement-lock--active {
+  background: rgba(102, 205, 127, 0.78);
+  color: rgba(8, 18, 11, 0.9);
+  box-shadow: 0 0 7px rgba(102, 205, 127, 0.28);
 }
 
 .new-game__faction-card:hover,
@@ -1860,10 +1877,7 @@ body.start-menu-open .hover-panel {
   outline: none;
 }
 
-.new-game__connect-button:focus-visible,
 .new-game__placement-lock:focus-visible,
-.new-game__signal-copy:focus-visible,
-.new-game__signal-input:focus-visible,
 .new-game-online-chat__input:focus-visible,
 .new-game-online-chat__send:focus-visible {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
@@ -5337,7 +5351,7 @@ body.editor-mode .music-player {
   top: calc(100% - var(--object-detail-line-bottom) + 12px);
   z-index: 4;
   display: grid;
-  grid-template-columns: max-content max-content;
+  grid-template-columns: repeat(3, max-content);
   gap: 42px;
   color: rgba(255, 255, 255, 0.78);
   font: inherit;
@@ -5357,6 +5371,14 @@ body.editor-mode .music-player {
 
 .object-detail-screen__info-column:nth-child(2) {
   --object-detail-info-label-width: 86px;
+}
+
+.object-detail-screen__info-column--classification {
+  --object-detail-info-label-width: 42px;
+}
+
+.object-detail-screen__info-column--classification dd {
+  white-space: nowrap;
 }
 
 .object-detail-screen__info-row {

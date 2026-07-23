@@ -10,25 +10,25 @@ The entire universe is generated deterministically from a seed string. Stars, co
 
 The seeded 3D constellation graph with glowing stars and links.
 
-![Star map](images/demo1.png)
+![Star map](images/demo1.jpg)
 
 ### Region masks
 
 Paint connected star regions into colored constellations with the borders tool.
 
-![Region masks](images/demo2.png)
+![Region masks](images/demo2.jpg)
 
 ### Star system view
 
 Each star is a fully explorable system with orbits, planets, moons, asteroid belts, and accretion disks.
 
-![Star system](images/demo3.png)
+![Star system](images/demo3.jpg)
 
 ### Habitable and tidal-lock zones
 
 Toggle astrophysics-based overlays — the habitable zone and the tidal-lock zone — scaled per star class.
 
-![System zones](images/demo4.png)
+![System zones](images/demo4.jpg)
 
 ## Features
 

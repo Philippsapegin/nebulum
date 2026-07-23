@@ -23,9 +23,14 @@ import {
   createStarName,
 } from "./graph/generate.js";
 import { createPlanetNameService } from "./planet/names.js";
+import { classifyPlanet } from "./planet/classification.js";
 import { GAS_GIANT_WINDOW_TEXTURE_HEIGHT, createGasGiantTexture } from "./planet/gasGiantTexture.js";
 import { createPlanetTexture } from "./planet/planetTexture.js";
 import { createPlanetRotationState } from "./planet/rotation.js";
+import {
+  createPlanetTemperatureProfile,
+  createStaticTemperatureProfile,
+} from "./planet/temperature.js";
 import { createPlanetScreenController } from "./screens/planetScreen.js";
 import { createSystemScreenController } from "./screens/systemScreen.js";
 import { RADIO_CHATTER_FEED_MACHINE, createSystemRadioChatterMachine } from "./audio/ambientMachines.js";
@@ -253,7 +258,6 @@ const menuFactionCount = document.querySelector("#menu-faction-count");
 const menuFactionLimit = document.querySelector("#menu-faction-limit");
 const menuPlayerFactionName = document.querySelector("#menu-player-faction-name");
 const menuPlayerFactionColor = document.querySelector("#menu-player-faction-color");
-const menuPlayerSideLock = document.querySelector("#menu-player-side-lock");
 const menuGovernmentCurrent = document.querySelector("#menu-government-current");
 const menuGovernmentDropdown = document.querySelector("#menu-government-dropdown");
 const menuGovernmentList = document.querySelector("#menu-government-list");
@@ -1136,7 +1140,6 @@ function initStartMenu() {
       disabledColors: unavailableColors,
     });
   });
-  menuPlayerSideLock?.addEventListener("click", selectNewGamePlayerPlacement);
   menuGovernmentCurrent.addEventListener("click", (event) => {
     event.stopPropagation();
     setNewGameGovernmentDropdownOpen(menuGovernmentList.hidden);
@@ -1145,19 +1148,23 @@ function initStartMenu() {
     event.stopPropagation();
     setNewGameGovernmentDropdownOpen(menuGovernmentList.hidden);
   });
-  menuOnlineConnectButton?.addEventListener("click", createNewGameOnlineInvite);
-  menuOnlineHandshakeButton?.addEventListener("click", handshakeNewGameOnlinePeer);
-  menuOnlineInviteCode?.addEventListener("input", renderNewGameOnlineHandshakeControls);
-  menuOnlineAnswerCode?.addEventListener("input", renderNewGameOnlineHandshakeControls);
-  [menuOnlineInviteCode, menuOnlineAnswerCode].forEach((input) => {
-    input?.addEventListener("keydown", (event) => {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        handshakeNewGameOnlinePeer();
-      }
-    });
+  menuOnlineConnectButton?.addEventListener("click", connectNewGameOnlinePeer);
+  menuOnlineHandshakeButton?.addEventListener("click", () => handshakeNewGameOnlinePeer());
+  menuOnlineInviteCode?.addEventListener("input", handleNewGameConnectCodeInput);
+  menuOnlineAnswerCode?.addEventListener("input", handleNewGameAnswerCodeInput);
+  menuOnlineInviteCode?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      connectNewGameOnlinePeer();
+    }
   });
-  menuOnlineInviteCopy?.addEventListener("click", () => copyNewGameSignalCode(menuOnlineInviteCode, "INVITE COPIED"));
+  menuOnlineAnswerCode?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      handshakeNewGameOnlinePeer({ readClipboard: false });
+    }
+  });
+  menuOnlineInviteCopy?.addEventListener("click", () => copyNewGameSignalCode(menuOnlineInviteCode, "CONNECT CODE COPIED"));
   menuOnlineAnswerCopy?.addEventListener("click", () => copyNewGameSignalCode(menuOnlineAnswerCode, "ANSWER COPIED"));
   menuOnlineChatForm?.addEventListener("submit", sendNewGameP2pChatMessage);
   menuNewGameApply.addEventListener("click", applyOnlineNewGameSetup);
@@ -3624,10 +3631,39 @@ function renderNewGameOnlineHandshakeControls() {
   menuOnlineConnectButton.disabled = newGameP2pHandshakeBusy
     || requestingPeer
     || getNewGameOpenPeerCount() >= connectionLimit;
-  menuOnlineHandshakeButton.disabled = newGameP2pHandshakeBusy;
+  menuOnlineHandshakeButton.disabled = newGameP2pHandshakeBusy
+    || newGameP2pPendingPeer?.role !== "initiator";
   menuOnlineInviteCopy.disabled = !menuOnlineInviteCode?.value.trim();
   menuOnlineAnswerCopy.disabled = !menuOnlineAnswerCode?.value.trim();
   menuOnlineSignalStatus.textContent = newGameP2pSignalStatusText;
+}
+
+function connectNewGameOnlinePeer() {
+  const connectCode = getNewGameP2pSignalCode("offer", [menuOnlineInviteCode?.value]);
+  if (connectCode && newGameP2pPendingPeer?.role !== "initiator") {
+    return handshakeNewGameOnlinePeer({ readClipboard: false });
+  }
+  return createNewGameOnlineInvite();
+}
+
+function handleNewGameConnectCodeInput() {
+  renderNewGameOnlineHandshakeControls();
+  if (newGameP2pHandshakeBusy || newGameP2pPendingPeer?.role === "initiator") {
+    return;
+  }
+  if (getNewGameP2pSignalCode("offer", [menuOnlineInviteCode?.value])) {
+    void handshakeNewGameOnlinePeer({ readClipboard: false });
+  }
+}
+
+function handleNewGameAnswerCodeInput() {
+  renderNewGameOnlineHandshakeControls();
+  if (newGameP2pHandshakeBusy || newGameP2pPendingPeer?.role !== "initiator") {
+    return;
+  }
+  if (getNewGameP2pSignalCode("answer", [menuOnlineAnswerCode?.value])) {
+    void handshakeNewGameOnlinePeer({ readClipboard: false });
+  }
 }
 
 async function createNewGameOnlineInvite() {
@@ -3637,7 +3673,7 @@ async function createNewGameOnlineInvite() {
 
   pruneUnidentifiedNewGameP2pPeers();
   newGameP2pHandshakeBusy = true;
-  newGameP2pSignalStatusText = "GENERATING INVITE";
+  newGameP2pSignalStatusText = "GENERATING CONNECT CODE";
   let peer = null;
   try {
     peer = createNewGameP2pPeer("initiator");
@@ -3647,7 +3683,7 @@ async function createNewGameOnlineInvite() {
     menuOnlineInviteCode.value = inviteCode;
     menuOnlineAnswerCode.value = "";
     const wasCopied = await copyTextToClipboard(inviteCode);
-    newGameP2pSignalStatusText = wasCopied ? "INVITE COPIED" : "COPY INVITE MANUALLY";
+    newGameP2pSignalStatusText = wasCopied ? "CONNECT CODE COPIED" : "COPY CONNECT CODE MANUALLY";
   } catch (error) {
     if (peer) {
       peer.handshakeState = "disconnected";
@@ -3660,16 +3696,16 @@ async function createNewGameOnlineInvite() {
   }
 }
 
-async function handshakeNewGameOnlinePeer() {
+async function handshakeNewGameOnlinePeer({ readClipboard = true } = {}) {
   if (newGameSessionMode !== NEW_GAME_MODE_ONLINE || newGameP2pHandshakeBusy) {
     return;
   }
 
   newGameP2pHandshakeBusy = true;
-  newGameP2pSignalStatusText = "READING CLIPBOARD";
+  newGameP2pSignalStatusText = readClipboard ? "READING CLIPBOARD" : "PROCESSING CODE";
   renderNewGameOnlineConnect();
   try {
-    const clipboardCode = await readTextFromClipboard();
+    const clipboardCode = readClipboard ? await readTextFromClipboard() : "";
     if (newGameP2pPendingPeer?.role === "initiator") {
       const answerCode = getNewGameP2pSignalCode("answer", [menuOnlineAnswerCode.value, clipboardCode]);
       if (!answerCode) {
@@ -4495,12 +4531,56 @@ function resetNewGameP2pConnections() {
   menuOnlineChatMessages?.replaceChildren();
 }
 
-function selectNewGamePlayerPlacement() {
+function selectNewGamePlayerPlacement(requestedSideIndex = selectedNewGameSideIndex) {
   if (newGameSessionMode !== NEW_GAME_MODE_ONLINE) {
     return;
   }
+  const requestedIndex = THREE.MathUtils.clamp(
+    Number.parseInt(requestedSideIndex, 10) || 0,
+    0,
+    Math.max(0, newGameFactionCount - 1),
+  );
+  const localClaim = newGamePlayerClaims.get(newGameP2pLocalParticipantId);
+  const isPendingSelection = newGamePlacementLockPending
+    && selectedNewGamePlayerSideIndex === requestedIndex;
+  const isCurrentPlacement = !localClaim?.released
+    && localClaim?.resolvedSideIndex === requestedIndex;
+
+  if (isPendingSelection) {
+    newGamePlacementLockPending = false;
+    markNewGameSetupDirty();
+    renderNewGameDialog();
+    return;
+  }
+
+  if (isCurrentPlacement) {
+    newGamePlayerClaims.set(newGameP2pLocalParticipantId, {
+      ...localClaim,
+      released: true,
+      resolvedSideIndex: -1,
+      resolvedColor: null,
+      revision: ++newGameLocalClaimRevision,
+    });
+    newGamePlacementLockPending = false;
+    markNewGameSetupDirty();
+    resolveNewGamePlayerClaims();
+    renderNewGameDialog();
+    return;
+  }
+
+  if (localClaim && !localClaim.released) {
+    newGamePlayerClaims.set(newGameP2pLocalParticipantId, {
+      ...localClaim,
+      released: true,
+      resolvedSideIndex: -1,
+      resolvedColor: null,
+      revision: ++newGameLocalClaimRevision,
+    });
+    resolveNewGamePlayerClaims();
+  }
+
   const availableSideIndex = findAvailableNewGameSideIndex(
-    selectedNewGameSideIndex,
+    requestedIndex,
     getNewGameOccupiedSideIndexes(newGameP2pLocalParticipantId),
   );
   if (availableSideIndex < 0) {
@@ -4536,7 +4616,8 @@ function commitNewGameLocalPlayerClaim() {
   const preferredSideIndex = selectedNewGamePlayerSideIndex;
   const side = ensureNewGameSideConfig(preferredSideIndex);
   const previousClaim = newGamePlayerClaims.get(newGameP2pLocalParticipantId);
-  const keepsPriority = previousClaim?.preferredSideIndex === preferredSideIndex;
+  const keepsPriority = !previousClaim?.released
+    && previousClaim?.preferredSideIndex === preferredSideIndex;
   newGamePlayerClaims.set(newGameP2pLocalParticipantId, {
     participantId: newGameP2pLocalParticipantId,
     participantName: newGameP2pLocalParticipantName,
@@ -4545,6 +4626,7 @@ function commitNewGameLocalPlayerClaim() {
     factionName: String(side.name ?? NEW_GAME_DEFAULT_PLAYER_FACTION_NAME).trim() || NEW_GAME_DEFAULT_PLAYER_FACTION_NAME,
     government: NEW_GAME_GOVERNMENTS[side.government] ? side.government : NEW_GAME_DEFAULT_GOVERNMENT_ID,
     lockedAt: keepsPriority ? previousClaim.lockedAt : new Date().toISOString(),
+    released: false,
     revision: ++newGameLocalClaimRevision,
   });
   newGamePlacementLockPending = false;
@@ -4587,6 +4669,7 @@ function normalizeNewGamePlayerClaim(rawClaim) {
       ? rawClaim.government
       : NEW_GAME_DEFAULT_GOVERNMENT_ID,
     lockedAt: String(rawClaim?.lockedAt ?? new Date().toISOString()),
+    released: Boolean(rawClaim?.released),
     revision: Math.max(1, Number.parseInt(rawClaim?.revision, 10) || 1),
   };
 }
@@ -4599,6 +4682,11 @@ function resolveNewGamePlayerClaims() {
     || first.participantId.localeCompare(second.participantId)
   ));
   for (const claim of claims) {
+    if (claim.released) {
+      claim.resolvedSideIndex = -1;
+      claim.resolvedColor = null;
+      continue;
+    }
     const resolvedSideIndex = findAvailableNewGameSideIndex(claim.preferredSideIndex, occupiedSideIndexes);
     if (resolvedSideIndex < 0) {
       claim.resolvedSideIndex = -1;
@@ -4683,23 +4771,7 @@ function isNewGameSelectedSideEditable() {
 }
 
 function updateNewGamePlacementLock() {
-  if (!menuPlayerSideLock) {
-    return;
-  }
-  const isOnline = newGameSessionMode === NEW_GAME_MODE_ONLINE;
-  const claim = getNewGameClaimForSide(selectedNewGameSideIndex);
-  const isLocalClaim = claim?.participantId === newGameP2pLocalParticipantId;
-  const isPending = newGamePlacementLockPending
-    && selectedNewGamePlayerSideIndex === selectedNewGameSideIndex;
   const isEditable = isNewGameSelectedSideEditable();
-  menuPlayerSideLock.hidden = !isOnline;
-  menuPlayerSideLock.classList.toggle("new-game__placement-lock--active", isLocalClaim || isPending);
-  menuPlayerSideLock.setAttribute("aria-pressed", String(isLocalClaim || isPending));
-  menuPlayerSideLock.title = isLocalClaim
-    ? "Placement locked"
-    : isPending
-      ? "Placement pending APPLY"
-      : "Lock player placement";
   menuPlayerFactionName.disabled = !isEditable;
   menuPlayerFactionColor.disabled = !isEditable;
   menuGovernmentCurrent.disabled = !isEditable;
@@ -4808,6 +4880,7 @@ function renderNewGameFactionGrid(factionCount) {
     const isPlayer = claim?.participantId === newGameP2pLocalParticipantId
       || (newGamePlacementLockPending && index === selectedNewGamePlayerSideIndex);
     const isLocked = Boolean(claim);
+    const isPending = newGamePlacementLockPending && index === selectedNewGamePlayerSideIndex;
     const sideMode = getNewGameSideMode(index);
     const card = document.createElement("div");
     card.className = "new-game__faction-card";
@@ -4829,15 +4902,34 @@ function renderNewGameFactionGrid(factionCount) {
     meta.className = "new-game__faction-card-meta";
     meta.textContent = getNewGameGovernmentLabel(side.government);
     content.append(title, meta);
+    const controls = document.createElement("span");
+    controls.className = "new-game__faction-card-controls";
     const modeSelector = createNewGameSideModeSelector(index, sideMode);
-    card.append(modeSelector, banner, content);
-    if (isLocked) {
-      const lock = document.createElement("span");
-      lock.className = "new-game__faction-card-lock";
-      lock.title = claim.participantName;
-      lock.setAttribute("aria-label", `Locked by ${claim.participantName}`);
-      card.append(lock);
+    if (newGameSessionMode === NEW_GAME_MODE_ONLINE) {
+      const lock = document.createElement("button");
+      lock.className = "new-game__placement-lock new-game__faction-card-placement-lock";
+      lock.type = "button";
+      lock.classList.toggle("new-game__placement-lock--active", isLocked || isPending);
+      lock.setAttribute("aria-pressed", String(isLocked || isPending));
+      lock.title = isLocked
+        ? `Locked by ${claim.participantName}`
+        : isPending
+          ? "Placement pending APPLY"
+          : "Lock player placement";
+      lock.setAttribute("aria-label", lock.title);
+      lock.addEventListener("pointerdown", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      lock.addEventListener("click", (event) => {
+        event.stopPropagation();
+        selectedNewGameSideIndex = index;
+        selectNewGamePlayerPlacement(index);
+      });
+      controls.append(lock);
     }
+    controls.append(modeSelector);
+    card.append(controls, banner, content);
     const selectCard = () => {
       selectedNewGameSideIndex = index;
       syncNewGameSelectedSideEditor();
@@ -4881,7 +4973,7 @@ function renderNewGameFactionGrid(factionCount) {
 
 function isNewGameFactionInteractiveTarget(target) {
   return target instanceof Element
-    && Boolean(target.closest(".new-game__side-mode-selector"));
+    && Boolean(target.closest(".new-game__side-mode-selector, .new-game__placement-lock"));
 }
 
 function createNewGameSideModeSelector(index, mode) {
@@ -5186,6 +5278,7 @@ function collectNewGameOnlineMenuState() {
       factionName: claim.factionName,
       government: claim.government,
       lockedAt: claim.lockedAt,
+      released: Boolean(claim.released),
       revision: claim.revision,
     })),
     appliedAt: new Date().toISOString(),
@@ -10569,14 +10662,23 @@ function createObjectDetailInfo(detail) {
     ],
     [
       ["DAY CYCLE", formatObjectDetailDayCycle(detail.dayCycleSeconds)],
-      ["DAY TEMP", formatObjectDetailTemperature(detail.temperature)],
-      ["NIGHT TEMP", formatObjectDetailTemperature(detail.temperature)],
+      ["DAY TEMP", formatObjectDetailTemperature(detail.dayTemperature ?? detail.temperature)],
+      ["NIGHT TEMP", formatObjectDetailTemperature(detail.nightTemperature ?? detail.temperature)],
     ],
   ];
+  const classification = classifyPlanet(detail);
+  if (classification.label) {
+    columns.push([
+      ["CLASS", classification.label],
+    ]);
+  }
 
-  for (const rows of columns) {
+  for (const [columnIndex, rows] of columns.entries()) {
     const column = document.createElement("dl");
     column.className = "object-detail-screen__info-column";
+    if (columnIndex === 2) {
+      column.classList.add("object-detail-screen__info-column--classification");
+    }
     for (const [labelText, valueText] of rows) {
       const row = document.createElement("div");
       row.className = "object-detail-screen__info-row";
@@ -15305,6 +15407,19 @@ function renderStarSystem(node) {
       planetName,
       tidallyLocked: false,
     });
+    const normalizedOrbitPosition = THREE.MathUtils.clamp(orbitFraction / 100, 0, 1);
+    const planetTemperatureProfile = planetKind.label === "PLANET"
+      ? createPlanetTemperatureProfile({
+        seed: `${SEED}:night-temperature:${node.id}:${planetName}`,
+        dayTemperature: planetTemperature,
+        orbitPosition: normalizedOrbitPosition,
+        atmosphere: planetSurfaceTags.atmosphere,
+        hasWater: planetSurfaceTags.hasWater,
+        waterPosition: planetTextureParams?.waterPosition ?? 0,
+        dayCycleSeconds: planetRotation.period,
+        tidallyLocked: Boolean(isTidallyLocked),
+      })
+      : createStaticTemperatureProfile(planetTemperature);
 
     const planet = document.createElement("div");
     planet.className = "system-planet";
@@ -15371,6 +15486,7 @@ function renderStarSystem(node) {
       orbitRadius,
       minOrbit,
       maxOrbit,
+      normalizedOrbitPosition,
       systemStarRadius: starRadius,
       systemStarColor: node.glowColor,
       systemStarCoreColor: node.coreColor,
@@ -15378,6 +15494,10 @@ function renderStarSystem(node) {
       systemId: node.id,
       gravity: planetGravity,
       temperature: planetTemperature,
+      dayTemperature: planetTemperatureProfile.dayTemperature,
+      nightTemperature: planetTemperatureProfile.nightTemperature,
+      temperatureDelta: planetTemperatureProfile.temperatureDelta,
+      heatTransport: planetTemperatureProfile.heatTransport,
       tags: planetSurfaceTags.tags,
       surfaceTextureParams: planetTextureParams,
       dayCycleSeconds: planetRotation.period,
